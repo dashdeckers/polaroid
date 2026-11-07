@@ -1,0 +1,19 @@
+[package]
+name = "polaroid"
+version = "0.1.0"
+edition = "2024"
+authors = ["Travis Hammond <dashdeckers@gmail.com>"]
+repository = "https://github.com/dashdeckers/polaroid"
+homepage = "https://github.com/dashdeckers/polaroid"
+description = "A GUI for Polars."
+license-file = "LICENSE"
+readme = "README.md"
+keywords = [
+    "iced",
+    "polars",
+    "gui",
+    "data",
+    "visualization",
+]
+
+[dependencies]
