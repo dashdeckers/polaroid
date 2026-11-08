@@ -1,6 +1,3 @@
-//! Every block by the name a pipeline file calls it, and the catalog a GUI
-//! builds its forms from.
-
 use std::collections::BTreeMap;
 
 use polars::prelude::*;
@@ -11,9 +8,8 @@ use serde_json::{Value, json};
 use crate::engine::Pipeline;
 use crate::{Block, frames, io};
 
-/// What the engine needs of a block, its type erased.
+/// Type erased Block.
 pub(crate) struct Entry {
-    /// The frames it reads, by role, in order.
     pub inputs: &'static [&'static str],
     schema: fn(&mut SchemaGenerator) -> Schema,
     build: fn(Value, Vec<LazyFrame>) -> PolarsResult<LazyFrame>,
@@ -27,12 +23,12 @@ impl Entry {
             build: |args, inputs| {
                 let block: B = serde_json::from_value(args)
                     .map_err(|e| polars_err!(ComputeError: "args: {e}"))?;
-                block.apply_all(inputs)
+                block.apply(inputs)
             },
         }
     }
 
-    /// The block filled in from `args`, applied to `inputs`.
+    /// Builds the plan for one Node from its Block.
     pub fn build(
         &self,
         args: Value,
@@ -42,21 +38,19 @@ impl Entry {
     }
 }
 
-/// The blocks a pipeline file may name.
+/// The Blocks a Pipeline file may name.
 #[derive(Default)]
 pub struct Registry {
     blocks: BTreeMap<&'static str, Entry>,
 }
 
 impl Registry {
-    /// The sources and the standard Polars repertoire.
+    /// The standard Polars repertoire.
     pub fn with_polars() -> Self {
         Self::default()
             // sources
-            .register::<io::ScanParquetDir>("scan_parquet_dir")
-            .register::<io::ReadSheet>("read_sheet")
-            .register::<io::ScanCsv>("scan_csv")
-            // the Polars repertoire
+            .register::<io::ScanParquet>("scan_parquet")
+            // standard
             .register::<frames::Select>("select")
             .register::<frames::WithColumns>("with_columns")
             .register::<frames::Filter>("filter")
@@ -74,7 +68,7 @@ impl Registry {
             .register::<frames::Cache>("cache")
     }
 
-    /// `B`, as pipeline files call it: `name`. Panics if the name is taken.
+    /// Adds a Block to the Registry.
     pub fn register<B: Block>(
         mut self,
         name: &'static str,
@@ -95,11 +89,10 @@ impl Registry {
             .get(name)
     }
 
-    /// Everything an editor needs to offer every block: each one's inputs and
-    /// the JSON Schema of its args, documentation included, beside the schema
-    /// of a pipeline file. Polars' expressions are among the definitions.
+    /// Returns a JSON description of the registered Blocks and the Pipeline.
     pub fn catalog(&self) -> Value {
         let mut generator = SchemaSettings::draft2020_12().into_generator();
+
         let blocks: serde_json::Map<String, Value> = self
             .blocks
             .iter()
@@ -111,8 +104,8 @@ impl Registry {
                 )
             })
             .collect();
-        let pipeline = generator.subschema_for::<Pipeline>();
 
+        let pipeline = generator.subschema_for::<Pipeline>();
         json!({
             "polars": polars::VERSION,
             "blocks": blocks,

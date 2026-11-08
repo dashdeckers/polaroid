@@ -1,27 +1,15 @@
-//! Pipelines of building blocks, written as JSON and run on Polars.
+//! Polaroid lets us define and run Polars Pipelines in JSON without recompiling.
 //!
-//! A block is a struct whose fields are its parameters and which turns the
-//! frames it reads into one frame: an `impl` [`Block`]. A domain crate writes
-//! its blocks, registers them by name in a [`Registry`] beside the Polars
-//! ones, and hands that to [`cli`]:
+//! A Pipeline file is a graph of Nodes. Each Node names a [`Block`], sets its
+//! args and lists the Nodes it reads from. A Block is a Rust struct that
+//! turns its input frames into one output frame.
 //!
-//! ```ignore
-//! fn main() -> polaroid::polars::prelude::PolarsResult<()> {
-//!     let registry = polaroid::Registry::with_polars()
-//!         .register::<my_blocks::Smooth>("smooth")
-//!         .register::<my_blocks::Score>("score");
-//!     polaroid::cli(registry)
-//! }
-//! ```
+//! To add Blocks, implement [`Block`], register them on a [`Registry`] and
+//! pass it to [`cli`].
 //!
-//! A [`Pipeline`] file then names those blocks and fills in their fields, and
-//! changing it needs no recompile. Polars is pinned to one exact version,
-//! because a pipeline's expressions are in its internal JSON form; use it as
-//! [`polars`] so a domain crate shares it.
-
-//! Polaroid lets us define and run Polars pipelines in JSON without recompiling.
-//!
-//! We do this by 
+//! Expressions in a Pipeline file use Polars' internal JSON format, so a
+//! Pipeline only runs on the exact Polars version it names. Use the
+//! re-exported [`polars`] so that your Blocks use that version too.
 
 mod cli;
 

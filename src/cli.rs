@@ -9,9 +9,11 @@ const USAGE: &str = "usage:
   catalog                         every block's args, as JSON Schema";
 
 pub fn cli(registry: Registry) -> PolarsResult<()> {
+
     let args: Vec<String> = std::env::args()
         .skip(1)
         .collect();
+
     let args: Vec<&str> = args
         .iter()
         .map(String::as_str)
@@ -31,6 +33,7 @@ pub fn cli(registry: Registry) -> PolarsResult<()> {
                 println!("{} rows to {path}", frame.height());
             }
         }
+
         ["check", pipeline] => {
             let pipeline = Pipeline::load(pipeline)?;
             let schemas = pipeline.schemas(&registry)?;
@@ -47,8 +50,11 @@ pub fn cli(registry: Registry) -> PolarsResult<()> {
                 }
             }
         }
+
         ["catalog"] => println!("{:#}", registry.catalog()),
+
         _ => polars_bail!(ComputeError: "{USAGE}"),
     }
+
     Ok(())
 }

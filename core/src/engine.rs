@@ -1,6 +1,3 @@
-//! Pipelines as data: a graph of blocks read from JSON, built into a Polars
-//! plan per node without running anything, and run as one query.
-
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use polars::prelude::*;
@@ -10,34 +7,31 @@ use serde_json::Value;
 
 use crate::Registry;
 
-/// A graph of blocks, each node reading the frames of the nodes it names.
+/// A Pipeline defines a DAG of Nodes.
 #[derive(Clone, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Pipeline {
-    /// The Polars version the pipeline was written for. Its expressions are
-    /// in that version's internal JSON, so no other version reads it.
+    /// The Polars version must match exactly so we remember it here.
     pub polars: String,
-    /// In any order: each node is built after the nodes it reads.
+    /// The Nodes (in any order).
     pub nodes: Vec<Node>,
-    /// The nodes whose frames a run returns.
+    /// The Nodes that provide the output frames.
     pub outputs: Vec<String>,
 }
 
+/// A Node is a frame-level operation.
 #[derive(Clone, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Node {
     pub id: String,
-    /// The block's name in the registry.
+    /// The Block's name in the Registry.
     pub block: String,
-    /// The nodes whose frames it reads, in the order of the block's inputs.
+    /// The Node(s) providing the input frame(s), in order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub inputs: Vec<String>,
-    /// The block's fields.
+    /// The Block's fields.
     #[serde(default = "no_args")]
     pub args: Value,
-    /// Whatever an editor keeps about the node, such as where it is drawn.
-    #[serde(default, skip_serializing_if = "Value::is_null")]
-    pub ui: Value,
 }
 
 fn no_args() -> Value {
@@ -50,10 +44,16 @@ impl Pipeline {
         serde_json::from_str(&text).map_err(|e| polars_err!(ComputeError: "{path}: {e}"))
     }
 
-    /// Every node's frame, or why it has none. Only plans are built, so this
-    /// is cheap and runs no query; a source may read a small file's contents,
-    /// such as a sheet. Each node fails on its own: one that reads a failed
-    /// node fails too, and the rest are unaffected.
+    /// Builds a lazy plan for each Node and returns them by Node id. Plans are
+    /// not run or resolved, so column and type errors are not detected here.
+    ///
+    /// Reads a file only if a Block's `apply` does so directly. Scans are read
+    /// later, when the plan is resolved.
+    ///
+    /// Returns `Err` if the Polars version does not match or a Node id is
+    /// duplicated. A Node's entry is `Err` if its Block is unknown, its args or
+    /// input count are invalid, `apply` fails, an input is missing or failed, or
+    /// it depends on a cycle.
     pub fn frames(
         &self,
         registry: &Registry,
@@ -63,6 +63,7 @@ impl Pipeline {
             ComputeError: "the pipeline is for Polars {}, this is Polars {}",
             self.polars, polars::VERSION
         );
+
         let mut ids = HashSet::new();
         for node in &self.nodes {
             polars_ensure!(
@@ -70,12 +71,11 @@ impl Pipeline {
                 Duplicate: "two nodes are called '{}'", node.id
             );
         }
+
         let mut frames = HashMap::new();
         loop {
             let built = frames.len();
             for node in &self.nodes {
-                // a node waits for the inputs that are nodes; one that is
-                // not fails when it is built
                 let waiting = frames.contains_key(node.id.as_str())
                     || node
                         .inputs
@@ -93,6 +93,7 @@ impl Pipeline {
                 break;
             }
         }
+
         for node in &self.nodes {
             frames
                 .entry(node.id.as_str())
@@ -102,11 +103,11 @@ impl Pipeline {
                     ))
                 });
         }
+
         Ok(frames)
     }
 
-    /// Every node's output schema, or why it has none: what a column picker
-    /// offers, and where a mistake is.
+    /// Collect the schema for all Nodes (or any errors).
     pub fn schemas(
         &self,
         registry: &Registry,
@@ -118,13 +119,13 @@ impl Pipeline {
             .collect())
     }
 
-    /// The outputs' frames, run as one query so that what they share runs once.
-    /// Only the outputs, and what they read, need to build.
+    /// Collect the output frames for the output Nodes (or any errors).
     pub fn run(
         &self,
         registry: &Registry,
     ) -> PolarsResult<Vec<DataFrame>> {
         let mut frames = self.frames(registry)?;
+
         let plans = self
             .outputs
             .iter()
@@ -140,6 +141,10 @@ impl Pipeline {
     }
 }
 
+/// Builds the plan for one Node from its Block, args and input plans.
+///
+/// Returns `Err` if the Block is unknown, the input count is wrong, an input
+/// is missing or failed, the args are invalid, or `apply` fails.
 fn build(
     registry: &Registry,
     node: &Node,
@@ -148,11 +153,13 @@ fn build(
     let entry = registry
         .get(node.block.as_str())
         .ok_or_else(|| polars_err!(ComputeError: "no block is called '{}'", node.block))?;
+
     polars_ensure!(
         node.inputs.len() == entry.inputs.len(),
         ComputeError: "block '{}' reads {:?}, but the node names {} inputs",
         node.block, entry.inputs, node.inputs.len()
     );
+
     let inputs = node
         .inputs
         .iter()
@@ -172,8 +179,8 @@ mod tests {
 
     use super::*;
 
-    /// A pipeline over a small CSV: the vehicles whose peak beats 2.
-    fn pipeline(csv: &str) -> Value {
+    /// A Pipeline over a small Parquet file: the vehicles whose peak beats 2.
+    fn pipeline(path: &str) -> Value {
         json!({
             "polars": polars::VERSION,
             "outputs": ["loud"],
@@ -186,7 +193,10 @@ mod tests {
                     "by": [{"Column": "vehicle"}],
                     "aggs": [serde_json::to_value(col("x").max().alias("peak")).unwrap()],
                 }},
-                {"id": "raw", "block": "scan_csv", "args": {"path": csv, "columns": ["vehicle", "x"]}},
+                {"id": "raw", "block": "scan_parquet", "args": {"path": path, "columns": [
+                    ["vehicle", serde_json::to_value(DataType::String).unwrap()],
+                    ["x", serde_json::to_value(DataType::Float64).unwrap()],
+                ]}},
             ],
         })
     }
@@ -195,7 +205,7 @@ mod tests {
         serde_json::from_value(value).unwrap()
     }
 
-    /// The pipeline's error, or every failed node's.
+    /// The Pipeline's error, or every failed Node's.
     fn error(value: Value) -> String {
         match parse(value).frames(&Registry::with_polars()) {
             Err(e) => e.to_string(),
@@ -208,16 +218,20 @@ mod tests {
         }
     }
 
-    fn csv() -> String {
-        let path = std::env::temp_dir().join("polaroid-engine-test.csv");
-        std::fs::write(&path, "vehicle,x\na,1.0\na,3.0\nb,1.5\n").unwrap();
+    /// Writes the test data to a file named after the test that reads it.
+    fn parquet(test: &str) -> String {
+        let path = std::env::temp_dir().join(format!("polaroid-engine-{test}.parquet"));
+        let mut frame = df!("vehicle" => ["a", "a", "b"], "x" => [1.0, 3.0, 1.5]).unwrap();
+        ParquetWriter::new(std::fs::File::create(&path).unwrap())
+            .finish(&mut frame)
+            .unwrap();
         path.to_string_lossy()
             .into_owned()
     }
 
     #[test]
     fn a_pipeline_runs_its_blocks_and_expressions_in_graph_order() -> PolarsResult<()> {
-        let out = parse(pipeline(&csv())).run(&Registry::with_polars())?;
+        let out = parse(pipeline(&parquet("run"))).run(&Registry::with_polars())?;
         let vehicles = out[0].column("vehicle")?;
         assert_eq!(vehicles.len(), 1);
         assert_eq!(
@@ -231,19 +245,19 @@ mod tests {
 
     #[test]
     fn mistakes_are_named_before_anything_runs() {
-        let mut cycle = pipeline("unused.csv");
+        let mut cycle = pipeline("unused.parquet");
         cycle["nodes"][2]["inputs"] = json!(["loud"]);
         assert!(error(cycle).contains("cycle"));
 
-        let mut dangling = pipeline("unused.csv");
+        let mut dangling = pipeline("unused.parquet");
         dangling["nodes"][0]["inputs"] = json!(["peeks"]);
         assert!(error(dangling).contains("'peeks', which is no node"));
 
-        let mut version = pipeline("unused.csv");
+        let mut version = pipeline("unused.parquet");
         version["polars"] = json!("0.0.1");
         assert!(error(version).contains("for Polars 0.0.1"));
 
-        let mut block = pipeline(&csv());
+        let mut block = pipeline("unused.parquet");
         block["nodes"][0]["block"] = json!("filtre");
         let message = error(block);
         assert!(message.contains("node 'loud'") && message.contains("'filtre'"));
@@ -251,7 +265,7 @@ mod tests {
 
     #[test]
     fn a_failed_node_fails_what_reads_it_and_nothing_else() -> PolarsResult<()> {
-        let mut broken = pipeline(&csv());
+        let mut broken = pipeline(&parquet("failed-node"));
         broken["nodes"][1]["block"] = json!("group_bye");
         let pipeline = parse(broken);
         let schemas = pipeline.schemas(&Registry::with_polars())?;

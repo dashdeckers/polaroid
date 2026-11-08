@@ -1,5 +1,4 @@
-//! The standard Polars repertoire as blocks: the `LazyFrame` methods, their
-//! expressions in Polars' own JSON form.
+//! The standard Polars repertoire.
 
 use polars::prelude::*;
 use schemars::JsonSchema;
@@ -30,8 +29,9 @@ pub struct Select {
 impl Block for Select {
     fn apply(
         &self,
-        lf: LazyFrame,
+        inputs: Vec<LazyFrame>,
     ) -> PolarsResult<LazyFrame> {
+        let [lf] = take(inputs)?;
         Ok(lf.select(self.exprs.clone()))
     }
 }
@@ -46,8 +46,9 @@ pub struct WithColumns {
 impl Block for WithColumns {
     fn apply(
         &self,
-        lf: LazyFrame,
+        inputs: Vec<LazyFrame>,
     ) -> PolarsResult<LazyFrame> {
+        let [lf] = take(inputs)?;
         Ok(lf.with_columns(self.exprs.clone()))
     }
 }
@@ -62,8 +63,9 @@ pub struct Filter {
 impl Block for Filter {
     fn apply(
         &self,
-        lf: LazyFrame,
+        inputs: Vec<LazyFrame>,
     ) -> PolarsResult<LazyFrame> {
+        let [lf] = take(inputs)?;
         Ok(self
             .predicates
             .iter()
@@ -86,8 +88,9 @@ pub struct GroupBy {
 impl Block for GroupBy {
     fn apply(
         &self,
-        lf: LazyFrame,
+        inputs: Vec<LazyFrame>,
     ) -> PolarsResult<LazyFrame> {
+        let [lf] = take(inputs)?;
         let groups = match self.maintain_order {
             true => lf.group_by_stable(self.by.clone()),
             false => lf.group_by(self.by.clone()),
@@ -108,7 +111,7 @@ pub struct Join {
 impl Block for Join {
     const INPUTS: &'static [&'static str] = &["left", "right"];
 
-    fn apply_all(
+    fn apply(
         &self,
         inputs: Vec<LazyFrame>,
     ) -> PolarsResult<LazyFrame> {
@@ -131,7 +134,7 @@ pub struct Concat {}
 impl Block for Concat {
     const INPUTS: &'static [&'static str] = &["top", "bottom"];
 
-    fn apply_all(
+    fn apply(
         &self,
         inputs: Vec<LazyFrame>,
     ) -> PolarsResult<LazyFrame> {
@@ -152,8 +155,9 @@ pub struct Sort {
 impl Block for Sort {
     fn apply(
         &self,
-        lf: LazyFrame,
+        inputs: Vec<LazyFrame>,
     ) -> PolarsResult<LazyFrame> {
+        let [lf] = take(inputs)?;
         let options = SortMultipleOptions::default().with_order_descending(self.descending);
         Ok(lf.sort_by_exprs(self.by.clone(), options))
     }
@@ -170,8 +174,9 @@ pub struct Unique {
 impl Block for Unique {
     fn apply(
         &self,
-        lf: LazyFrame,
+        inputs: Vec<LazyFrame>,
     ) -> PolarsResult<LazyFrame> {
+        let [lf] = take(inputs)?;
         let subset = self
             .subset
             .as_deref()
@@ -196,8 +201,9 @@ pub struct Unpivot {
 impl Block for Unpivot {
     fn apply(
         &self,
-        lf: LazyFrame,
+        inputs: Vec<LazyFrame>,
     ) -> PolarsResult<LazyFrame> {
+        let [lf] = take(inputs)?;
         Ok(lf.unpivot(UnpivotArgsDSL {
             on: Some(names(&self.on)),
             index: names(&self.index),
@@ -223,8 +229,9 @@ pub struct Explode {
 impl Block for Explode {
     fn apply(
         &self,
-        lf: LazyFrame,
+        inputs: Vec<LazyFrame>,
     ) -> PolarsResult<LazyFrame> {
+        let [lf] = take(inputs)?;
         Ok(lf.explode(names(&self.columns), EXPLODE))
     }
 }
@@ -239,8 +246,9 @@ pub struct Drop {
 impl Block for Drop {
     fn apply(
         &self,
-        lf: LazyFrame,
+        inputs: Vec<LazyFrame>,
     ) -> PolarsResult<LazyFrame> {
+        let [lf] = take(inputs)?;
         Ok(lf.drop(names(&self.columns)))
     }
 }
@@ -255,8 +263,9 @@ pub struct DropNulls {
 impl Block for DropNulls {
     fn apply(
         &self,
-        lf: LazyFrame,
+        inputs: Vec<LazyFrame>,
     ) -> PolarsResult<LazyFrame> {
+        let [lf] = take(inputs)?;
         Ok(lf.drop_nulls(Some(names(&self.columns))))
     }
 }
@@ -272,14 +281,14 @@ pub struct Rename {
 impl Block for Rename {
     fn apply(
         &self,
-        lf: LazyFrame,
+        inputs: Vec<LazyFrame>,
     ) -> PolarsResult<LazyFrame> {
+        let [lf] = take(inputs)?;
         Ok(lf.rename(&self.existing, &self.new, true))
     }
 }
 
-/// The same frame, computed once however many nodes read it. Polars finds
-/// most shared work itself, but not where the readers take different columns.
+/// Explicitly cache of a frame.
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Cache {}
@@ -287,8 +296,9 @@ pub struct Cache {}
 impl Block for Cache {
     fn apply(
         &self,
-        lf: LazyFrame,
+        inputs: Vec<LazyFrame>,
     ) -> PolarsResult<LazyFrame> {
+        let [lf] = take(inputs)?;
         Ok(lf.cache())
     }
 }
@@ -303,8 +313,9 @@ pub struct Limit {
 impl Block for Limit {
     fn apply(
         &self,
-        lf: LazyFrame,
+        inputs: Vec<LazyFrame>,
     ) -> PolarsResult<LazyFrame> {
+        let [lf] = take(inputs)?;
         Ok(lf.limit(self.n))
     }
 }
