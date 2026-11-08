@@ -25,7 +25,7 @@ impl Block for ScanParquet {
             .map(|(name, dtype)| Field::new(name.into(), dtype.clone()))
             .collect();
 
-            let options = ParquetOptions {
+        let options = ParquetOptions {
             schema: Some(Arc::new(schema)),
             ..Default::default()
         };

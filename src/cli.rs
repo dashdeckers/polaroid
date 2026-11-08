@@ -9,7 +9,6 @@ const USAGE: &str = "usage:
   catalog                         every block's args, as JSON Schema";
 
 pub fn cli(registry: Registry) -> PolarsResult<()> {
-
     let args: Vec<String> = std::env::args()
         .skip(1)
         .collect();
