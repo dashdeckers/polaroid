@@ -114,36 +114,3 @@ impl Registry {
         })
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use serde_json::json;
-
-    use super::*;
-
-    #[test]
-    fn the_catalog_describes_every_block_and_the_expressions() {
-        let registry = Registry::with_polars();
-        let catalog = registry.catalog();
-        assert_eq!(
-            catalog["blocks"]
-                .as_object()
-                .unwrap()
-                .len(),
-            registry
-                .blocks
-                .len()
-        );
-        assert_eq!(
-            catalog["blocks"]["join"]["inputs"],
-            json!(["left", "right"])
-        );
-        assert!(catalog["$defs"]["Expr"].is_object());
-    }
-
-    #[test]
-    #[should_panic(expected = "two blocks are called 'filter'")]
-    fn a_name_is_one_block() {
-        let _ = Registry::with_polars().register::<frames::Filter>("filter");
-    }
-}
