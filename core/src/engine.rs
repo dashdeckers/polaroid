@@ -40,7 +40,12 @@ fn no_args() -> Value {
 
 impl Pipeline {
     pub fn load(path: &str) -> PolarsResult<Self> {
-        let text = std::fs::read_to_string(path)?;
+        let text = std::fs::read_to_string(path).map_err(|e| {
+            PolarsError::from(e).context(
+                path.to_owned()
+                    .into(),
+            )
+        })?;
         serde_json::from_str(&text).map_err(|e| polars_err!(ComputeError: "{path}: {e}"))
     }
 
@@ -115,7 +120,12 @@ impl Pipeline {
         Ok(self
             .frames(registry)?
             .into_iter()
-            .map(|(id, frame)| (id, frame.and_then(|mut frame| frame.collect_schema())))
+            .map(|(id, frame)| {
+                (
+                    id,
+                    frame.and_then(|mut frame| guard(|| frame.collect_schema())),
+                )
+            })
             .collect())
     }
 
@@ -137,7 +147,7 @@ impl Pipeline {
             })
             .collect::<PolarsResult<Vec<_>>>()?;
 
-        LazyFrame::collect_all_with_engine(plans, Engine::Streaming, OptFlags::default())
+        guard(|| LazyFrame::collect_all_with_engine(plans, Engine::Streaming, OptFlags::default()))
     }
 }
 
@@ -170,5 +180,21 @@ fn build(
         })
         .collect::<PolarsResult<_>>()?;
 
-    entry.build(node.args.clone(), inputs)
+    guard(|| entry.build(node.args.clone(), inputs))
+}
+
+/// Runs `f`, returning a panic as `Err`.
+fn guard<T>(f: impl FnOnce() -> PolarsResult<T>) -> PolarsResult<T> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).unwrap_or_else(|panic| {
+        let message = panic
+            .downcast_ref::<&str>()
+            .copied()
+            .or_else(|| {
+                panic
+                    .downcast_ref::<String>()
+                    .map(String::as_str)
+            })
+            .unwrap_or("no message");
+        Err(polars_err!(ComputeError: "panicked: {message}"))
+    })
 }
