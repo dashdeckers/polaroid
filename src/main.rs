@@ -1,6 +1,13 @@
-use polaroid::Registry;
-use polaroid::polars::prelude::PolarsResult;
+use std::process::ExitCode;
 
-fn main() -> PolarsResult<()> {
-    polaroid::cli(Registry::with_polars())
+use polaroid::Registry;
+
+fn main() -> ExitCode {
+    match polaroid::cli(Registry::with_polars()) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("{e}");
+            ExitCode::FAILURE
+        }
+    }
 }

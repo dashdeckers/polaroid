@@ -21,3 +21,4 @@ keywords = [
 
 [dependencies]
 polaroid_core = { path = "core" }
+serde_json = "1"
