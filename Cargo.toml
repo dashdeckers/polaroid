@@ -1,5 +1,5 @@
 [workspace]
-members = ["core"]
+members = ["core", "gui"]
 
 [package]
 name = "polaroid"
@@ -19,5 +19,10 @@ keywords = [
     "visualization",
 ]
 
+[features]
+# A `gui` command: the visual pipeline editor.
+gui = ["dep:polaroid_gui"]
+
 [dependencies]
 polaroid_core = { path = "core" }
+polaroid_gui = { path = "gui", optional = true }

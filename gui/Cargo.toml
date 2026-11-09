@@ -1,0 +1,13 @@
+[package]
+name = "polaroid_gui"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+polaroid_core = { path = "../core" }
+iced = { version = "0.14", features = ["canvas", "tokio"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+tokio = { version = "1", features = ["process"] }
+
+[dev-dependencies]
+iced_test = "0.14"

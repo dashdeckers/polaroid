@@ -5,7 +5,8 @@
 //! turns its input frames into one output frame.
 //!
 //! To add Blocks, implement [`Block`], register them on a [`Registry`] and
-//! pass it to [`cli`].
+//! pass it to [`cli`]. With the `gui` feature, [`cli`] also opens a visual
+//! editor for Pipelines.
 //!
 //! Expressions in a Pipeline file use Polars' internal JSON format, so a
 //! Pipeline only runs on the exact Polars version it names. Use the

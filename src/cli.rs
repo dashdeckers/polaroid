@@ -6,7 +6,8 @@ use crate::{Pipeline, Registry};
 const USAGE: &str = "usage:
   run <pipeline.json> <out-dir>   each output to <out-dir>/<id>.parquet
   check <pipeline.json>           every node's columns, or its error
-  catalog                         every block's args, as JSON Schema";
+  catalog                         every block's args, as JSON Schema
+  gui <pipeline.json>             edit and run the pipeline visually";
 
 pub fn cli(registry: Registry) -> PolarsResult<()> {
     let args: Vec<String> = std::env::args()
@@ -51,6 +52,15 @@ pub fn cli(registry: Registry) -> PolarsResult<()> {
         }
 
         ["catalog"] => println!("{:#}", registry.catalog()),
+
+        #[cfg(feature = "gui")]
+        ["gui", pipeline] => polaroid_gui::run(registry, pipeline)
+            .map_err(|e| polars_err!(ComputeError: "gui: {e}"))?,
+
+        #[cfg(not(feature = "gui"))]
+        ["gui", ..] => polars_bail!(
+            ComputeError: "built without the `gui` feature: rebuild with `--features gui`"
+        ),
 
         _ => polars_bail!(ComputeError: "{USAGE}"),
     }
