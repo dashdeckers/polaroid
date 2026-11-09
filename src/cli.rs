@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::fs::File;
+use std::time::Instant;
 
 use crate::polars::prelude::*;
 use crate::{Pipeline, Registry};
@@ -9,11 +10,45 @@ const USAGE: &str = "usage:
   check <pipeline.json>           every node's columns or error, as JSON
   catalog                         every block's args, as JSON Schema";
 
+fn start_log() {
+    let started = Instant::now();
+    match File::create("polaroid.log") {
+        Ok(file) => {
+            // fails if a logger is already set, which then stays in charge
+            let _ = fern::Dispatch::new()
+                .format(move |out, message, record| {
+                    let seconds = started
+                        .elapsed()
+                        .as_secs_f64();
+                    out.finish(format_args!(
+                        "{seconds:9.3} {:<5} {message}",
+                        record.level()
+                    ))
+                })
+                .chain(file)
+                .apply();
+        }
+        Err(e) => eprintln!("polaroid.log: {e}"),
+    }
+}
+
 pub fn cli(registry: Registry) -> PolarsResult<()> {
     let args: Vec<String> = std::env::args()
         .skip(1)
         .collect();
 
+    start_log();
+    log::info!("polaroid {}", args.join(" "));
+
+    command(registry, &args)
+        .inspect(|()| log::info!("done"))
+        .inspect_err(|e| log::error!("{e}"))
+}
+
+fn command(
+    registry: Registry,
+    args: &[String],
+) -> PolarsResult<()> {
     let args: Vec<&str> = args
         .iter()
         .map(String::as_str)
@@ -29,6 +64,7 @@ pub fn cli(registry: Registry) -> PolarsResult<()> {
                 .zip(pipeline.run(&registry)?)
             {
                 let path = format!("{out}/{id}.parquet");
+                log::info!("writing {} rows to {path}", frame.height());
                 ParquetWriter::new(File::create(&path)?).finish(&mut frame)?;
                 println!("{} rows to {path}", frame.height());
             }

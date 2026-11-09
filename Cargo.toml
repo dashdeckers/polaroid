@@ -20,5 +20,7 @@ keywords = [
 ]
 
 [dependencies]
+fern = "0.7.1"
+log = "0.4"
 polaroid_core = { path = "core" }
 serde_json = "1"
