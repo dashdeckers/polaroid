@@ -1,0 +1,12 @@
+newline_style = "Unix"
+use_field_init_shorthand = true
+
+# We have a strong preference for vertical layout:
+fn_params_layout = "Vertical"
+chain_width = 20
+array_width = 30
+
+# Nightly only:
+imports_layout = "HorizontalVertical"
+imports_granularity = "Module"
+group_imports = "StdExternalCrate"
