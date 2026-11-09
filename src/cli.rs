@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fs::File;
 
 use crate::polars::prelude::*;
@@ -5,7 +6,7 @@ use crate::{Pipeline, Registry};
 
 const USAGE: &str = "usage:
   run <pipeline.json> <out-dir>   each output to <out-dir>/<id>.parquet
-  check <pipeline.json>           every node's columns, or its error
+  check <pipeline.json>           every node's columns or error, as JSON
   catalog                         every block's args, as JSON Schema";
 
 pub fn cli(registry: Registry) -> PolarsResult<()> {
@@ -35,19 +36,25 @@ pub fn cli(registry: Registry) -> PolarsResult<()> {
 
         ["check", pipeline] => {
             let pipeline = Pipeline::load(pipeline)?;
-            let schemas = pipeline.schemas(&registry)?;
-            for node in &pipeline.nodes {
-                match &schemas[node.id.as_str()] {
-                    Ok(schema) => println!(
-                        "{}: {:?}",
-                        node.id,
-                        schema
-                            .iter_names()
-                            .collect::<Vec<_>>()
-                    ),
-                    Err(e) => println!("{}: {e}", node.id),
-                }
-            }
+            let checks: BTreeMap<&str, Result<Vec<String>, String>> = pipeline
+                .schemas(&registry)?
+                .into_iter()
+                .map(|(id, schema)| {
+                    let columns = schema
+                        .map(|schema| {
+                            schema
+                                .iter()
+                                .map(|(name, dtype)| format!("{name}: {dtype}"))
+                                .collect()
+                        })
+                        .map_err(|e| e.to_string());
+                    (id, columns)
+                })
+                .collect();
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&checks).expect("strings serialize")
+            );
         }
 
         ["catalog"] => println!("{:#}", registry.catalog()),

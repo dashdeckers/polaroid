@@ -1527,6 +1527,7 @@ name = "polaroid"
 version = "0.1.0"
 dependencies = [
  "polaroid_core",
+ "serde_json",
 ]
 
 [[package]]
