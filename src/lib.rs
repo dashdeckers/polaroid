@@ -10,6 +10,9 @@
 //! Expressions in a Pipeline file use Polars' internal JSON format, so a
 //! Pipeline only runs on the exact Polars version it names. Use the
 //! re-exported [`polars`] so that your Blocks use that version too.
+//!
+//! Polaroid logs through the [`log`] crate. [`cli`] writes those lines to a
+//! fresh `polaroid.log` in the working directory, created on startup.
 
 mod cli;
 

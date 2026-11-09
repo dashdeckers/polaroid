@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::time::Instant;
 
 use polars::prelude::*;
 use schemars::JsonSchema;
@@ -136,6 +137,12 @@ impl Pipeline {
     ) -> PolarsResult<Vec<DataFrame>> {
         let mut frames = self.frames(registry)?;
 
+        for node in &self.nodes {
+            if let Some(Err(e)) = frames.get(node.id.as_str()) {
+                log::warn!("{e}");
+            }
+        }
+
         let plans = self
             .outputs
             .iter()
@@ -147,7 +154,19 @@ impl Pipeline {
             })
             .collect::<PolarsResult<Vec<_>>>()?;
 
-        guard(|| LazyFrame::collect_all_with_engine(plans, Engine::Streaming, OptFlags::default()))
+        log::debug!(
+            "plan:\n{}",
+            guard(|| LazyFrame::explain_all(plans.clone(), OptFlags::default()))
+                .unwrap_or_else(|e| e.to_string())
+        );
+
+        log::info!("collecting {} outputs", plans.len());
+        let started = Instant::now();
+        let frames = guard(|| {
+            LazyFrame::collect_all_with_engine(plans, Engine::Streaming, OptFlags::default())
+        })?;
+        log::info!("collected in {:.2?}", started.elapsed());
+        Ok(frames)
     }
 }
 
