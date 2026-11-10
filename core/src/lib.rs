@@ -1,3 +1,6 @@
+// we communicate with child processes via stdout
+#![deny(clippy::print_stdout)]
+
 mod block;
 mod engine;
 pub mod frames;

@@ -40,8 +40,13 @@ fn no_args() -> Value {
 }
 
 impl Pipeline {
+    /// Reads a Pipeline from the file at `path`, or from stdin if that is `-`.
     pub fn load(path: &str) -> PolarsResult<Self> {
-        let text = std::fs::read_to_string(path).map_err(|e| {
+        let text = match path {
+            "-" => std::io::read_to_string(std::io::stdin()),
+            _ => std::fs::read_to_string(path),
+        }
+        .map_err(|e| {
             PolarsError::from(e).context(
                 path.to_owned()
                     .into(),
