@@ -5,7 +5,7 @@ use polars_plan::dsl::functions as dsl;
 use polars_plan::plans::AExprSorted;
 
 use super::Payload::{Except, Fields, Named};
-use super::{Method, Namespace};
+use super::{Method, Namespace, WithDefault};
 
 /// The kinds of node here that are no Methods. The tests want every kind to
 /// be read by a Method or listed.
@@ -94,9 +94,11 @@ pub(super) fn methods() -> Vec<Result<Method, String>> {
         function.method("round_sig_figs",          [],                  Fields,                     |s, []| s.round_sig_figs(1)),
         function.method("set_sorted",              [],                  Fields,
             |s, []| s.set_sorted_flag(AExprSorted::default())),
-        function.method("shift",                   ["n"],               Fields,                     |s, [n]| s.shift(n)),
+        function.method("shift",                   ["n"],               Fields,                     |s, [n]| s.shift(n))
+            .with_default(["n"], lit(1)),
         function.method("shift_and_fill",          ["n", "fill_value"], Fields,
-            |s, [n, fill_value]| s.shift_and_fill(n, fill_value)),
+            |s, [n, fill_value]| s.shift_and_fill(n, fill_value))
+            .with_default(["n"], lit(1)),
         function.method("struct",                  ["*exprs"],          Fields,                     |_, [exprs]| as_struct(vec![exprs])),
         function.method("sum_horizontal",          ["*exprs"],          Fields,
             |_, [exprs]| dsl::sum_horizontal([exprs], true)),
@@ -138,9 +140,12 @@ pub(super) fn methods() -> Vec<Result<Method, String>> {
             |_, [start, end]| dsl::datetime_range(Some(start), Some(end), Some(Duration::parse("1d")), None, ClosedWindow::Both, None, None)),
         range.method("datetime_ranges", ["start", "end"], Except(&["arg_type"]),
             |_, [start, end]| dsl::datetime_ranges(Some(start), Some(end), Some(Duration::parse("1d")), None, ClosedWindow::Both, None, None)),
-        range.method("int_range",       ["start", "end"], Fields,                   |_, [start, end]| int_range(start, end, 1, DataType::Int64)),
+        range.method("int_range",       ["start", "end"], Fields,                   |_, [start, end]| int_range(start, end, 1, DataType::Int64))
+            .with_default(["start"], lit(0)),
         range.method("int_ranges",      ["start", "end", "step"], Fields,
-            |_, [start, end, step]| int_ranges(start, end, step, DataType::Int64)),
+            |_, [start, end, step]| int_ranges(start, end, step, DataType::Int64))
+            .with_default(["start"], lit(0))
+            .with_default(["step"], lit(1)),
         range.method("linear_space",    ["start", "end", "num_samples"], Fields,
             |_, [start, end, num_samples]| linear_space(start, end, num_samples, ClosedInterval::Both)),
         range.method("linear_spaces",   ["start", "end", "num_samples"], Except(&["array_width"]),

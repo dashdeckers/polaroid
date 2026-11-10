@@ -139,18 +139,20 @@ fn method<'a>(
         .expect("the method is in the table")
 }
 
-/// The node of `method` called on a column named `receiver`, each input a
-/// column of its own name.
+/// The node of `method` called on a column named `receiver`, each input
+/// without default a column of its own name.
 fn filled(method: &Method) -> Value {
     let mut node = method.call(json!({ "Column": "receiver" }));
     for input in &method.inputs {
         let column = json!({ "Column": input.name });
-        *node
+        let value = node
             .pointer_mut(&input.at)
-            .expect("the input is in the node") = match input.is_variadic {
-            true => json!([column]),
-            false => column,
-        };
+            .expect("the input is in the node");
+        match input.is_variadic {
+            true => *value = json!([column]),
+            false if value.is_null() => *value = column,
+            false => {}
+        }
     }
     node
 }
