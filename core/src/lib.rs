@@ -5,6 +5,7 @@ mod block;
 mod engine;
 pub mod frames;
 pub mod io;
+pub mod methods;
 mod registry;
 
 pub use block::{Block, take};
