@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::fs::File;
+use std::io::IsTerminal;
 use std::time::Instant;
 
 use crate::polars::prelude::*;
@@ -7,8 +8,11 @@ use crate::{Pipeline, Registry};
 
 const USAGE: &str = "usage:
   run <pipeline.json> <out-dir>   each output to <out-dir>/<id>.parquet
-  check <pipeline.json>           every node's columns or error, as JSON
-  catalog                         every block's args, as JSON Schema";
+  run <pipeline.json>             the one output to stdout, as Parquet
+  check <pipeline.json>           every node's columns and types, or error, as JSON
+  catalog                         every block's args, as JSON Schema
+
+a <pipeline.json> of `-` is read from stdin";
 
 fn start_log() {
     let started = Instant::now();
@@ -45,6 +49,7 @@ pub fn cli(registry: Registry) -> PolarsResult<()> {
         .inspect_err(|e| log::error!("{e}"))
 }
 
+#[allow(clippy::print_stdout)]
 fn command(
     registry: Registry,
     args: &[String],
@@ -70,26 +75,44 @@ fn command(
             }
         }
 
+        ["run", pipeline] => {
+            polars_ensure!(
+                !std::io::stdout().is_terminal(),
+                ComputeError: "stdout is a terminal: redirect or pipe it to take the Parquet"
+            );
+            let pipeline = Pipeline::load(pipeline)?;
+            polars_ensure!(
+                pipeline.outputs.len() == 1,
+                ComputeError: "stdout takes one output, the pipeline has {}", pipeline.outputs.len()
+            );
+            let mut frame = pipeline
+                .run(&registry)?
+                .remove(0);
+            log::info!("writing {} rows to stdout", frame.height());
+            ParquetWriter::new(std::io::stdout()).finish(&mut frame)?;
+        }
+
         ["check", pipeline] => {
             let pipeline = Pipeline::load(pipeline)?;
-            let checks: BTreeMap<&str, Result<Vec<String>, String>> = pipeline
-                .schemas(&registry)?
-                .into_iter()
+            let schemas = pipeline.schemas(&registry)?;
+            let checks: BTreeMap<_, _> = schemas
+                .iter()
                 .map(|(id, schema)| {
                     let columns = schema
+                        .as_ref()
                         .map(|schema| {
                             schema
                                 .iter()
-                                .map(|(name, dtype)| format!("{name}: {dtype}"))
-                                .collect()
+                                .map(|(name, dtype)| (name.as_str(), dtype))
+                                .collect::<Vec<_>>()
                         })
                         .map_err(|e| e.to_string());
-                    (id, columns)
+                    (*id, columns)
                 })
                 .collect();
             println!(
                 "{}",
-                serde_json::to_string_pretty(&checks).expect("strings serialize")
+                serde_json::to_string_pretty(&checks).expect("columns serialize")
             );
         }
 

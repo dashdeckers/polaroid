@@ -14,6 +14,9 @@
 //! Polaroid logs through the [`log`] crate. [`cli`] writes those lines to a
 //! fresh `polaroid.log` in the working directory, created on startup.
 
+// we communicate with child processes via stdout
+#![deny(clippy::print_stdout)]
+
 mod cli;
 
 pub use cli::cli;
