@@ -1547,6 +1547,7 @@ version = "0.1.0"
 dependencies = [
  "log",
  "polars",
+ "polars-async",
  "polars-plan",
  "schemars",
  "serde",

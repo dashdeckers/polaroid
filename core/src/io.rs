@@ -1,57 +1,41 @@
+use polars::io::path_utils::expand_paths;
 use polars::prelude::*;
 use schemars::JsonSchema;
 use serde::Deserialize;
 
 use crate::Block;
 
-/// Reads a Parquet file, or every file under a directory recursively.
+/// Reads a Parquet file, every file under a directory recursively, or a glob.
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ScanParquet {
     pub path: String,
-    pub columns: Vec<(String, DataType)>,
 }
 
 impl Block for ScanParquet {
     const INPUTS: &'static [&'static str] = &[];
 
+    /// Lists the files, but reads none.
     fn apply(
         &self,
         _: Vec<LazyFrame>,
     ) -> PolarsResult<LazyFrame> {
-        let schema: Schema = self
-            .columns
+        let path = [PlRefPath::new(&self.path)];
+        let files = polars_async::ASYNC.block_on(expand_paths(&path, true, &[], &mut None))?;
+        polars_ensure!(!files.is_empty(), ComputeError: "no Parquet files under '{}'", self.path);
+
+        let scans = files
             .iter()
-            .map(|(name, dtype)| Field::new(name.into(), dtype.clone()))
-            .collect();
+            .map(|file| LazyFrame::scan_parquet(file.clone(), Default::default()))
+            .collect::<PolarsResult<Vec<_>>>()?;
 
-        let options = ParquetOptions {
-            schema: Some(Arc::new(schema)),
-            ..Default::default()
-        };
-
-        let args = UnifiedScanArgs {
-            missing_columns_policy: MissingColumnsPolicy::Insert,
-            extra_columns_policy: ExtraColumnsPolicy::Ignore,
-            glob: true,
-            ..Default::default()
-        };
-
-        let sources = ScanSources::Paths(
-            [PlRefPath::new(&self.path)]
-                .into_iter()
-                .collect(),
-        );
-
-        let scan: LazyFrame = DslBuilder::scan_parquet(sources, options, args)?
-            .build()
-            .into();
-
-        Ok(scan.select(
-            self.columns
-                .iter()
-                .map(|(name, _)| col(name.as_str()))
-                .collect::<Vec<_>>(),
-        ))
+        concat(
+            scans,
+            UnionArgs {
+                diagonal: true,
+                to_supertypes: true,
+                ..Default::default()
+            },
+        )
     }
 }
