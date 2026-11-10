@@ -3,7 +3,7 @@
 use polars::prelude::*;
 
 use super::Payload::{Fields, Named};
-use super::{Method, Namespace};
+use super::{Method, Namespace, WithDefault};
 
 /// One row for each Method: its name, its inputs, how its payload gives its
 /// options, and the call that builds its node. A function ignores the
@@ -26,8 +26,10 @@ pub(super) fn methods() -> Vec<Result<Method, String>> {
         list.method("mean",     [],                   Fields,                   |s, []| s.list().mean()),
         list.method("median",   [],                   Fields,                   |s, []| s.list().median()),
         list.method("min",      [],                   Fields,                   |s, []| s.list().min()),
-        list.method("shift",    ["n"],                Fields,                   |s, [n]| s.list().shift(n)),
-        list.method("slice",    ["offset", "length"], Fields,                   |s, [offset, length]| s.list().slice(offset, length)),
+        list.method("shift",    ["n"],                Fields,                   |s, [n]| s.list().shift(n))
+            .with_default(["n"], lit(1)),
+        list.method("slice",    ["offset", "length"], Fields,                   |s, [offset, length]| s.list().slice(offset, length))
+            .with_default(["length"], lit(NULL)),
         list.method("sort",     [],                   Fields,                   |s, []| s.list().sort(SortOptions::default())),
         list.method("std",      [],                   Named(&["ddof"]),         |s, []| s.list().std(1)),
         list.method("sum",      [],                   Fields,                   |s, []| s.list().sum()),

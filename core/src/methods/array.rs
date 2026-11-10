@@ -3,7 +3,7 @@
 use polars::prelude::*;
 
 use super::Payload::{Fields, Named};
-use super::{Method, Namespace};
+use super::{Method, Namespace, WithDefault};
 
 /// One row for each Method: its name, its inputs, how its payload gives its
 /// options, and the call that builds its node. A function ignores the
@@ -28,7 +28,8 @@ pub(super) fn methods() -> Vec<Result<Method, String>> {
         arr.method("mean",     [],            Fields,                       |s, []| s.arr().mean()),
         arr.method("median",   [],            Fields,                       |s, []| s.arr().median()),
         arr.method("min",      [],            Fields,                       |s, []| s.arr().min()),
-        arr.method("shift",    ["n"],         Fields,                       |s, [n]| s.arr().shift(n)),
+        arr.method("shift",    ["n"],         Fields,                       |s, [n]| s.arr().shift(n))
+            .with_default(["n"], lit(1)),
         arr.method("slice",    [],            Named(&["offset", "length"]), |s, []| s.arr().slice(lit(0), lit(1), true)),
         arr.method("sort",     [],            Fields,                       |s, []| s.arr().sort(SortOptions::default())),
         arr.method("std",      [],            Named(&["ddof"]),             |s, []| s.arr().std(1)),

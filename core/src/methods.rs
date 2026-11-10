@@ -41,8 +41,9 @@ pub struct Method {
     pub inputs: Vec<Arg>,
     /// Its other arguments.
     pub options: Vec<Arg>,
-    /// The node, with its options at their defaults. Its receiver and inputs
-    /// are null, and its variadic inputs empty.
+    /// The node, with its options and inputs at their defaults. Its receiver
+    /// is null, as is an input without default, and a variadic input is
+    /// empty.
     node: Value,
 }
 
@@ -59,8 +60,8 @@ pub struct Arg {
 
 impl Method {
     /// The node for this method called on `receiver`, which a function
-    /// ignores. Its options are at their defaults and its inputs are still to
-    /// be filled.
+    /// ignores. Its options and inputs are at their defaults. An input
+    /// without default is null, still to be filled.
     pub fn call(
         &self,
         receiver: Value,
@@ -223,6 +224,44 @@ impl Built for Expr {
 impl Built for PolarsResult<Expr> {
     fn built(self) -> PolarsResult<Expr> {
         self
+    }
+}
+
+/// A row may give inputs a default.
+trait WithDefault {
+    /// Gives each of `inputs` the default `value`, in place of null.
+    ///
+    /// Returns `Err` if the Method has no such input, or it is variadic.
+    fn with_default<const N: usize>(
+        self,
+        inputs: [&str; N],
+        value: Expr,
+    ) -> Self;
+}
+
+impl WithDefault for Result<Method, String> {
+    fn with_default<const N: usize>(
+        self,
+        inputs: [&str; N],
+        value: Expr,
+    ) -> Self {
+        let mut method = self?;
+        let problem = |what: &str| format!("{}.{}: {what}", method.namespace, method.name);
+        let value = serde_json::to_value(&value).map_err(|e| problem(&e.to_string()))?;
+
+        for name in inputs {
+            let at = method
+                .inputs
+                .iter()
+                .find(|input| input.name == name && !input.is_variadic)
+                .map(|input| &input.at)
+                .ok_or_else(|| problem(&format!("no input `{name}` to give a default")))?;
+            *method
+                .node
+                .pointer_mut(at)
+                .expect("a node has its inputs") = value.clone();
+        }
+        Ok(method)
     }
 }
 

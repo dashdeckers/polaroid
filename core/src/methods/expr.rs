@@ -6,7 +6,7 @@ use std::sync::Arc;
 use polars::prelude::*;
 
 use super::Payload::{Except, Fields, Named};
-use super::{Method, Namespace};
+use super::{Method, Namespace, WithDefault};
 
 /// The kinds of node here that are no Methods. The tests want every kind to
 /// be read by a Method or listed.
@@ -62,11 +62,13 @@ pub(super) fn methods() -> Vec<Result<Method, String>> {
         expr.method("len",     [],                   Fields,                      |_, []| len()),
         expr.method("lit",     [],                   Named(&["value"]),           |_, []| lit(0)),
         expr.method("over",    ["*partition_by"],    Fields,                      |s, [partition_by]| s.over([partition_by])),
-        expr.method("slice",   ["offset", "length"], Fields,                      |s, [offset, length]| s.slice(offset, length)),
+        expr.method("slice",   ["offset", "length"], Fields,                      |s, [offset, length]| s.slice(offset, length))
+            .with_default(["length"], lit(NULL)),
         expr.method("sort",    [],                   Fields,                      |s, []| s.sort(SortOptions::default())),
         expr.method("sort_by", ["*by"],              Fields,                      |s, [by]| s.sort_by([by], SortMultipleOptions::default())),
         expr.method("when",    ["predicate", "then", "otherwise"], Fields,
-            |_, [predicate, then, otherwise]| when(predicate).then(then).otherwise(otherwise)),
+            |_, [predicate, then, otherwise]| when(predicate).then(then).otherwise(otherwise))
+            .with_default(["otherwise"], lit(NULL)),
 
         name.method("keep", [], Fields, |s, []| s.name().keep()),
 

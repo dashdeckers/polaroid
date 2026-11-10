@@ -1,7 +1,9 @@
 //! The methods of `.bin`.
 
+use polars::prelude::*;
+
 use super::Payload::{Fields, Named};
-use super::{Method, Namespace};
+use super::{Method, Namespace, WithDefault};
 
 /// One row for each Method: its name, its inputs, how its payload gives its
 /// options, and the call that builds its node. A function ignores the
@@ -16,10 +18,13 @@ pub(super) fn methods() -> Vec<Result<Method, String>> {
         bin.method("contains",    ["literal"],          Fields,                  |s, [literal]| s.binary().contains_literal(literal)),
         bin.method("ends_with",   ["suffix"],           Fields,                  |s, [suffix]| s.binary().ends_with(suffix)),
         bin.method("get",         ["index"],            Named(&["null_on_oob"]), |s, [index]| s.binary().get(index, false)),
-        bin.method("head",        ["n"],                Fields,                  |s, [n]| s.binary().head(n)),
+        bin.method("head",        ["n"],                Fields,                  |s, [n]| s.binary().head(n))
+            .with_default(["n"], lit(5)),
         bin.method("size",        [],                   Fields,                  |s, []| s.binary().size_bytes()),
-        bin.method("slice",       ["offset", "length"], Fields,                  |s, [offset, length]| s.binary().slice(offset, length)),
+        bin.method("slice",       ["offset", "length"], Fields,                  |s, [offset, length]| s.binary().slice(offset, length))
+            .with_default(["length"], lit(NULL)),
         bin.method("starts_with", ["prefix"],           Fields,                  |s, [prefix]| s.binary().starts_with(prefix)),
-        bin.method("tail",        ["n"],                Fields,                  |s, [n]| s.binary().tail(n)),
+        bin.method("tail",        ["n"],                Fields,                  |s, [n]| s.binary().tail(n))
+            .with_default(["n"], lit(5)),
     ]
 }

@@ -3,7 +3,7 @@
 use polars::prelude::*;
 
 use super::Payload::{Fields, Named};
-use super::{Method, Namespace};
+use super::{Method, Namespace, WithDefault};
 
 /// One row for each Method: its name, its inputs, how its payload gives its
 /// options, and the call that builds its node. A function ignores the
@@ -38,9 +38,12 @@ pub(super) fn methods() -> Vec<Result<Method, String>> {
         dt.method("ordinal_day",        [],            Fields,                |s, []| s.dt().ordinal_day()),
         dt.method("quarter",            [],            Fields,                |s, []| s.dt().quarter()),
         dt.method("replace",            ["year", "month", "day", "hour", "minute", "second", "microsecond", "ambiguous"], Fields,
-            |s, [year, month, day, hour, minute, second, microsecond, ambiguous]| s.dt().replace(year, month, day, hour, minute, second, microsecond, ambiguous)),
+            |s, [year, month, day, hour, minute, second, microsecond, ambiguous]| s.dt().replace(year, month, day, hour, minute, second, microsecond, ambiguous))
+            .with_default(["year", "month", "day", "hour", "minute", "second", "microsecond"], lit(NULL))
+            .with_default(["ambiguous"], lit("raise")),
         dt.method("replace_time_zone",  ["ambiguous"], Named(&["time_zone", "non_existent"]),
-            |s, [ambiguous]| s.dt().replace_time_zone(None, ambiguous, NonExistent::Raise)),
+            |s, [ambiguous]| s.dt().replace_time_zone(None, ambiguous, NonExistent::Raise))
+            .with_default(["ambiguous"], lit("raise")),
         dt.method("round",              ["every"],     Fields,                |s, [every]| s.dt().round(every)),
         dt.method("second",             [],            Fields,                |s, []| s.dt().second()),
         dt.method("time",               [],            Fields,                |s, []| s.dt().time()),
@@ -64,11 +67,14 @@ pub(super) fn methods() -> Vec<Result<Method, String>> {
             |_, parts| Expr::Function {
                 input: parts.into(),
                 function: FunctionExpr::TemporalExpr(TemporalFunction::DatetimeFunction { time_unit: TimeUnit::Microseconds, time_zone: None }),
-            }),
+            })
+            .with_default(["hour", "minute", "second", "microsecond"], lit(0))
+            .with_default(["ambiguous"], lit("raise")),
         temporal.method("duration", ["weeks", "days", "hours", "minutes", "seconds", "milliseconds", "microseconds", "nanoseconds"], Named(&["time_unit"]),
             |_, [weeks, days, hours, minutes, seconds, milliseconds, microseconds, nanoseconds]| duration(DurationArgs {
                 weeks, days, hours, minutes, seconds, milliseconds, microseconds, nanoseconds,
                 time_unit: TimeUnit::Microseconds,
-            })),
+            }))
+            .with_default(["weeks", "days", "hours", "minutes", "seconds", "milliseconds", "microseconds", "nanoseconds"], lit(0)),
     ]
 }
