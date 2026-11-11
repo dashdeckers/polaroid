@@ -33,6 +33,9 @@ pub struct Node {
     /// The Block's fields.
     #[serde(default = "no_args")]
     pub args: Value,
+    /// Editor state, such as where the Node is drawn. The engine ignores it.
+    #[serde(default, skip_serializing_if = "Value::is_null")]
+    pub ui: Value,
 }
 
 fn no_args() -> Value {
