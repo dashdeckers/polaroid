@@ -2,8 +2,9 @@
 
 use polars::prelude::*;
 
-use super::Payload::{Fields, Named};
-use super::{Method, Namespace, WithDefault};
+use crate::methods::Method;
+use crate::methods::derive::Payload::{Fields, Named};
+use crate::methods::derive::{Namespace, WithDefault};
 
 /// The kinds of node here that are no Methods. The tests want every kind to
 /// be read by a Method or listed.

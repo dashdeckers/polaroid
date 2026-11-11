@@ -4,8 +4,9 @@ use polars::prelude::*;
 use polars_plan::dsl::functions as dsl;
 use polars_plan::plans::AExprSorted;
 
-use super::Payload::{Except, Fields, Named};
-use super::{Method, Namespace, WithDefault};
+use crate::methods::Method;
+use crate::methods::derive::Payload::{Except, Fields, Named};
+use crate::methods::derive::{Namespace, WithDefault};
 
 /// The kinds of node here that are no Methods. The tests want every kind to
 /// be read by a Method or listed.

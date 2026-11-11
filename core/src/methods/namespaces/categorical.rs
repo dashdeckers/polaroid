@@ -2,8 +2,9 @@
 
 use polars::prelude::*;
 
-use super::Payload::{Fields, Named};
-use super::{Method, Namespace};
+use crate::methods::Method;
+use crate::methods::derive::Namespace;
+use crate::methods::derive::Payload::{Fields, Named};
 
 /// One row for each Method: its name, its inputs, how its payload gives its
 /// options, and the call that builds its node. A function ignores the
