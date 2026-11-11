@@ -65,6 +65,8 @@ impl Registry {
             .register::<frames::DropNulls>("drop_nulls")
             .register::<frames::Rename>("rename")
             .register::<frames::Limit>("limit")
+            // sinks
+            .register::<io::WriteParquet>("write_parquet")
     }
 
     /// Adds a Block to the Registry.

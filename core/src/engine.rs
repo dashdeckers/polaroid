@@ -138,7 +138,8 @@ impl Pipeline {
         Ok(frames)
     }
 
-    /// Collect the schema for all Nodes (or any errors).
+    /// Collect the schema for all Nodes (or any errors). That of a Node that
+    /// writes its frame is of the frame it writes.
     pub fn schemas(
         &self,
         registry: &Registry,
@@ -149,13 +150,18 @@ impl Pipeline {
             .map(|(id, frame)| {
                 (
                     id,
-                    frame.and_then(|mut frame| guard(|| frame.collect_schema())),
+                    frame.and_then(|frame| {
+                        let mut frame = given(&frame);
+                        guard(|| frame.collect_schema())
+                    }),
                 )
             })
             .collect())
     }
 
-    /// Collect the output frames for the output Nodes (or any errors).
+    /// Collect the output frames for the output Nodes (or any errors). Every
+    /// Node that writes its frame does so, output or not, and its frame as an
+    /// output is the one it writes.
     pub fn run(
         &self,
         registry: &Registry,
@@ -178,16 +184,31 @@ impl Pipeline {
             }
         }
 
-        let plans = self
+        let writes: Vec<DslPlan> = self
+            .nodes
+            .iter()
+            .filter_map(|node| match frames.get(node.id.as_str()) {
+                Some(Ok(frame)) if is_sink(frame) => Some(
+                    frame
+                        .logical_plan
+                        .clone(),
+                ),
+                _ => None,
+            })
+            .collect();
+        let mut plans = self
             .outputs
             .iter()
             .map(|id| match frames.remove(id.as_str()) {
-                Some(frame) => frame.map(|frame| frame.logical_plan),
+                Some(frame) => frame.map(|frame| given(&frame).logical_plan),
                 None => Err(polars_err!(
                     ComputeError: "output '{id}' is no node, or is named twice"
                 )),
             })
             .collect::<PolarsResult<Vec<_>>>()?;
+        let outputs = plans.len();
+        // the writes run along, for what they write
+        plans.extend(writes);
 
         log::debug!(
             "plan:\n{}",
@@ -195,11 +216,15 @@ impl Pipeline {
                 .unwrap_or_else(|e| e.to_string())
         );
 
-        log::info!("collecting {} outputs", plans.len());
+        log::info!(
+            "collecting {outputs} outputs and {} writes",
+            plans.len() - outputs
+        );
         let started = Instant::now();
-        let frames = guard(|| {
+        let mut frames = guard(|| {
             LazyFrame::collect_all_with_engine(plans, Engine::Streaming, OptFlags::default())
         })?;
+        frames.truncate(outputs);
         log::info!("collected in {:.2?}", started.elapsed());
         Ok(frames)
     }
@@ -228,13 +253,26 @@ fn build(
         .inputs
         .iter()
         .map(|input| match frames.get(input.as_str()) {
-            Some(Ok(frame)) => Ok(frame.clone()),
+            Some(Ok(frame)) => Ok(given(frame)),
             Some(Err(_)) => Err(polars_err!(ComputeError: "reads '{input}', which failed")),
             None => Err(polars_err!(ComputeError: "reads '{input}', which is no node")),
         })
         .collect::<PolarsResult<_>>()?;
 
     guard(|| entry.build(node.args.clone(), inputs))
+}
+
+/// Whether a Node's plan writes its frame, as to a file.
+pub fn is_sink(frame: &LazyFrame) -> bool {
+    matches!(frame.logical_plan, DslPlan::Sink { .. })
+}
+
+/// The frame that a Node gives its readers: the one it writes, if it writes.
+fn given(frame: &LazyFrame) -> LazyFrame {
+    match &frame.logical_plan {
+        DslPlan::Sink { input, .. } => LazyFrame::from(DslPlan::clone(input)),
+        _ => frame.clone(),
+    }
 }
 
 /// Runs `f`, returning a panic as `Err`.
@@ -285,5 +323,67 @@ mod tests {
             .unwrap();
         assert_eq!(frames.len(), 1);
         assert!(frames[0].equals(&df!("x" => [1, 2]).unwrap()));
+    }
+
+    #[test]
+    fn a_write_runs_and_gives_its_frame() {
+        let registry = Registry::with_polars();
+        let path =
+            std::env::temp_dir().join(format!("polaroid-write-{}.parquet", std::process::id()));
+        let pipeline = serde_json::json!({
+            "polars": polars::VERSION,
+            "nodes": [
+                { "id": "all", "block": "scan_parquet", "args": { "path": "no such file.parquet" } },
+                { "id": "written", "block": "write_parquet", "inputs": ["all"], "args": { "path": path } },
+                { "id": "after", "block": "limit", "inputs": ["written"], "args": { "n": 1 } },
+            ],
+            "outputs": [],
+        });
+        let mut pipeline: Pipeline = serde_json::from_value(pipeline).unwrap();
+
+        // planning a write does not do it
+        let plans = pipeline
+            .frames(&registry)
+            .unwrap();
+        assert!(is_sink(
+            plans["written"]
+                .as_ref()
+                .unwrap()
+        ));
+        assert!(plans["after"].is_ok());
+        assert!(!path.exists());
+
+        let frame = df!("x" => [1, 2, 3]).unwrap();
+        let known = HashMap::from([("all".to_owned(), frame.clone())]);
+        let frames = pipeline
+            .run_from(&registry, &known)
+            .unwrap();
+        assert!(frames.is_empty());
+        let written = LazyFrame::scan_parquet(
+            PlRefPath::new(
+                path.to_str()
+                    .unwrap(),
+            ),
+            Default::default(),
+        )
+        .unwrap()
+        .collect()
+        .unwrap();
+        assert!(written.equals(&frame));
+        std::fs::remove_file(&path).unwrap();
+
+        // a write gives the frame that it writes, to an output and a reader
+        pipeline.outputs = vec![
+            "written".to_owned(),
+            "after".to_owned(),
+        ];
+        let frames = pipeline
+            .run_from(&registry, &known)
+            .unwrap();
+        assert_eq!(frames.len(), 2);
+        assert!(frames[0].equals(&frame));
+        assert_eq!(frames[1].height(), 1);
+        assert!(path.exists());
+        std::fs::remove_file(&path).unwrap();
     }
 }

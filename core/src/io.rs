@@ -3,7 +3,7 @@ use polars::prelude::*;
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-use crate::Block;
+use crate::{Block, take};
 
 /// Reads a Parquet file, every file under a directory recursively, or a glob.
 #[derive(Deserialize, JsonSchema)]
@@ -36,6 +36,31 @@ impl Block for ScanParquet {
                 to_supertypes: true,
                 ..Default::default()
             },
+        )
+    }
+}
+
+/// Writes the frame to a Parquet file, in place of any that is there, and
+/// gives it on unchanged.
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct WriteParquet {
+    pub path: String,
+}
+
+impl Block for WriteParquet {
+    /// Plans the write, which a run of the Pipeline then does.
+    fn apply(
+        &self,
+        inputs: Vec<LazyFrame>,
+    ) -> PolarsResult<LazyFrame> {
+        let [lf] = take(inputs)?;
+        lf.sink(
+            SinkDestination::File {
+                target: SinkTarget::Path(PlRefPath::new(&self.path)),
+            },
+            FileWriteFormat::Parquet(Default::default()),
+            UnifiedSinkArgs::default(),
         )
     }
 }
