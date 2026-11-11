@@ -7,6 +7,7 @@ pub mod frames;
 pub mod io;
 pub mod methods;
 mod registry;
+pub mod schema;
 
 pub use block::{Block, take};
 pub use engine::{Node, Pipeline};

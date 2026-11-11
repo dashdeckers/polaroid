@@ -8,6 +8,7 @@ use schemars::generate::SchemaSettings;
 use serde_json::{Value, json};
 
 use super::{Arg, Method, methods, others, read, rows};
+use crate::schema::{self, resolve, variants};
 
 /// The `$defs` of the JSON Schema of an expression.
 fn defs() -> Value {
@@ -16,70 +17,25 @@ fn defs() -> Value {
     json!(generator.definitions())
 }
 
-/// Follows a `$ref` into `defs`.
-fn resolve<'a>(
-    defs: &'a Value,
-    schema: &'a Value,
-) -> &'a Value {
-    match schema["$ref"].as_str() {
-        Some(path) => &defs[path.trim_start_matches("#/$defs/")],
-        None => schema,
-    }
-}
-
-/// The variants of the enum `schema`: the name of each, and the schema of its
-/// payload if it has one. Empty if `schema` is no enum.
-fn variants(schema: &Value) -> Vec<(&str, Option<&Value>)> {
-    let cases = match schema["oneOf"].as_array() {
-        Some(cases) => cases.as_slice(),
-        // an enum of nothing but names
-        None => std::slice::from_ref(schema),
-    };
-    cases
+/// Whether the schema has an expression where `method` has its receiver and
+/// each input.
+fn inputs_fit(
+    defs: &Value,
+    method: &Method,
+) -> bool {
+    let expr = &defs["Expr"];
+    let is_expr = |at: &String| schema::at(defs, expr, at) == expr;
+    method
+        .receiver
         .iter()
-        .flat_map(|case| {
-            let named = case["const"].as_str();
-            let listed = case["enum"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter_map(Value::as_str);
-            let tagged = case["properties"]
-                .as_object()
-                .filter(|_| schema["oneOf"].is_array())
-                .into_iter()
-                .flatten()
-                .map(|(name, payload)| (name.as_str(), Some(payload)));
-            named
-                .into_iter()
-                .chain(listed)
-                .map(|name| (name, None))
-                .chain(tagged)
-        })
-        .collect()
-}
-
-/// The schema at the JSON pointer `at` of an expression: through the variant
-/// of an enum, or else the field of a struct.
-fn schema_at<'a>(
-    defs: &'a Value,
-    at: &str,
-) -> &'a Value {
-    let mut schema = &defs["Expr"];
-    for key in at
-        .split('/')
-        .skip(1)
-    {
-        let variant = variants(schema)
-            .into_iter()
-            .find(|(name, _)| *name == key);
-        schema = match variant {
-            Some((_, payload)) => payload.unwrap_or(&Value::Null),
-            None => &schema["properties"][key],
-        };
-        schema = resolve(defs, schema);
-    }
-    schema
+        .all(is_expr)
+        && method
+            .inputs
+            .iter()
+            .all(|input| match input.is_variadic {
+                true => is_expr(&format!("{}/0", input.at)),
+                false => is_expr(&input.at),
+            })
 }
 
 /// Whether each option of `method` is a part of a payload of this schema: a
@@ -94,6 +50,7 @@ fn options_fit(
         .options
         .iter()
         .all(|option| {
+            let is_in_schema = !schema::at(defs, &defs["Expr"], &option.at).is_null();
             let key = option
                 .at
                 .strip_prefix(&method.kind)
@@ -107,7 +64,7 @@ fn options_fit(
                 .parse::<usize>()
                 .is_ok_and(|i| !payload["prefixItems"][i].is_null());
             let is_whole = key.is_empty() && !payload.is_null();
-            is_field || is_part || is_whole
+            is_in_schema && (is_field || is_part || is_whole)
         })
 }
 
@@ -158,7 +115,8 @@ fn filled(method: &Method) -> Value {
 }
 
 /// Every kind of node in the schema is read by a Method, or is listed as read
-/// by none, and each Method's options are parts of the payload of its node.
+/// by none. The schema has an expression where a Method has its receiver or
+/// an input, and each of its options is a part of the payload of its node.
 #[test]
 fn every_node_is_a_method_or_listed() {
     let mut problems = Vec::new();
@@ -189,7 +147,7 @@ fn every_node_is_a_method_or_listed() {
 
     let defs = defs();
     for at in &enums {
-        let nodes = variants(schema_at(&defs, at));
+        let nodes = variants(schema::at(&defs, &defs["Expr"], at));
         if nodes.is_empty() {
             problems.push(format!("{at}: the schema has no enum there"));
         }
@@ -212,6 +170,13 @@ fn every_node_is_a_method_or_listed() {
                 (true, true, false) | (true, false, true) => {}
                 (false, false, false) => {
                     for method in readers {
+                        if !inputs_fit(&defs, method) {
+                            problems.push(format!(
+                                "{kind}: {} has a receiver or input where the schema has no \
+                                 expression",
+                                method.name,
+                            ));
+                        }
                         if !options_fit(&defs, method, *payload) {
                             problems.push(format!(
                                 "{kind}: {} has the options {:?}, its payload is {}",
