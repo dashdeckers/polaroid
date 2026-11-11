@@ -65,7 +65,6 @@ impl Registry {
             .register::<frames::DropNulls>("drop_nulls")
             .register::<frames::Rename>("rename")
             .register::<frames::Limit>("limit")
-            .register::<frames::Cache>("cache")
     }
 
     /// Adds a Block to the Registry.
