@@ -8,7 +8,7 @@ use crate::{Pipeline, Registry};
 
 const USAGE: &str = "usage:
   run <pipeline.json> <out-dir>   each output to <out-dir>/<id>.parquet
-  run <pipeline.json>             the one output to stdout, as Parquet
+  run <pipeline.json>             the one output, if there is one, to stdout as Parquet
   check <pipeline.json>           every node's columns and types, or error, as JSON
   catalog                         every block's args, as JSON Schema
 
@@ -76,20 +76,23 @@ fn command(
         }
 
         ["run", pipeline] => {
-            polars_ensure!(
-                !std::io::stdout().is_terminal(),
-                ComputeError: "stdout is a terminal: redirect or pipe it to take the Parquet"
-            );
             let pipeline = Pipeline::load(pipeline)?;
             polars_ensure!(
-                pipeline.outputs.len() == 1,
+                pipeline.outputs.len() <= 1,
                 ComputeError: "stdout takes one output, the pipeline has {}", pipeline.outputs.len()
             );
-            let mut frame = pipeline
+            polars_ensure!(
+                pipeline.outputs.is_empty() || !std::io::stdout().is_terminal(),
+                ComputeError: "stdout is a terminal: redirect or pipe it to take the Parquet"
+            );
+            // with no output, only the writes of the pipeline are done
+            if let Some(mut frame) = pipeline
                 .run(&registry)?
-                .remove(0);
-            log::info!("writing {} rows to stdout", frame.height());
-            ParquetWriter::new(std::io::stdout()).finish(&mut frame)?;
+                .pop()
+            {
+                log::info!("writing {} rows to stdout", frame.height());
+                ParquetWriter::new(std::io::stdout()).finish(&mut frame)?;
+            }
         }
 
         ["check", pipeline] => {
