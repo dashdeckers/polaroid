@@ -7,7 +7,7 @@ use polars::prelude::*;
 use schemars::generate::SchemaSettings;
 use serde_json::{Value, json};
 
-use super::{Arg, Method, methods, others, read, rows};
+use super::{Arg, Method, methods, others, read, rows, text};
 use crate::schema::{self, resolve, variants};
 
 /// The `$defs` of the JSON Schema of an expression.
@@ -338,4 +338,69 @@ fn a_chain_reads_from_its_last_call() {
     assert_eq!(*arg(contains, &method.inputs, "pattern"), json_of(lit("x")));
     assert_eq!(*arg(contains, &method.options, "literal"), json!(false));
     assert_eq!(*arg(contains, &method.options, "strict"), json!(false));
+}
+
+/// An expression is written as Python writes its calls: arguments at their
+/// defaults are left out, and literal arguments are bare values.
+#[test]
+fn an_expression_is_written_as_python_does() {
+    let methods = methods();
+    let written = |expr: Expr| text(&methods, &json_of(expr));
+
+    let chain = col("name")
+        .str()
+        .strip_chars(lit(" "))
+        .str()
+        .to_lowercase()
+        .str()
+        .contains(lit("x"), false)
+        .sum()
+        .gt(lit(2))
+        .alias("many");
+    assert_eq!(
+        written(chain),
+        r#"pl.col("name").str.strip_chars(" ").str.to_lowercase().str.contains("x", strict=False).sum().gt(2).alias("many")"#
+    );
+
+    // an input at its default is left out, and those after it go by name
+    let slice = col("a")
+        .str()
+        .slice(lit(1), lit(NULL));
+    assert_eq!(written(slice), r#"pl.col("a").str.slice(1)"#);
+    let nulls = || lit(NULL);
+    let replace = col("d")
+        .dt()
+        .replace(
+            nulls(),
+            nulls(),
+            lit(1),
+            nulls(),
+            nulls(),
+            nulls(),
+            nulls(),
+            lit("raise"),
+        );
+    assert_eq!(written(replace), r#"pl.col("d").dt.replace(day=1)"#);
+
+    // functions, with a variadic input and with a default
+    assert_eq!(
+        written(coalesce(&[col("a"), col("b"), lit(0)])),
+        r#"pl.coalesce(pl.col("a"), pl.col("b"), 0)"#
+    );
+    let choice = when(col("a").is_null())
+        .then(lit("none"))
+        .otherwise(lit(NULL));
+    assert_eq!(written(choice), r#"pl.when(pl.col("a").is_null(), "none")"#);
+
+    // a data type that is a name, and a literal that is no argument
+    assert_eq!(
+        written(lit(5).strict_cast(DataType::Int8)),
+        "pl.lit(5).cast(pl.Int8)"
+    );
+
+    // a hole, and a node that no method reads
+    let contains = method(&methods, "str", "contains").call(json_of(col("a")));
+    assert_eq!(text(&methods, &contains), r#"pl.col("a").str.contains(_)"#);
+    let unread = json!({ "Display": { "inputs": [], "fmt_str": "" } });
+    assert_eq!(text(&methods, &unread), "<Display>");
 }

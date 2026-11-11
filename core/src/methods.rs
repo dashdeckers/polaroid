@@ -19,11 +19,14 @@ mod structs;
 mod temporal;
 #[cfg(test)]
 mod tests;
+mod text;
 
 use std::fmt::{Display, Write};
 
 use polars::prelude::*;
 use serde_json::Value;
+
+pub use self::text::{arguments, text};
 
 /// How one kind of expression node reads as a method call.
 #[derive(Debug, Clone)]
