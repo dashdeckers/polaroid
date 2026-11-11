@@ -288,21 +288,6 @@ impl Block for Rename {
     }
 }
 
-/// Explicitly cache of a frame.
-#[derive(Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct Cache {}
-
-impl Block for Cache {
-    fn apply(
-        &self,
-        inputs: Vec<LazyFrame>,
-    ) -> PolarsResult<LazyFrame> {
-        let [lf] = take(inputs)?;
-        Ok(lf.cache())
-    }
-}
-
 /// The first `n` rows.
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
