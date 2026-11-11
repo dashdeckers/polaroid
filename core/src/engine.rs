@@ -72,6 +72,16 @@ impl Pipeline {
         &self,
         registry: &Registry,
     ) -> PolarsResult<HashMap<&str, PolarsResult<LazyFrame>>> {
+        self.plans(registry, &HashMap::new())
+    }
+
+    /// As [`Self::frames`], but a Node in `known` is that frame, and is not
+    /// built.
+    fn plans(
+        &self,
+        registry: &Registry,
+        known: &HashMap<String, DataFrame>,
+    ) -> PolarsResult<HashMap<&str, PolarsResult<LazyFrame>>> {
         polars_ensure!(
             self.polars == polars::VERSION,
             ComputeError: "the pipeline is for Polars {}, this is Polars {}",
@@ -86,7 +96,14 @@ impl Pipeline {
             );
         }
 
-        let mut frames = HashMap::new();
+        let mut frames: HashMap<_, _> = self
+            .nodes
+            .iter()
+            .filter_map(|node| {
+                let frame = known.get(&node.id)?;
+                Some((node.id.as_str(), Ok(frame.clone().lazy())))
+            })
+            .collect();
         loop {
             let built = frames.len();
             for node in &self.nodes {
@@ -143,7 +160,17 @@ impl Pipeline {
         &self,
         registry: &Registry,
     ) -> PolarsResult<Vec<DataFrame>> {
-        let mut frames = self.frames(registry)?;
+        self.run_from(registry, &HashMap::new())
+    }
+
+    /// As [`Self::run`], but a Node in `known` is that frame. Neither it nor
+    /// what only it reads is computed.
+    pub fn run_from(
+        &self,
+        registry: &Registry,
+        known: &HashMap<String, DataFrame>,
+    ) -> PolarsResult<Vec<DataFrame>> {
+        let mut frames = self.plans(registry, known)?;
 
         for node in &self.nodes {
             if let Some(Err(e)) = frames.get(node.id.as_str()) {
@@ -224,4 +251,39 @@ fn guard<T>(f: impl FnOnce() -> PolarsResult<T>) -> PolarsResult<T> {
             .unwrap_or("no message");
         Err(polars_err!(ComputeError: "panicked: {message}"))
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pipeline(path: &str) -> Pipeline {
+        let pipeline = serde_json::json!({
+            "polars": polars::VERSION,
+            "nodes": [
+                { "id": "all", "block": "scan_parquet", "args": { "path": path } },
+                { "id": "some", "block": "limit", "inputs": ["all"], "args": { "n": 2 } },
+            ],
+            "outputs": ["some"],
+        });
+        serde_json::from_value(pipeline).unwrap()
+    }
+
+    #[test]
+    fn a_known_frame_is_not_computed() {
+        let registry = Registry::with_polars();
+        let pipeline = pipeline("no such file.parquet");
+        assert!(
+            pipeline
+                .run(&registry)
+                .is_err()
+        );
+
+        let known = HashMap::from([("all".to_owned(), df!("x" => [1, 2, 3]).unwrap())]);
+        let frames = pipeline
+            .run_from(&registry, &known)
+            .unwrap();
+        assert_eq!(frames.len(), 1);
+        assert!(frames[0].equals(&df!("x" => [1, 2]).unwrap()));
+    }
 }
