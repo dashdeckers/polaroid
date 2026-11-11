@@ -7,7 +7,8 @@ use polars::prelude::*;
 use schemars::generate::SchemaSettings;
 use serde_json::{Value, json};
 
-use super::{Arg, Method, methods, others, read, rows, text};
+use super::namespaces::{others, rows};
+use super::{Arg, Method, methods, read, text};
 use crate::schema::{self, resolve, variants};
 
 /// The `$defs` of the JSON Schema of an expression.

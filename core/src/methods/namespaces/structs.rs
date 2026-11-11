@@ -1,7 +1,8 @@
 //! The methods of `.struct`, and those of `.name` that rename its fields.
 
-use super::Payload::Named;
-use super::{Method, Namespace};
+use crate::methods::Method;
+use crate::methods::derive::Namespace;
+use crate::methods::derive::Payload::Named;
 
 /// The kinds of node here that are no Methods. The tests want every kind to
 /// be read by a Method or listed.
