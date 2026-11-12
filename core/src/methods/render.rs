@@ -5,10 +5,6 @@ use serde_json::Value;
 use super::{Method, read};
 
 /// `node` as a chain of calls: `pl.col("a").str.contains("x", strict=False)`.
-///
-/// An argument at its default is left out, and those after it go by name. A
-/// literal that is an argument is its bare value. A hole is `_`, and a node
-/// that none of `methods` reads is its variant in angle brackets.
 pub fn text(
     methods: &[Method],
     node: &Value,
@@ -46,8 +42,7 @@ pub fn text(
     format!("{path}({})", arguments(methods, method, node))
 }
 
-/// The arguments of `node`, a call of `method`, as [`text`] writes them
-/// between its parentheses.
+/// The arguments of `node`, a call of `method`, as [`text`] writes them.
 pub fn arguments(
     methods: &[Method],
     method: &Method,
@@ -113,8 +108,7 @@ fn argument(
     literal(node).unwrap_or_else(|| text(methods, node))
 }
 
-/// The value of a literal `node` as Python writes it, if it is a plain one: a
-/// number, a string, a boolean or null.
+/// A plain literal as Python writes it: a number, string, boolean or null.
 fn literal(node: &Value) -> Option<String> {
     let value = &node["Literal"];
     let is_null = value["Scalar"]["Null"].is_string();
@@ -131,8 +125,7 @@ fn literal(node: &Value) -> Option<String> {
     .or_else(|| is_null.then(|| "None".to_owned()))
 }
 
-/// A value that is no expression, as Python writes it. A data type that is
-/// only a name is `pl.` and that name.
+/// A value that is no expression, as Python writes it; a named data type is `pl.Name`.
 fn plain(value: &Value) -> String {
     match (value, value["Literal"].as_str()) {
         (Value::Object(tagged), Some(dtype)) if tagged.len() == 1 => format!("pl.{dtype}"),

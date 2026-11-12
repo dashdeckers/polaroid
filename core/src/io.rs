@@ -42,8 +42,7 @@ impl Block for ScanParquet {
     }
 }
 
-/// Writes the frame to a Parquet file, in place of any that is there, and
-/// gives it on unchanged.
+/// Writes the frame to a Parquet file, replacing any there, and gives it on.
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct WriteParquet {

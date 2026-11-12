@@ -178,8 +178,7 @@ impl Block for Unique {
     }
 }
 
-/// Long form: each of `on` becomes a row, its name in `variable_name` and
-/// its value in `value_name`, with `index` repeated beside.
+/// Each of `on` becomes a row: its name in `variable_name`, its value in `value_name`.
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Unpivot {

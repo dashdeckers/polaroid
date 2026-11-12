@@ -1,5 +1,4 @@
-//! The nodes of an expression itself: its roots, its own methods, aggregations
-//! and operators, and the methods that rename or evaluate.
+//! The nodes of an expression itself: roots, methods, aggregations, operators and renames.
 
 use std::sync::Arc;
 
@@ -9,11 +8,6 @@ use crate::methods::Method;
 use crate::methods::derive::Payload::{Except, Fields, Named};
 use crate::methods::derive::{Namespace, WithDefault};
 
-/// One row for each Method: its name, its inputs, how its payload gives its
-/// options, and the call that builds its node. A function ignores the
-/// receiver.
-///
-/// A call passes Python's default for each option that has one.
 #[rustfmt::skip]
 pub(super) fn methods() -> Vec<Result<Method, String>> {
     let expr = Namespace { name: "", at: "" };

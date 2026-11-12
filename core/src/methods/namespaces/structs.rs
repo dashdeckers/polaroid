@@ -4,11 +4,6 @@ use crate::methods::Method;
 use crate::methods::derive::Namespace;
 use crate::methods::derive::Payload::Named;
 
-/// One row for each Method: its name, its inputs, how its payload gives its
-/// options, and the call that builds its node. A function ignores the
-/// receiver.
-///
-/// A call passes Python's default for each option that has one.
 #[rustfmt::skip]
 pub(super) fn methods() -> Vec<Result<Method, String>> {
     let structs = Namespace { name: "struct", at: "/Function/function/StructExpr" };

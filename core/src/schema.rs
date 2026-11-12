@@ -1,10 +1,8 @@
-//! Reading a JSON Schema, as the catalog holds them: its `$ref`s, types,
-//! variants and defaults, and the schema of a value inside another.
+//! Reading a JSON Schema: its `$ref`s, types, variants and defaults.
 
 use serde_json::Value;
 
-/// A value to start from: the schema's default, else null if it may be null,
-/// else [`blank`].
+/// A value to start from: the default, else null if nullable, else [`blank`].
 pub fn default(
     defs: &Value,
     schema: &Value,
@@ -17,8 +15,7 @@ pub fn default(
     }
 }
 
-/// An empty value of `schema`'s type, or null where a variant has to be
-/// picked.
+/// An empty value of the schema's type, or null where a variant has to be picked.
 pub fn blank(
     defs: &Value,
     schema: &Value,
@@ -78,8 +75,7 @@ pub fn resolve<'a>(
     }
 }
 
-/// The variants of an enum `schema`: the name of each, and the schema of its
-/// payload if it has one. Empty if `schema` is no enum.
+/// The variants of an enum: each name, and the schema of its payload if it has one.
 pub fn variants(schema: &Value) -> Vec<(&str, Option<&Value>)> {
     let cases = match (schema["oneOf"].as_array(), schema.get("enum")) {
         (Some(cases), _) => cases.as_slice(),
@@ -110,12 +106,7 @@ pub fn variants(schema: &Value) -> Vec<(&str, Option<&Value>)> {
         .collect()
 }
 
-/// The schema of the value at the JSON pointer `at` into a value of `schema`.
-/// The pointer leads through the variant of an enum to its payload, through a
-/// struct to a field, and through an array to an item.
-///
-/// Returns the null schema if the pointer leads nowhere, or to a variant
-/// without payload.
+/// The schema of the value at the JSON pointer `at`, or the null schema if it leads nowhere.
 pub fn pointer<'a>(
     defs: &'a Value,
     schema: &'a Value,
