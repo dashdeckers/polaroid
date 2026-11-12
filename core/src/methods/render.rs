@@ -14,39 +14,36 @@ pub fn text(
     node: &Value,
 ) -> String {
     let Some(method) = read(methods, node) else {
-        return match node {
-            Value::Null => "_".to_owned(),
-            Value::String(variant) => format!("<{variant}>"),
-            _ => {
-                let variant = node
-                    .as_object()
-                    .and_then(|tagged| tagged.keys().next())
-                    .map_or("?", String::as_str);
-                format!("<{variant}>")
-            }
+        let variant = match node {
+            Value::Null => return "_".to_owned(),
+            Value::String(variant) => variant.as_str(),
+            _ => node
+                .as_object()
+                .and_then(|tagged| tagged.keys().next())
+                .map_or("?", String::as_str),
         };
+        return format!("<{variant}>");
     };
 
-    let mut text = match &method.receiver {
-        Some(at) => format!("{}.", self::text(methods, self::at(node, at))),
-        None if method
-            .namespace
-            .is_empty() =>
-        {
-            "pl.".to_owned()
-        }
-        None => String::new(),
-    };
-    if !method
+    let in_namespace = !method
         .namespace
-        .is_empty()
-    {
-        text += method.namespace;
-        text += ".";
-    }
-    text += method.name;
+        .is_empty();
+    let root = match &method.receiver {
+        Some(at) => text(methods, pointer(node, at)),
+        None if in_namespace => String::new(),
+        None => "pl".to_owned(),
+    };
+    let path = [
+        root.as_str(),
+        method.namespace,
+        method.name,
+    ]
+    .into_iter()
+    .filter(|part| !part.is_empty())
+    .collect::<Vec<_>>()
+    .join(".");
 
-    format!("{text}({})", arguments(methods, method, node))
+    format!("{path}({})", arguments(methods, method, node))
 }
 
 /// The arguments of `node`, a call of `method`, as [`text`] writes them
@@ -61,56 +58,50 @@ pub fn arguments(
         return literal;
     }
 
+    let named = |name: &str, written: String, is_by_name: bool| match is_by_name {
+        true => format!("{name}={written}"),
+        false => written,
+    };
     let mut args = Vec::new();
+
     // once an argument is left out, those after it go by name
     let mut is_by_name = false;
     for input in &method.inputs {
-        let value = at(node, &input.at);
+        let value = pointer(node, &input.at);
         if input.is_variadic {
             let items = value
                 .as_array()
                 .into_iter()
                 .flatten();
             args.extend(items.map(|item| argument(methods, item)));
-            continue;
-        }
-        if !value.is_null() && value == at(&method.node, &input.at) {
+        } else if !value.is_null() && value == pointer(&method.node, &input.at) {
             is_by_name = true;
-            continue;
+        } else {
+            args.push(named(&input.name, argument(methods, value), is_by_name));
         }
-        let written = argument(methods, value);
-        args.push(match is_by_name {
-            true => format!("{}={written}", input.name),
-            false => written,
-        });
     }
+
     // the first option of a call without inputs goes without its name
     let mut is_by_name = !method
         .inputs
         .is_empty();
     for option in &method.options {
-        let value = at(node, &option.at);
-        if value == at(&method.node, &option.at) {
-            is_by_name = true;
-            continue;
+        let value = pointer(node, &option.at);
+        if value != pointer(&method.node, &option.at) {
+            args.push(named(&option.name, plain(value), is_by_name));
         }
-        let written = plain(value);
-        args.push(match is_by_name {
-            true => format!("{}={written}", option.name),
-            false => written,
-        });
         is_by_name = true;
     }
 
     args.join(", ")
 }
 
-/// The value at a JSON pointer into `node`, or null if it leads nowhere.
-fn at<'a>(
+/// The value that the JSON pointer `at` leads to in `node`, or null.
+fn pointer<'a>(
     node: &'a Value,
-    pointer: &str,
+    at: &str,
 ) -> &'a Value {
-    node.pointer(pointer)
+    node.pointer(at)
         .unwrap_or(&Value::Null)
 }
 
@@ -126,7 +117,8 @@ fn argument(
 /// number, a string, a boolean or null.
 fn literal(node: &Value) -> Option<String> {
     let value = &node["Literal"];
-    let plain = [
+    let is_null = value["Scalar"]["Null"].is_string();
+    [
         &value["Dyn"]["Int"],
         &value["Dyn"]["Float"],
         &value["Dyn"]["Str"],
@@ -134,29 +126,19 @@ fn literal(node: &Value) -> Option<String> {
         &value["Scalar"]["Boolean"],
     ]
     .into_iter()
-    .find(|plain| !plain.is_null());
-    match plain {
-        Some(plain) => Some(self::plain(plain)),
-        None if value["Scalar"]["Null"].is_string() => Some("None".to_owned()),
-        None => None,
-    }
+    .find(|found| !found.is_null())
+    .map(plain)
+    .or_else(|| is_null.then(|| "None".to_owned()))
 }
 
 /// A value that is no expression, as Python writes it. A data type that is
 /// only a name is `pl.` and that name.
 fn plain(value: &Value) -> String {
-    match value {
-        Value::Null => "None".to_owned(),
-        Value::Bool(true) => "True".to_owned(),
-        Value::Bool(false) => "False".to_owned(),
-        Value::Object(tagged) if tagged.len() == 1 && value["Literal"].is_string() => {
-            format!(
-                "pl.{}",
-                value["Literal"]
-                    .as_str()
-                    .unwrap_or_default()
-            )
-        }
+    match (value, value["Literal"].as_str()) {
+        (Value::Object(tagged), Some(dtype)) if tagged.len() == 1 => format!("pl.{dtype}"),
+        (Value::Null, _) => "None".to_owned(),
+        (Value::Bool(true), _) => "True".to_owned(),
+        (Value::Bool(false), _) => "False".to_owned(),
         _ => value.to_string(),
     }
 }
