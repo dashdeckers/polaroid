@@ -28,11 +28,11 @@ pub struct Select {
 
 impl Block for Select {
     fn apply(
-        &self,
+        self,
         inputs: Vec<LazyFrame>,
     ) -> PolarsResult<LazyFrame> {
         let [lf] = take(inputs)?;
-        Ok(lf.select(self.exprs.clone()))
+        Ok(lf.select(self.exprs))
     }
 }
 
@@ -45,11 +45,11 @@ pub struct WithColumns {
 
 impl Block for WithColumns {
     fn apply(
-        &self,
+        self,
         inputs: Vec<LazyFrame>,
     ) -> PolarsResult<LazyFrame> {
         let [lf] = take(inputs)?;
-        Ok(lf.with_columns(self.exprs.clone()))
+        Ok(lf.with_columns(self.exprs))
     }
 }
 
@@ -62,14 +62,13 @@ pub struct Filter {
 
 impl Block for Filter {
     fn apply(
-        &self,
+        self,
         inputs: Vec<LazyFrame>,
     ) -> PolarsResult<LazyFrame> {
         let [lf] = take(inputs)?;
         Ok(self
             .predicates
-            .iter()
-            .cloned()
+            .into_iter()
             .fold(lf, LazyFrame::filter))
     }
 }
@@ -87,15 +86,15 @@ pub struct GroupBy {
 
 impl Block for GroupBy {
     fn apply(
-        &self,
+        self,
         inputs: Vec<LazyFrame>,
     ) -> PolarsResult<LazyFrame> {
         let [lf] = take(inputs)?;
         let groups = match self.maintain_order {
-            true => lf.group_by_stable(self.by.clone()),
-            false => lf.group_by(self.by.clone()),
+            true => lf.group_by_stable(self.by),
+            false => lf.group_by(self.by),
         };
-        Ok(groups.agg(self.aggs.clone()))
+        Ok(groups.agg(self.aggs))
     }
 }
 
@@ -112,17 +111,11 @@ impl Block for Join {
     const INPUTS: &'static [&'static str] = &["left", "right"];
 
     fn apply(
-        &self,
+        self,
         inputs: Vec<LazyFrame>,
     ) -> PolarsResult<LazyFrame> {
         let [left, right] = take(inputs)?;
-        Ok(left.join(
-            right,
-            self.left_on.clone(),
-            self.right_on
-                .clone(),
-            JoinArgs::new(self.how.clone()),
-        ))
+        Ok(left.join(right, self.left_on, self.right_on, JoinArgs::new(self.how)))
     }
 }
 
@@ -135,7 +128,7 @@ impl Block for Concat {
     const INPUTS: &'static [&'static str] = &["top", "bottom"];
 
     fn apply(
-        &self,
+        self,
         inputs: Vec<LazyFrame>,
     ) -> PolarsResult<LazyFrame> {
         let [top, bottom] = take(inputs)?;
@@ -154,12 +147,12 @@ pub struct Sort {
 
 impl Block for Sort {
     fn apply(
-        &self,
+        self,
         inputs: Vec<LazyFrame>,
     ) -> PolarsResult<LazyFrame> {
         let [lf] = take(inputs)?;
         let options = SortMultipleOptions::default().with_order_descending(self.descending);
-        Ok(lf.sort_by_exprs(self.by.clone(), options))
+        Ok(lf.sort_by_exprs(self.by, options))
     }
 }
 
@@ -173,7 +166,7 @@ pub struct Unique {
 
 impl Block for Unique {
     fn apply(
-        &self,
+        self,
         inputs: Vec<LazyFrame>,
     ) -> PolarsResult<LazyFrame> {
         let [lf] = take(inputs)?;
@@ -200,7 +193,7 @@ pub struct Unpivot {
 
 impl Block for Unpivot {
     fn apply(
-        &self,
+        self,
         inputs: Vec<LazyFrame>,
     ) -> PolarsResult<LazyFrame> {
         let [lf] = take(inputs)?;
@@ -209,11 +202,9 @@ impl Block for Unpivot {
             index: names(&self.index),
             variable_name: self
                 .variable_name
-                .as_deref()
                 .map(Into::into),
             value_name: self
                 .value_name
-                .as_deref()
                 .map(Into::into),
         }))
     }
@@ -228,7 +219,7 @@ pub struct Explode {
 
 impl Block for Explode {
     fn apply(
-        &self,
+        self,
         inputs: Vec<LazyFrame>,
     ) -> PolarsResult<LazyFrame> {
         let [lf] = take(inputs)?;
@@ -245,7 +236,7 @@ pub struct Drop {
 
 impl Block for Drop {
     fn apply(
-        &self,
+        self,
         inputs: Vec<LazyFrame>,
     ) -> PolarsResult<LazyFrame> {
         let [lf] = take(inputs)?;
@@ -262,7 +253,7 @@ pub struct DropNulls {
 
 impl Block for DropNulls {
     fn apply(
-        &self,
+        self,
         inputs: Vec<LazyFrame>,
     ) -> PolarsResult<LazyFrame> {
         let [lf] = take(inputs)?;
@@ -280,11 +271,11 @@ pub struct Rename {
 
 impl Block for Rename {
     fn apply(
-        &self,
+        self,
         inputs: Vec<LazyFrame>,
     ) -> PolarsResult<LazyFrame> {
         let [lf] = take(inputs)?;
-        Ok(lf.rename(&self.existing, &self.new, true))
+        Ok(lf.rename(self.existing, self.new, true))
     }
 }
 
@@ -297,7 +288,7 @@ pub struct Limit {
 
 impl Block for Limit {
     fn apply(
-        &self,
+        self,
         inputs: Vec<LazyFrame>,
     ) -> PolarsResult<LazyFrame> {
         let [lf] = take(inputs)?;

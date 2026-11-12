@@ -17,7 +17,7 @@ impl Block for ScanParquet {
 
     /// Lists the files, but reads none.
     fn apply(
-        &self,
+        self,
         _: Vec<LazyFrame>,
     ) -> PolarsResult<LazyFrame> {
         let path = [PlRefPath::new(&self.path)];
@@ -51,7 +51,7 @@ pub struct WriteParquet {
 impl Block for WriteParquet {
     /// Plans the write, which a run of the Pipeline then does.
     fn apply(
-        &self,
+        self,
         inputs: Vec<LazyFrame>,
     ) -> PolarsResult<LazyFrame> {
         let [lf] = take(inputs)?;

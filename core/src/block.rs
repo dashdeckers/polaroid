@@ -8,7 +8,7 @@ pub trait Block: DeserializeOwned + JsonSchema {
 
     /// One or more frames in, one frame out.
     fn apply(
-        &self,
+        self,
         inputs: Vec<LazyFrame>,
     ) -> PolarsResult<LazyFrame>;
 }
