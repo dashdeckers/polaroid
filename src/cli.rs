@@ -1,6 +1,8 @@
 use std::collections::BTreeMap;
+use std::ffi::OsStr;
 use std::fs::File;
 use std::io::IsTerminal;
+use std::path::Path;
 use std::time::Instant;
 
 use crate::polars::prelude::*;
@@ -41,7 +43,13 @@ pub fn cli(registry: Registry) -> PolarsResult<()> {
         .skip(1)
         .collect();
 
-    start_log();
+    // only a run tells of itself, so that no other command empties its log
+    if args
+        .first()
+        .is_some_and(|command| command == "run")
+    {
+        start_log();
+    }
     log::info!("polaroid {}", args.join(" "));
 
     command(registry, &args)
@@ -62,11 +70,17 @@ fn command(
     match args.as_slice() {
         ["run", path, out] => {
             let pipeline = Pipeline::load(path)?;
+            // an output's id names its file, so it may be nothing but a file name
+            for id in &pipeline.outputs {
+                let is_name = Path::new(id).file_name() == Some(OsStr::new(id));
+                polars_ensure!(is_name, ComputeError: "output '{id}' cannot name a file");
+            }
+            let frames = pipeline.run(&registry)?;
             std::fs::create_dir_all(out)?;
             for (id, mut frame) in pipeline
                 .outputs
                 .iter()
-                .zip(pipeline.run(&registry)?)
+                .zip(frames)
             {
                 let path = format!("{out}/{id}.parquet");
                 log::info!("writing {} rows to {path}", frame.height());
