@@ -165,6 +165,8 @@ impl Block for Unique {
         let subset = self
             .subset
             .as_deref()
+            // no columns named is every column
+            .filter(|subset| !subset.is_empty())
             .map(names);
         Ok(lf.unique(subset, UniqueKeepStrategy::Any))
     }
@@ -188,7 +190,8 @@ impl Block for Unpivot {
         [lf]: [LazyFrame; 1],
     ) -> PolarsResult<LazyFrame> {
         Ok(lf.unpivot(UnpivotArgsDSL {
-            on: Some(names(&self.on)),
+            // no columns named is every other column
+            on: (!self.on.is_empty()).then(|| names(&self.on)),
             index: names(&self.index),
             variable_name: self
                 .variable_name
@@ -261,6 +264,10 @@ impl Block for Rename {
         self,
         [lf]: [LazyFrame; 1],
     ) -> PolarsResult<LazyFrame> {
+        polars_ensure!(
+            self.existing.len() == self.new.len(),
+            ComputeError: "{} columns to rename, {} new names", self.existing.len(), self.new.len()
+        );
         Ok(lf.rename(self.existing, self.new, true))
     }
 }
