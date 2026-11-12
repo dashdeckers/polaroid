@@ -4,7 +4,7 @@ use polars::prelude::*;
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-use crate::{Block, take};
+use crate::Block;
 
 const EXPLODE: ExplodeOptions = ExplodeOptions {
     empty_as_null: true,
@@ -29,9 +29,8 @@ pub struct Select {
 impl Block for Select {
     fn apply(
         self,
-        inputs: Vec<LazyFrame>,
+        [lf]: [LazyFrame; 1],
     ) -> PolarsResult<LazyFrame> {
-        let [lf] = take(inputs)?;
         Ok(lf.select(self.exprs))
     }
 }
@@ -46,9 +45,8 @@ pub struct WithColumns {
 impl Block for WithColumns {
     fn apply(
         self,
-        inputs: Vec<LazyFrame>,
+        [lf]: [LazyFrame; 1],
     ) -> PolarsResult<LazyFrame> {
-        let [lf] = take(inputs)?;
         Ok(lf.with_columns(self.exprs))
     }
 }
@@ -63,9 +61,8 @@ pub struct Filter {
 impl Block for Filter {
     fn apply(
         self,
-        inputs: Vec<LazyFrame>,
+        [lf]: [LazyFrame; 1],
     ) -> PolarsResult<LazyFrame> {
-        let [lf] = take(inputs)?;
         Ok(self
             .predicates
             .into_iter()
@@ -87,9 +84,8 @@ pub struct GroupBy {
 impl Block for GroupBy {
     fn apply(
         self,
-        inputs: Vec<LazyFrame>,
+        [lf]: [LazyFrame; 1],
     ) -> PolarsResult<LazyFrame> {
-        let [lf] = take(inputs)?;
         let groups = match self.maintain_order {
             true => lf.group_by_stable(self.by),
             false => lf.group_by(self.by),
@@ -107,14 +103,13 @@ pub struct Join {
     pub how: JoinType,
 }
 
-impl Block for Join {
-    const INPUTS: &'static [&'static str] = &["left", "right"];
+impl Block<2> for Join {
+    const INPUTS: [&'static str; 2] = ["left", "right"];
 
     fn apply(
         self,
-        inputs: Vec<LazyFrame>,
+        [left, right]: [LazyFrame; 2],
     ) -> PolarsResult<LazyFrame> {
-        let [left, right] = take(inputs)?;
         Ok(left.join(right, self.left_on, self.right_on, JoinArgs::new(self.how)))
     }
 }
@@ -124,14 +119,13 @@ impl Block for Join {
 #[serde(deny_unknown_fields)]
 pub struct Concat {}
 
-impl Block for Concat {
-    const INPUTS: &'static [&'static str] = &["top", "bottom"];
+impl Block<2> for Concat {
+    const INPUTS: [&'static str; 2] = ["top", "bottom"];
 
     fn apply(
         self,
-        inputs: Vec<LazyFrame>,
+        [top, bottom]: [LazyFrame; 2],
     ) -> PolarsResult<LazyFrame> {
-        let [top, bottom] = take(inputs)?;
         concat([top, bottom], UnionArgs::default())
     }
 }
@@ -148,9 +142,8 @@ pub struct Sort {
 impl Block for Sort {
     fn apply(
         self,
-        inputs: Vec<LazyFrame>,
+        [lf]: [LazyFrame; 1],
     ) -> PolarsResult<LazyFrame> {
-        let [lf] = take(inputs)?;
         let options = SortMultipleOptions::default().with_order_descending(self.descending);
         Ok(lf.sort_by_exprs(self.by, options))
     }
@@ -167,9 +160,8 @@ pub struct Unique {
 impl Block for Unique {
     fn apply(
         self,
-        inputs: Vec<LazyFrame>,
+        [lf]: [LazyFrame; 1],
     ) -> PolarsResult<LazyFrame> {
-        let [lf] = take(inputs)?;
         let subset = self
             .subset
             .as_deref()
@@ -193,9 +185,8 @@ pub struct Unpivot {
 impl Block for Unpivot {
     fn apply(
         self,
-        inputs: Vec<LazyFrame>,
+        [lf]: [LazyFrame; 1],
     ) -> PolarsResult<LazyFrame> {
-        let [lf] = take(inputs)?;
         Ok(lf.unpivot(UnpivotArgsDSL {
             on: Some(names(&self.on)),
             index: names(&self.index),
@@ -219,9 +210,8 @@ pub struct Explode {
 impl Block for Explode {
     fn apply(
         self,
-        inputs: Vec<LazyFrame>,
+        [lf]: [LazyFrame; 1],
     ) -> PolarsResult<LazyFrame> {
-        let [lf] = take(inputs)?;
         Ok(lf.explode(names(&self.columns), EXPLODE))
     }
 }
@@ -236,9 +226,8 @@ pub struct Drop {
 impl Block for Drop {
     fn apply(
         self,
-        inputs: Vec<LazyFrame>,
+        [lf]: [LazyFrame; 1],
     ) -> PolarsResult<LazyFrame> {
-        let [lf] = take(inputs)?;
         Ok(lf.drop(names(&self.columns)))
     }
 }
@@ -253,9 +242,8 @@ pub struct DropNulls {
 impl Block for DropNulls {
     fn apply(
         self,
-        inputs: Vec<LazyFrame>,
+        [lf]: [LazyFrame; 1],
     ) -> PolarsResult<LazyFrame> {
-        let [lf] = take(inputs)?;
         Ok(lf.drop_nulls(Some(names(&self.columns))))
     }
 }
@@ -271,9 +259,8 @@ pub struct Rename {
 impl Block for Rename {
     fn apply(
         self,
-        inputs: Vec<LazyFrame>,
+        [lf]: [LazyFrame; 1],
     ) -> PolarsResult<LazyFrame> {
-        let [lf] = take(inputs)?;
         Ok(lf.rename(self.existing, self.new, true))
     }
 }
@@ -288,9 +275,8 @@ pub struct Limit {
 impl Block for Limit {
     fn apply(
         self,
-        inputs: Vec<LazyFrame>,
+        [lf]: [LazyFrame; 1],
     ) -> PolarsResult<LazyFrame> {
-        let [lf] = take(inputs)?;
         Ok(lf.limit(self.n))
     }
 }
