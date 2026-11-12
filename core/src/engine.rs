@@ -80,6 +80,11 @@ impl Pipeline {
                 Duplicate: "two nodes are called '{}'", node.id
             );
         }
+        let mut outputs = HashSet::new();
+        for id in &self.outputs {
+            polars_ensure!(ids.contains(id.as_str()), ComputeError: "output '{id}' is no node");
+            polars_ensure!(outputs.insert(id), Duplicate: "output '{id}' is named twice");
+        }
 
         let mut frames: HashMap<_, _> = self
             .nodes
@@ -116,7 +121,7 @@ impl Pipeline {
                 .entry(node.id.as_str())
                 .or_insert_with(|| {
                     Err(polars_err!(
-                        ComputeError: "node '{}' reads itself through a cycle", node.id
+                        ComputeError: "node '{}' reads from a cycle", node.id
                     ))
                 });
         }
@@ -156,20 +161,49 @@ impl Pipeline {
         registry: &Registry,
         known: &HashMap<String, DataFrame>,
     ) -> PolarsResult<Vec<DataFrame>> {
-        let mut frames = self.plans(registry, known)?;
+        let frames = self.plans(registry, known)?;
 
-        for node in &self.nodes {
-            if let Some(Err(e)) = frames.get(node.id.as_str()) {
-                log::warn!("{e}");
+        // a node that reads no source is under construction, and is left out
+        let mut attached = HashSet::new();
+        for _ in &self.nodes {
+            for node in &self.nodes {
+                let reads_source = node
+                    .inputs
+                    .iter()
+                    .any(|input| attached.contains(input.as_str()));
+                if node
+                    .inputs
+                    .is_empty()
+                    || reads_source
+                {
+                    attached.insert(node.id.as_str());
+                }
             }
         }
+        // the others may be writes, so none of them may fail, nor may an output
+        let failed: Vec<String> = self
+            .nodes
+            .iter()
+            .filter(|node| {
+                attached.contains(node.id.as_str())
+                    || self
+                        .outputs
+                        .contains(&node.id)
+            })
+            .filter_map(|node| {
+                frames[node.id.as_str()]
+                    .as_ref()
+                    .err()
+            })
+            .map(ToString::to_string)
+            .collect();
+        polars_ensure!(failed.is_empty(), ComputeError: "{}", failed.join("\n"));
 
         let writes: Vec<DslPlan> = self
             .nodes
             .iter()
             .filter_map(|node| {
-                frames
-                    .get(node.id.as_str())?
+                frames[node.id.as_str()]
                     .as_ref()
                     .ok()
             })
@@ -180,16 +214,16 @@ impl Pipeline {
                     .clone()
             })
             .collect();
-        let mut plans = self
+        let mut plans: Vec<DslPlan> = self
             .outputs
             .iter()
-            .map(|id| match frames.remove(id.as_str()) {
-                Some(frame) => frame.map(|frame| given(&frame).logical_plan),
-                None => Err(polars_err!(
-                    ComputeError: "output '{id}' is no node, or is named twice"
-                )),
+            .filter_map(|id| {
+                frames[id.as_str()]
+                    .as_ref()
+                    .ok()
             })
-            .collect::<PolarsResult<Vec<_>>>()?;
+            .map(|frame| given(frame).logical_plan)
+            .collect();
         let outputs = plans.len();
         // the writes run along, for what they write
         plans.extend(writes);
