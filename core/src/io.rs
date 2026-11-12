@@ -26,7 +26,14 @@ impl Block<0> for ScanParquet {
 
         let scans = files
             .iter()
-            .map(|file| LazyFrame::scan_parquet(file.clone(), Default::default()))
+            .map(|file| {
+                // a listed file is that file, whatever its name looks like
+                let args = ScanArgsParquet {
+                    glob: false,
+                    ..Default::default()
+                };
+                LazyFrame::scan_parquet(file.clone(), args)
+            })
             .collect::<PolarsResult<Vec<_>>>()?;
 
         concat(

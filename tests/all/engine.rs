@@ -159,3 +159,30 @@ fn a_node_that_reads_no_source_is_left_out() {
             .is_err()
     );
 }
+
+#[test]
+fn a_scanned_file_is_read_by_its_name_and_not_as_a_pattern() {
+    let directory = std::env::temp_dir().join(format!("polaroid-names-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).unwrap();
+    for (name, rows) in [
+        ("sales[2024].parquet", 2),
+        ("sales2.parquet", 3),
+    ] {
+        let mut frame = df!("x" => vec![name; rows]).unwrap();
+        ParquetWriter::new(std::fs::File::create(directory.join(name)).unwrap())
+            .finish(&mut frame)
+            .unwrap();
+    }
+
+    let mut pipeline = pipeline(
+        directory
+            .to_str()
+            .unwrap(),
+    );
+    pipeline.outputs = vec!["all".to_owned()];
+    let frames = pipeline
+        .run(&Registry::with_polars())
+        .unwrap();
+    assert_eq!(frames[0].height(), 5);
+    std::fs::remove_dir_all(directory).unwrap();
+}
