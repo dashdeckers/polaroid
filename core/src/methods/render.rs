@@ -1,10 +1,10 @@
-//! Expressions written out as text, the way Python Polars writes its calls.
+//! Expressions written out as text: a chain of calls, each in short.
 
 use serde_json::Value;
 
-use super::{Method, read};
+use super::{Arg, Method, read};
 
-/// `node` as a chain of calls: `pl.col("a").str.contains("x", strict=False)`.
+/// `node` as a chain of calls: `pl.col("a").str.contains("x", …)`.
 pub fn text(
     methods: &[Method],
     node: &Value,
@@ -42,7 +42,7 @@ pub fn text(
     format!("{path}({})", arguments(methods, method, node))
 }
 
-/// The arguments of `node`, a call of `method`, as [`text`] writes them.
+/// The arguments of `node` in short: its inputs or else its first option, and `…` for the rest.
 pub fn arguments(
     methods: &[Method],
     method: &Method,
@@ -53,41 +53,50 @@ pub fn arguments(
         return literal;
     }
 
-    let named = |name: &str, written: String, is_by_name: bool| match is_by_name {
-        true => format!("{name}={written}"),
-        false => written,
-    };
-    let mut args = Vec::new();
-
-    // once an argument is left out, those after it go by name
-    let mut is_by_name = false;
-    for input in &method.inputs {
+    // the inputs, as far as the last that is not at its default
+    let is_set = |input: &Arg| {
         let value = pointer(node, &input.at);
-        if input.is_variadic {
-            let items = value
-                .as_array()
-                .into_iter()
-                .flatten();
-            args.extend(items.map(|item| argument(methods, item)));
-        } else if !value.is_null() && value == pointer(&method.node, &input.at) {
-            is_by_name = true;
-        } else {
-            args.push(named(&input.name, argument(methods, value), is_by_name));
-        }
-    }
-
-    // the first option of a call without inputs goes without its name
-    let mut is_by_name = !method
+        input.is_variadic || value.is_null() || value != pointer(&method.node, &input.at)
+    };
+    let shown = method
         .inputs
-        .is_empty();
-    for option in &method.options {
-        let value = pointer(node, &option.at);
-        if value != pointer(&method.node, &option.at) {
-            args.push(named(&option.name, plain(value), is_by_name));
+        .iter()
+        .rposition(is_set)
+        .map_or(0, |last| last + 1);
+    let mut args = Vec::new();
+    for input in &method.inputs[..shown] {
+        let value = pointer(node, &input.at);
+        match value
+            .as_array()
+            .filter(|_| input.is_variadic)
+        {
+            Some(items) => args.extend(
+                items
+                    .iter()
+                    .map(|item| argument(methods, item)),
+            ),
+            None => args.push(argument(methods, value)),
         }
-        is_by_name = true;
     }
 
+    // without inputs the first option stands in, unless it is a struct
+    let first = method
+        .options
+        .first()
+        .filter(|_| {
+            method
+                .inputs
+                .is_empty()
+        })
+        .map(|option| plain(pointer(node, &option.at)))
+        .filter(|written| !written.starts_with(['{', '[']));
+    let options = usize::from(first.is_some());
+    args.extend(first);
+
+    // an input left out is at its default, but an option may be anything
+    if options < method.options.len() {
+        args.push("…".to_owned());
+    }
     args.join(", ")
 }
 

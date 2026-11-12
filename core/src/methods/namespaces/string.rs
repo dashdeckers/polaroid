@@ -18,7 +18,8 @@ pub(super) fn methods() -> Vec<Result<Method, String>> {
         str.method("extract",           ["pattern"],          Named(&["group_index"]),      |s, [pattern]| s.str().extract(pattern, 1)),
         str.method("extract_all",       ["pattern"],          Fields,                       |s, [pattern]| s.str().extract_all(pattern)),
         str.method("find",              ["pattern"],          Fields,                       |s, [pattern]| s.str().find(pattern, true)),
-        str.method("head",              ["n"],                Fields,                       |s, [n]| s.str().head(n)),
+        str.method("head",              ["n"],                Fields,                       |s, [n]| s.str().head(n))
+            .with_default(["n"], lit(5)),
         str.method("len_bytes",         [],                   Fields,                       |s, []| s.str().len_bytes()),
         str.method("len_chars",         [],                   Fields,                       |s, []| s.str().len_chars()),
         str.method("replace",           ["pattern", "value"], Fields,
@@ -41,7 +42,8 @@ pub(super) fn methods() -> Vec<Result<Method, String>> {
         str.method("strptime",          ["ambiguous"],        Named(&["dtype", "options"]),
             |s, [ambiguous]| s.str().strptime(DataType::Date, StrptimeOptions::default(), ambiguous))
             .with_default(["ambiguous"], lit("raise")),
-        str.method("tail",              ["n"],                Fields,                       |s, [n]| s.str().tail(n)),
+        str.method("tail",              ["n"],                Fields,                       |s, [n]| s.str().tail(n))
+            .with_default(["n"], lit(5)),
         str.method("to_decimal",        [],                   Fields,                       |s, []| s.str().to_decimal(0)),
         str.method("to_lowercase",      [],                   Fields,                       |s, []| s.str().to_lowercase()),
         str.method("to_uppercase",      [],                   Fields,                       |s, []| s.str().to_uppercase()),
