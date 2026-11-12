@@ -23,10 +23,10 @@ fn an_expression_is_written_as_a_chain_of_calls() {
         .alias("many");
     assert_eq!(
         written(chain),
-        r#"pl.col("name").str.strip_chars(" ").str.to_lowercase().str.contains("x", strict=False).sum().gt(2).alias("many")"#
+        r#"pl.col("name").str.strip_chars(" ").str.to_lowercase().str.contains("x", …).sum().gt(2).alias("many")"#
     );
 
-    // an input at its default is left out, and those after it go by name
+    // the inputs go as far as the last that is not at its default
     let slice = col("a")
         .str()
         .slice(lit(1), lit(NULL));
@@ -44,7 +44,7 @@ fn an_expression_is_written_as_a_chain_of_calls() {
             nulls(),
             lit("raise"),
         );
-    assert_eq!(written(replace), r#"pl.col("d").dt.replace(day=1)"#);
+    assert_eq!(written(replace), r#"pl.col("d").dt.replace(None, None, 1)"#);
 
     // functions, with a variadic input and with a default
     assert_eq!(
@@ -56,15 +56,18 @@ fn an_expression_is_written_as_a_chain_of_calls() {
         .otherwise(lit(NULL));
     assert_eq!(written(choice), r#"pl.when(pl.col("a").is_null(), "none")"#);
 
-    // a data type that is a name, and a literal that is no argument
+    // the first option of a call without inputs, and `…` for the rest
     assert_eq!(
         written(lit(5).strict_cast(DataType::Int8)),
-        "pl.lit(5).cast(pl.Int8)"
+        "pl.lit(5).cast(pl.Int8, …)"
     );
 
     // a hole, and a node that no method reads
     let contains = method(&methods, "str", "contains").call(json_of(col("a")));
-    assert_eq!(text(&methods, &contains), r#"pl.col("a").str.contains(_)"#);
+    assert_eq!(
+        text(&methods, &contains),
+        r#"pl.col("a").str.contains(_, …)"#
+    );
     let unread = json!({ "Display": { "inputs": [], "fmt_str": "" } });
     assert_eq!(text(&methods, &unread), "<Display>");
 }
