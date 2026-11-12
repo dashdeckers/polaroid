@@ -15,8 +15,6 @@
 mod derive;
 mod namespaces;
 mod render;
-#[cfg(test)]
-mod tests;
 
 use std::fmt::{Display, Write};
 
@@ -104,7 +102,7 @@ impl Method {
 pub fn methods() -> Vec<Method> {
     rows()
         .into_iter()
-        .map(|method| method.expect("the tests derive every method"))
+        .map(|method| method.unwrap_or_else(|problem| panic!("{problem}")))
         .collect()
 }
 

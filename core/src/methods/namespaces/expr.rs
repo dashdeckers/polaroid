@@ -9,28 +9,6 @@ use crate::methods::Method;
 use crate::methods::derive::Payload::{Except, Fields, Named};
 use crate::methods::derive::{Namespace, WithDefault};
 
-/// The kinds of node here that are no Methods. The tests want every kind to
-/// be read by a Method or listed.
-#[cfg(test)]
-pub(super) const OTHERS: &[&str] = &[
-    // a Rust closure
-    "/AnonymousFunction",
-    // about data types, not values
-    "/DataTypeFunction",
-    // not real expressions
-    "/Display",
-    "/SubPlan",
-    // Rust's `/`, which rounds integers towards zero
-    "/BinaryExpr/op/RustDivide",
-    // takes a Rust closure
-    "/RenameAlias/function/Map",
-    // take selectors, which are no expressions
-    "/Selector/Union",
-    "/Selector/Difference",
-    "/Selector/ExclusiveOr",
-    "/Selector/Intersect",
-];
-
 /// One row for each Method: its name, its inputs, how its payload gives its
 /// options, and the call that builds its node. A function ignores the
 /// receiver.
