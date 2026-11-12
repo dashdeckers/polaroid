@@ -21,7 +21,9 @@ impl Block for ScanParquet {
         _: Vec<LazyFrame>,
     ) -> PolarsResult<LazyFrame> {
         let path = [PlRefPath::new(&self.path)];
-        let files = polars_async::ASYNC.block_on(expand_paths(&path, true, &[], &mut None))?;
+        let (glob, hidden_prefixes, mut cloud) = (true, [], None);
+        let files = expand_paths(&path, glob, &hidden_prefixes, &mut cloud);
+        let files = polars_async::ASYNC.block_on(files)?;
         polars_ensure!(!files.is_empty(), ComputeError: "no Parquet files under '{}'", self.path);
 
         let scans = files

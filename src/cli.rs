@@ -60,8 +60,8 @@ fn command(
         .collect();
 
     match args.as_slice() {
-        ["run", pipeline, out] => {
-            let pipeline = Pipeline::load(pipeline)?;
+        ["run", path, out] => {
+            let pipeline = Pipeline::load(path)?;
             std::fs::create_dir_all(out)?;
             for (id, mut frame) in pipeline
                 .outputs
@@ -75,8 +75,8 @@ fn command(
             }
         }
 
-        ["run", pipeline] => {
-            let pipeline = Pipeline::load(pipeline)?;
+        ["run", path] => {
+            let pipeline = Pipeline::load(path)?;
             polars_ensure!(
                 pipeline.outputs.len() <= 1,
                 ComputeError: "stdout takes one output, the pipeline has {}", pipeline.outputs.len()
@@ -95,21 +95,19 @@ fn command(
             }
         }
 
-        ["check", pipeline] => {
-            let pipeline = Pipeline::load(pipeline)?;
+        ["check", path] => {
+            let pipeline = Pipeline::load(path)?;
             let schemas = pipeline.schemas(&registry)?;
             let checks: BTreeMap<_, _> = schemas
                 .iter()
                 .map(|(id, schema)| {
-                    let columns = schema
-                        .as_ref()
-                        .map(|schema| {
-                            schema
-                                .iter()
-                                .map(|(name, dtype)| (name.as_str(), dtype))
-                                .collect::<Vec<_>>()
-                        })
-                        .map_err(|e| e.to_string());
+                    let columns = match schema {
+                        Ok(schema) => Ok(schema
+                            .iter()
+                            .map(|(name, dtype)| (name.as_str(), dtype))
+                            .collect::<Vec<_>>()),
+                        Err(e) => Err(e.to_string()),
+                    };
                     (*id, columns)
                 })
                 .collect();
