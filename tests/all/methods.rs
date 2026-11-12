@@ -54,7 +54,7 @@ fn nodes<'a>(
     defs: &'a Value,
     at: &str,
 ) -> Vec<(&'a str, Option<&'a Value>)> {
-    variants(schema::at(defs, &defs["Expr"], at))
+    variants(schema::pointer(defs, &defs["Expr"], at))
 }
 
 pub fn json_of(expr: Expr) -> Value {
@@ -172,7 +172,7 @@ fn every_node_is_a_method_or_listed() {
 fn every_receiver_and_input_is_an_expression_in_the_schema() {
     let defs = defs();
     let expr = &defs["Expr"];
-    let is_expr = |at: &str| schema::at(&defs, expr, at) == expr;
+    let is_expr = |at: &str| schema::pointer(&defs, expr, at) == expr;
 
     for method in methods() {
         let is_fit = method
@@ -206,7 +206,7 @@ fn every_option_is_a_part_of_its_payload_in_the_schema() {
         let payload = resolve(&defs, payload.unwrap_or(&Value::Null));
 
         for option in &method.options {
-            let is_in_schema = !schema::at(&defs, &defs["Expr"], &option.at).is_null();
+            let is_in_schema = !schema::pointer(&defs, &defs["Expr"], &option.at).is_null();
             let key = option
                 .at
                 .strip_prefix(&method.kind)

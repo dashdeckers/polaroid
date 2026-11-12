@@ -23,7 +23,7 @@ pub fn blank(
     defs: &Value,
     schema: &Value,
 ) -> Value {
-    match kind(schema) {
+    match json_type(schema) {
         "object" => schema["properties"]
             .as_object()
             .into_iter()
@@ -55,7 +55,7 @@ pub fn optional(schema: &Value) -> Option<&Value> {
 }
 
 /// The JSON type of `schema`, null aside.
-pub fn kind(schema: &Value) -> &str {
+pub fn json_type(schema: &Value) -> &str {
     match &schema["type"] {
         Value::String(kind) => kind,
         Value::Array(kinds) => kinds
@@ -81,15 +81,10 @@ pub fn resolve<'a>(
 /// The variants of an enum `schema`: the name of each, and the schema of its
 /// payload if it has one. Empty if `schema` is no enum.
 pub fn variants(schema: &Value) -> Vec<(&str, Option<&Value>)> {
-    let cases = match schema["oneOf"].as_array() {
-        Some(cases) => cases,
-        None if schema
-            .get("enum")
-            .is_some() =>
-        {
-            std::slice::from_ref(schema)
-        }
-        None => &[],
+    let cases = match (schema["oneOf"].as_array(), schema.get("enum")) {
+        (Some(cases), _) => cases.as_slice(),
+        (None, Some(_)) => std::slice::from_ref(schema),
+        (None, None) => &[],
     };
 
     cases
@@ -121,7 +116,7 @@ pub fn variants(schema: &Value) -> Vec<(&str, Option<&Value>)> {
 ///
 /// Returns the null schema if the pointer leads nowhere, or to a variant
 /// without payload.
-pub fn at<'a>(
+pub fn pointer<'a>(
     defs: &'a Value,
     schema: &'a Value,
     at: &str,

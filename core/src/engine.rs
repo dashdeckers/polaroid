@@ -49,12 +49,7 @@ impl Pipeline {
             "-" => std::io::read_to_string(std::io::stdin()),
             _ => std::fs::read_to_string(path),
         }
-        .map_err(|e| {
-            PolarsError::from(e).context(
-                path.to_owned()
-                    .into(),
-            )
-        })?;
+        .map_err(|e| polars_err!(ComputeError: "{path}: {e}"))?;
         serde_json::from_str(&text).map_err(|e| polars_err!(ComputeError: "{path}: {e}"))
     }
 
@@ -107,14 +102,15 @@ impl Pipeline {
         loop {
             let built = frames.len();
             for node in &self.nodes {
-                let waiting = frames.contains_key(node.id.as_str())
-                    || node
-                        .inputs
-                        .iter()
-                        .any(|input| {
-                            ids.contains(input.as_str()) && !frames.contains_key(input.as_str())
-                        });
-                if !waiting {
+                let is_built = frames.contains_key(node.id.as_str());
+                // an input that is no node fails the build, which says so
+                let has_inputs = node
+                    .inputs
+                    .iter()
+                    .all(|input| {
+                        !ids.contains(input.as_str()) || frames.contains_key(input.as_str())
+                    });
+                if !is_built && has_inputs {
                     let frame = build(registry, node, &frames)
                         .map_err(|e| e.context(format!("node '{}'", node.id).into()));
                     frames.insert(node.id.as_str(), frame);
@@ -148,13 +144,11 @@ impl Pipeline {
             .frames(registry)?
             .into_iter()
             .map(|(id, frame)| {
-                (
-                    id,
-                    frame.and_then(|frame| {
-                        let mut frame = given(&frame);
-                        guard(|| frame.collect_schema())
-                    }),
-                )
+                let schema = frame.and_then(|frame| {
+                    let mut frame = given(&frame);
+                    guard(|| frame.collect_schema())
+                });
+                (id, schema)
             })
             .collect())
     }
@@ -187,13 +181,17 @@ impl Pipeline {
         let writes: Vec<DslPlan> = self
             .nodes
             .iter()
-            .filter_map(|node| match frames.get(node.id.as_str()) {
-                Some(Ok(frame)) if is_sink(frame) => Some(
-                    frame
-                        .logical_plan
-                        .clone(),
-                ),
-                _ => None,
+            .filter_map(|node| {
+                frames
+                    .get(node.id.as_str())?
+                    .as_ref()
+                    .ok()
+            })
+            .filter(|frame| is_sink(frame))
+            .map(|frame| {
+                frame
+                    .logical_plan
+                    .clone()
             })
             .collect();
         let mut plans = self
