@@ -30,15 +30,3 @@ pub(super) fn rows() -> Vec<Result<Method, String>> {
     .flatten()
     .collect()
 }
-
-/// The kinds of node that are no Methods.
-#[cfg(test)]
-pub(super) fn others() -> Vec<&'static str> {
-    [
-        expr::OTHERS,
-        function::OTHERS,
-        string::OTHERS,
-        structs::OTHERS,
-    ]
-    .concat()
-}

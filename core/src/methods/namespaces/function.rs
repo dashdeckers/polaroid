@@ -8,20 +8,6 @@ use crate::methods::Method;
 use crate::methods::derive::Payload::{Except, Fields, Named};
 use crate::methods::derive::{Namespace, WithDefault};
 
-/// The kinds of node here that are no Methods. The tests want every kind to
-/// be read by a Method or listed.
-#[cfg(test)]
-pub(super) const OTHERS: &[&str] = &[
-    // take a Rust closure
-    "/Function/function/FoldHorizontal",
-    "/Function/function/ReduceHorizontal",
-    "/Function/function/CumReduceHorizontal",
-    "/Function/function/CumFoldHorizontal",
-    // internal to Polars
-    "/Function/function/RowEncode",
-    "/Function/function/RowDecode",
-];
-
 /// One row for each Method: its name, its inputs, how its payload gives its
 /// options, and the call that builds its node. A function ignores the
 /// receiver.
