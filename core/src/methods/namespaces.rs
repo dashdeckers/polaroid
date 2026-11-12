@@ -1,5 +1,4 @@
-//! The tables of Methods: one for each namespace of Python Polars, and one
-//! for the functions that are in none.
+//! The tables. A row calls the Rust method with Python's defaults; `*` marks a variadic input.
 
 mod array;
 mod binary;

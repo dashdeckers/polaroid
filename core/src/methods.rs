@@ -1,16 +1,4 @@
 //! Expression nodes read as method calls, the way Python Polars writes them.
-//!
-//! An expression is stored in Polars' JSON format. A [`Method`] says how one
-//! kind of node in it reads as a call such as `.str.contains(pattern)`: what
-//! the node looks like, and where its receiver and arguments sit.
-//!
-//! Each Method is derived from a call of the Rust method that builds its node,
-//! so it cannot disagree with Polars. The tests check the Methods against the
-//! JSON Schema of the expressions, which lists every node there is.
-//!
-//! The Methods are listed in `namespaces`, a table for each namespace.
-//! `derive` makes a Method of a row there, and `render` writes the calls out
-//! as text.
 
 mod derive;
 mod namespaces;
@@ -29,19 +17,15 @@ pub struct Method {
     /// The `str` of `.str.contains()`.
     pub namespace: &'static str,
     pub name: &'static str,
-    /// The node's kind: the JSON pointer to the enum that tells it, then its
-    /// variant there. `/Function/function/StringExpr/Contains`.
+    /// The enum that tells the node, then its variant: `/Function/function/StringExpr/Contains`.
     pub kind: String,
-    /// The JSON pointer, from the node, to the expression the method is
-    /// called on. `None` for a function, which is called on nothing.
+    /// The pointer to the expression it is called on; `None` for a function.
     pub receiver: Option<String>,
     /// The expressions the method takes.
     pub inputs: Vec<Arg>,
     /// Its other arguments.
     pub options: Vec<Arg>,
-    /// The node, with its options and inputs at their defaults. Its receiver
-    /// is null, as is an input without default, and a variadic input is
-    /// empty.
+    /// The node at its defaults: its receiver null, a variadic input empty.
     node: Value,
 }
 
@@ -51,15 +35,12 @@ pub struct Arg {
     pub name: String,
     /// The JSON pointer, from the node, to its value.
     pub at: String,
-    /// Whether its value is an array of any number of expressions, not one
-    /// expression.
+    /// Whether its value is a list of any number of expressions.
     pub is_variadic: bool,
 }
 
 impl Method {
-    /// The node for this method called on `receiver`, which a function
-    /// ignores. Its options and inputs are at their defaults. An input
-    /// without default is null, still to be filled.
+    /// The node of this method called on `receiver`, its arguments at their defaults.
     pub fn call(
         &self,
         receiver: Value,
@@ -73,8 +54,7 @@ impl Method {
         node
     }
 
-    /// Whether `node` is a call of this method, whatever its receiver and
-    /// arguments are.
+    /// Whether `node` is a call of this method, whatever its receiver and arguments.
     pub fn reads(
         &self,
         node: &Value,
@@ -82,8 +62,7 @@ impl Method {
         self.fits(&self.node, node, &mut String::new())
     }
 
-    /// Whether `node` equals `template` everywhere but at the receiver and
-    /// the arguments, where it may hold anything. `at` is the pointer to both.
+    /// Whether `node` equals `template` but at the receiver and arguments; `at` points to both.
     fn fits(
         &self,
         template: &Value,
@@ -139,11 +118,7 @@ impl Method {
     }
 }
 
-/// Every Method.
-///
-/// # Panics
-///
-/// Panics if one cannot be derived, which the tests rule out.
+/// Every Method; panics if a row cannot be derived, which the tests rule out.
 pub fn methods() -> Vec<Method> {
     rows()
         .into_iter()

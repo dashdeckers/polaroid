@@ -1,5 +1,4 @@
-//! Deriving a [`Method`] from a row of a table: a call of the Rust method
-//! that builds its node, with marked expressions to find in that node.
+//! Deriving a [`Method`] from a table row: a call of the Rust method that builds its node.
 
 use polars::prelude::*;
 use serde_json::Value;
@@ -18,16 +17,13 @@ pub(super) struct Namespace {
 pub(super) enum Payload {
     /// Its fields are the options. A node without payload has none.
     Fields,
-    /// Its fields are the options, but for these: they tell the Method from
-    /// the others of its node, or go with the inputs it takes.
+    /// Its fields but these, which tell the Method apart or go with its inputs.
     Except(&'static [&'static str]),
-    /// It has no field names. These name it: one for all of it, or one for
-    /// each part of a tuple.
+    /// It has no field names; these name it, or each part of a tuple.
     Named(&'static [&'static str]),
 }
 
-/// What the call of a row returns: an expression, or Polars' refusal to build
-/// one.
+/// What the call of a row returns: an expression, or Polars' refusal to build one.
 pub(super) trait Built {
     fn built(self) -> PolarsResult<Expr>;
 }
@@ -46,9 +42,7 @@ impl Built for PolarsResult<Expr> {
 
 /// A row may give inputs a default.
 pub(super) trait WithDefault {
-    /// Gives each of `inputs` the default `value`, in place of null.
-    ///
-    /// Returns `Err` if the Method has no such input, or it is variadic.
+    /// Gives each of `inputs` the default `value`; `Err` if there is no such input.
     fn with_default<const N: usize>(
         self,
         inputs: [&str; N],
@@ -83,18 +77,7 @@ impl WithDefault for Result<Method, String> {
 }
 
 impl Namespace {
-    /// Derives the Method called `name` from `call`, which calls the Rust
-    /// method that builds its node.
-    ///
-    /// `call` takes the receiver and then one expression for each of `inputs`,
-    /// which names them. A function leaves the receiver out. An input named
-    /// with a `*` is variadic: `call` puts it alone in a list. The other
-    /// arguments that `call` passes become the defaults of the options, which
-    /// `payload` finds.
-    ///
-    /// Returns `Err` if `call` fails or builds no node of this namespace, if
-    /// the node does not hold each input exactly once, or if the payload is
-    /// not what `payload` says.
+    /// Derives the Method `name` from `call`, whose other arguments are the options' defaults.
     pub(super) fn method<const N: usize, B: Built>(
         &self,
         name: &'static str,
@@ -209,19 +192,14 @@ fn variant<'a>(
     }
 }
 
-/// The options that `payload` finds in `content`, the payload of a node of
-/// this `kind`. `holds` tells whether the value at a JSON pointer is or holds
-/// the receiver or an input, which are no options.
-///
-/// Returns `None` if the payload is not what `payload` says.
+/// The options that `payload` finds in `content`, or `None` if it is not what `payload` says.
 fn options(
     kind: &str,
     content: Option<&Value>,
     payload: Payload,
     holds: impl Fn(&str) -> bool,
 ) -> Option<Vec<Arg>> {
-    // the payload in parts, each by its key: the fields of a struct, the
-    // parts of a tuple, or else the payload as a whole
+    // the payload in parts by key: struct fields, tuple parts, or the whole
     let is_struct = content.is_some_and(Value::is_object) && !matches!(payload, Payload::Named(_));
     let is_tuple = holds(kind) || matches!(payload, Payload::Named(names) if names.len() > 1);
     let part = |key: String| {
@@ -281,8 +259,7 @@ fn options(
     }
 }
 
-/// Replaces each marked expression in `value` with null, and notes its index
-/// and its JSON pointer. `at` is the pointer to `value`.
+/// Nulls each marked expression in `value`, noting its index and its pointer from `at`.
 fn take_markers(
     value: &mut Value,
     at: &str,

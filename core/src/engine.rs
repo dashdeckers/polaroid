@@ -53,16 +53,7 @@ impl Pipeline {
         serde_json::from_str(&text).map_err(|e| polars_err!(ComputeError: "{path}: {e}"))
     }
 
-    /// Builds a lazy plan for each Node and returns them by Node id. Plans are
-    /// not run or resolved, so column and type errors are not detected here.
-    ///
-    /// Reads a file only if a Block's `apply` does so directly. Scans are read
-    /// later, when the plan is resolved.
-    ///
-    /// Returns `Err` if the Polars version does not match or a Node id is
-    /// duplicated. A Node's entry is `Err` if its Block is unknown, its args or
-    /// input count are invalid, `apply` fails, an input is missing or failed, or
-    /// it depends on a cycle.
+    /// A lazy plan per Node id, or why it could not be built; none is run or resolved.
     pub fn frames(
         &self,
         registry: &Registry,
@@ -70,8 +61,7 @@ impl Pipeline {
         self.plans(registry, &HashMap::new())
     }
 
-    /// As [`Self::frames`], but a Node in `known` is that frame, and is not
-    /// built.
+    /// As [`Self::frames`], but a Node in `known` is that frame.
     fn plans(
         &self,
         registry: &Registry,
@@ -134,8 +124,7 @@ impl Pipeline {
         Ok(frames)
     }
 
-    /// Collect the schema for all Nodes (or any errors). That of a Node that
-    /// writes its frame is of the frame it writes.
+    /// The columns of every Node, or its error; a write has those of the frame it writes.
     pub fn schemas(
         &self,
         registry: &Registry,
@@ -153,9 +142,7 @@ impl Pipeline {
             .collect())
     }
 
-    /// Collect the output frames for the output Nodes (or any errors). Every
-    /// Node that writes its frame does so, output or not, and its frame as an
-    /// output is the one it writes.
+    /// The frames of the outputs; every Node that writes does so, output or not.
     pub fn run(
         &self,
         registry: &Registry,
@@ -163,8 +150,7 @@ impl Pipeline {
         self.run_from(registry, &HashMap::new())
     }
 
-    /// As [`Self::run`], but a Node in `known` is that frame. Neither it nor
-    /// what only it reads is computed.
+    /// As [`Self::run`], but a Node in `known` is that frame and is not computed.
     pub fn run_from(
         &self,
         registry: &Registry,
@@ -228,10 +214,7 @@ impl Pipeline {
     }
 }
 
-/// Builds the plan for one Node from its Block, args and input plans.
-///
-/// Returns `Err` if the Block is unknown, the input count is wrong, an input
-/// is missing or failed, the args are invalid, or `apply` fails.
+/// The plan of one Node, from its Block, args and input plans.
 fn build(
     registry: &Registry,
     node: &Node,
