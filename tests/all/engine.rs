@@ -95,3 +95,67 @@ fn a_write_runs_and_gives_its_frame() {
     assert!(path.exists());
     std::fs::remove_file(&path).unwrap();
 }
+
+#[test]
+fn a_node_that_cannot_be_built_fails_the_run() {
+    let mut pipeline = pipeline("no such file.parquet");
+    pipeline
+        .outputs
+        .clear();
+    pipeline.nodes[1].args = serde_json::json!({ "m": 2 });
+
+    let known = HashMap::from([("all".to_owned(), df!("x" => [1]).unwrap())]);
+    let failed = pipeline.run_from(&Registry::with_polars(), &known);
+    assert!(failed.is_err());
+}
+
+#[test]
+fn an_output_is_a_node_and_named_once() {
+    let registry = Registry::with_polars();
+    let mut pipeline = pipeline("no such file.parquet");
+
+    pipeline.outputs = vec!["none".to_owned()];
+    assert!(
+        pipeline
+            .schemas(&registry)
+            .is_err()
+    );
+    pipeline.outputs = vec![
+        "some".to_owned(),
+        "some".to_owned(),
+    ];
+    assert!(
+        pipeline
+            .schemas(&registry)
+            .is_err()
+    );
+}
+
+#[test]
+fn a_node_that_reads_no_source_is_left_out() {
+    let registry = Registry::with_polars();
+    let mut pipeline = pipeline("no such file.parquet");
+    let draft = serde_json::json!([
+        { "id": "draft", "block": "limit", "inputs": [""], "args": { "n": 1 } },
+        { "id": "below", "block": "write_parquet", "inputs": ["draft"], "args": { "path": "never.parquet" } },
+    ]);
+    pipeline
+        .nodes
+        .extend(serde_json::from_value::<Vec<polaroid::Node>>(draft).unwrap());
+
+    let known = HashMap::from([("all".to_owned(), df!("x" => [1, 2, 3]).unwrap())]);
+    let frames = pipeline
+        .run_from(&registry, &known)
+        .unwrap();
+    assert_eq!(frames[0].height(), 2);
+
+    // but not as an output, which is asked for
+    pipeline
+        .outputs
+        .push("draft".to_owned());
+    assert!(
+        pipeline
+            .run_from(&registry, &known)
+            .is_err()
+    );
+}
