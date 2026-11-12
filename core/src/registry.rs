@@ -16,14 +16,14 @@ pub(crate) struct Entry {
 }
 
 impl Entry {
-    fn of<B: Block>() -> Self {
+    fn of<B: Block<N>, const N: usize>() -> Self {
         Entry {
-            inputs: B::INPUTS,
+            inputs: &B::INPUTS,
             schema: |generator| generator.subschema_for::<B>(),
             build: |args, inputs| {
                 let block: B = serde_json::from_value(args)
                     .map_err(|e| polars_err!(ComputeError: "args: {e}"))?;
-                block.apply(inputs)
+                block.apply(take(inputs)?)
             },
         }
     }
@@ -38,6 +38,14 @@ impl Entry {
     }
 }
 
+/// The input frames as the array that a Block takes them in.
+fn take<const N: usize>(inputs: Vec<LazyFrame>) -> PolarsResult<[LazyFrame; N]> {
+    let got = inputs.len();
+    inputs
+        .try_into()
+        .map_err(|_| polars_err!(ComputeError: "expected {N} input frames, got {got}"))
+}
+
 /// The Blocks a Pipeline file may name.
 #[derive(Default)]
 pub struct Registry {
@@ -49,34 +57,40 @@ impl Registry {
     pub fn with_polars() -> Self {
         Self::default()
             // sources
-            .register::<io::ScanParquet>("scan_parquet")
+            .register::<io::ScanParquet, _>("scan_parquet")
             // standard
-            .register::<frames::Select>("select")
-            .register::<frames::WithColumns>("with_columns")
-            .register::<frames::Filter>("filter")
-            .register::<frames::GroupBy>("group_by")
-            .register::<frames::Join>("join")
-            .register::<frames::Concat>("concat")
-            .register::<frames::Sort>("sort")
-            .register::<frames::Unique>("unique")
-            .register::<frames::Unpivot>("unpivot")
-            .register::<frames::Explode>("explode")
-            .register::<frames::Drop>("drop")
-            .register::<frames::DropNulls>("drop_nulls")
-            .register::<frames::Rename>("rename")
-            .register::<frames::Limit>("limit")
+            .register::<frames::Select, _>("select")
+            .register::<frames::WithColumns, _>("with_columns")
+            .register::<frames::Filter, _>("filter")
+            .register::<frames::GroupBy, _>("group_by")
+            .register::<frames::Join, _>("join")
+            .register::<frames::Concat, _>("concat")
+            .register::<frames::Sort, _>("sort")
+            .register::<frames::Unique, _>("unique")
+            .register::<frames::Unpivot, _>("unpivot")
+            .register::<frames::Explode, _>("explode")
+            .register::<frames::Drop, _>("drop")
+            .register::<frames::DropNulls, _>("drop_nulls")
+            .register::<frames::Rename, _>("rename")
+            .register::<frames::Limit, _>("limit")
             // sinks
-            .register::<io::WriteParquet>("write_parquet")
+            .register::<io::WriteParquet, _>("write_parquet")
     }
 
     /// Adds a Block to the Registry.
-    pub fn register<B: Block>(
+    pub fn register<B: Block<N>, const N: usize>(
         mut self,
         name: &'static str,
     ) -> Self {
+        // the default names every input of a Block alike
+        let mut inputs = B::INPUTS.to_vec();
+        inputs.sort_unstable();
+        inputs.dedup();
+        assert!(inputs.len() == N, "block '{name}' names an input twice");
+
         let taken = self
             .blocks
-            .insert(name, Entry::of::<B>())
+            .insert(name, Entry::of::<B, N>())
             .is_some();
         assert!(!taken, "two blocks are called '{name}'");
         self

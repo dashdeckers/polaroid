@@ -3,7 +3,7 @@ use polars::prelude::*;
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-use crate::{Block, take};
+use crate::Block;
 
 /// Reads a Parquet file, every file under a directory recursively, or a glob.
 #[derive(Deserialize, JsonSchema)]
@@ -12,13 +12,11 @@ pub struct ScanParquet {
     pub path: String,
 }
 
-impl Block for ScanParquet {
-    const INPUTS: &'static [&'static str] = &[];
-
+impl Block<0> for ScanParquet {
     /// Lists the files, but reads none.
     fn apply(
         self,
-        _: Vec<LazyFrame>,
+        []: [LazyFrame; 0],
     ) -> PolarsResult<LazyFrame> {
         let path = [PlRefPath::new(&self.path)];
         let (glob, hidden_prefixes, mut cloud) = (true, [], None);
@@ -53,9 +51,8 @@ impl Block for WriteParquet {
     /// Plans the write, which a run of the Pipeline then does.
     fn apply(
         self,
-        inputs: Vec<LazyFrame>,
+        [lf]: [LazyFrame; 1],
     ) -> PolarsResult<LazyFrame> {
-        let [lf] = take(inputs)?;
         lf.sink(
             SinkDestination::File {
                 target: SinkTarget::Path(PlRefPath::new(&self.path)),

@@ -9,7 +9,7 @@ pub mod methods;
 mod registry;
 pub mod schema;
 
-pub use block::{Block, take};
+pub use block::Block;
 pub use engine::{Node, Pipeline, is_sink};
 pub use polars;
 pub use registry::Registry;
