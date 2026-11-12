@@ -67,4 +67,5 @@ fn a_pipeline_with_no_output_only_writes() {
 
     std::fs::remove_file(read).unwrap();
     std::fs::remove_file(written).unwrap();
+    std::fs::remove_file(directory.join("polaroid.log")).unwrap();
 }
