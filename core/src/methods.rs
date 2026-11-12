@@ -8,9 +8,9 @@
 //! so it cannot disagree with Polars. The tests check the Methods against the
 //! JSON Schema of the expressions, which lists every node there is.
 //!
-//! The Methods are listed in [`namespaces`], a table for each namespace.
-//! [`derive`] makes a Method of a row there, and [`render`] writes the calls
-//! out as text.
+//! The Methods are listed in `namespaces`, a table for each namespace.
+//! `derive` makes a Method of a row there, and `render` writes the calls out
+//! as text.
 
 mod derive;
 mod namespaces;
@@ -79,18 +79,63 @@ impl Method {
         &self,
         node: &Value,
     ) -> bool {
-        let slots: Vec<&str> = self
-            .receiver
-            .iter()
-            .chain(
-                self.inputs
-                    .iter()
-                    .chain(&self.options)
-                    .map(|arg| &arg.at),
-            )
-            .map(String::as_str)
-            .collect();
-        fits(&self.node, node, &mut String::new(), &slots)
+        self.fits(&self.node, node, &mut String::new())
+    }
+
+    /// Whether `node` equals `template` everywhere but at the receiver and
+    /// the arguments, where it may hold anything. `at` is the pointer to both.
+    fn fits(
+        &self,
+        template: &Value,
+        node: &Value,
+        at: &mut String,
+    ) -> bool {
+        if self.is_slot(at) {
+            return true;
+        }
+
+        let len = at.len();
+        let mut child = |key: &dyn Display, template, node| {
+            let _ = write!(at, "/{key}");
+            let fits = self.fits(template, node, at);
+            at.truncate(len);
+            fits
+        };
+        match (template, node) {
+            (Value::Object(template), Value::Object(node)) => {
+                template.len() == node.len()
+                    && template
+                        .iter()
+                        .all(|(key, value)| {
+                            node.get(key)
+                                .is_some_and(|other| child(key, value, other))
+                        })
+            }
+            (Value::Array(template), Value::Array(node)) => {
+                template.len() == node.len()
+                    && template
+                        .iter()
+                        .zip(node)
+                        .enumerate()
+                        .all(|(i, (value, other))| child(&i, value, other))
+            }
+            _ => template == node,
+        }
+    }
+
+    /// Whether the JSON pointer `at` leads to the receiver or an argument.
+    fn is_slot(
+        &self,
+        at: &str,
+    ) -> bool {
+        self.receiver
+            .as_deref()
+            == Some(at)
+            || self
+                .inputs
+                .iter()
+                .chain(&self.options)
+                .any(|arg| arg.at == at)
     }
 }
 
@@ -114,45 +159,4 @@ pub fn read<'a>(
     methods
         .iter()
         .find(|method| method.reads(node))
-}
-
-/// Whether `node` equals `template` everywhere but at the JSON pointers
-/// `slots`, where it may hold anything. `at` is the pointer to both.
-fn fits(
-    template: &Value,
-    node: &Value,
-    at: &mut String,
-    slots: &[&str],
-) -> bool {
-    if slots.contains(&at.as_str()) {
-        return true;
-    }
-
-    let len = at.len();
-    let mut child = |key: &dyn Display, template, node| {
-        let _ = write!(at, "/{key}");
-        let fits = fits(template, node, at, slots);
-        at.truncate(len);
-        fits
-    };
-    match (template, node) {
-        (Value::Object(template), Value::Object(node)) => {
-            template.len() == node.len()
-                && template
-                    .iter()
-                    .all(|(key, value)| {
-                        node.get(key)
-                            .is_some_and(|other| child(key, value, other))
-                    })
-        }
-        (Value::Array(template), Value::Array(node)) => {
-            template.len() == node.len()
-                && template
-                    .iter()
-                    .zip(node)
-                    .enumerate()
-                    .all(|(i, (value, other))| child(&i, value, other))
-        }
-        _ => template == node,
-    }
 }
