@@ -5,6 +5,7 @@ mod namespaces;
 mod render;
 
 use std::fmt::{Display, Write};
+use std::sync::LazyLock;
 
 use serde_json::Value;
 
@@ -118,12 +119,15 @@ impl Method {
     }
 }
 
-/// Every Method; panics if a row cannot be derived, which the tests rule out.
-pub fn methods() -> Vec<Method> {
-    rows()
-        .into_iter()
-        .map(|method| method.unwrap_or_else(|problem| panic!("{problem}")))
-        .collect()
+/// Every Method, derived once; panics if a row cannot be, which the tests rule out.
+pub fn methods() -> &'static [Method] {
+    static METHODS: LazyLock<Vec<Method>> = LazyLock::new(|| {
+        rows()
+            .into_iter()
+            .map(|method| method.unwrap_or_else(|problem| panic!("{problem}")))
+            .collect()
+    });
+    &METHODS
 }
 
 /// The Method that `node` is a call of, if it is one of `methods`.

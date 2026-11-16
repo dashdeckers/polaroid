@@ -9,7 +9,7 @@ use super::methods::{json_of, method};
 #[test]
 fn an_expression_is_written_as_a_chain_of_calls() {
     let methods = methods();
-    let written = |expr: Expr| text(&methods, &json_of(expr));
+    let written = |expr: Expr| text(methods, &json_of(expr));
 
     let chain = col("name")
         .str()
@@ -63,11 +63,11 @@ fn an_expression_is_written_as_a_chain_of_calls() {
     );
 
     // a hole, and a node that no method reads
-    let contains = method(&methods, "str", "contains").call(json_of(col("a")));
+    let contains = method(methods, "str", "contains").call(json_of(col("a")));
     assert_eq!(
-        text(&methods, &contains),
+        text(methods, &contains),
         r#"pl.col("a").str.contains(_, …)"#
     );
     let unread = json!({ "Display": { "inputs": [], "fmt_str": "" } });
-    assert_eq!(text(&methods, &unread), "<Display>");
+    assert_eq!(text(methods, &unread), "<Display>");
 }
