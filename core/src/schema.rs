@@ -7,11 +7,15 @@ pub fn default(
     defs: &Value,
     schema: &Value,
 ) -> Value {
-    let schema = resolve(defs, schema);
-    match schema.get("default") {
+    let resolved = resolve(defs, schema);
+    // a default beside a `$ref` is the field's own
+    match schema
+        .get("default")
+        .or(resolved.get("default"))
+    {
         Some(default) => default.clone(),
-        None if optional(schema).is_some() => Value::Null,
-        None => blank(defs, schema),
+        None if optional(resolved).is_some() => Value::Null,
+        None => blank(defs, resolved),
     }
 }
 
@@ -20,6 +24,7 @@ pub fn blank(
     defs: &Value,
     schema: &Value,
 ) -> Value {
+    let schema = resolve(defs, schema);
     match json_type(schema) {
         "object" => schema["properties"]
             .as_object()
@@ -34,7 +39,10 @@ pub fn blank(
             .map(|item| default(defs, item))
             .collect(),
         "boolean" => false.into(),
-        "integer" | "number" => 0.into(),
+        "integer" | "number" => schema
+            .get("minimum")
+            .cloned()
+            .unwrap_or(0.into()),
         "string" if variants(schema).is_empty() => "".into(),
         _ => Value::Null,
     }
@@ -42,10 +50,19 @@ pub fn blank(
 
 /// What a nullable `schema` holds when it is not null: `Option`'s `Some`.
 pub fn optional(schema: &Value) -> Option<&Value> {
-    match (&schema["anyOf"], &schema["type"]) {
-        (Value::Array(options), _) => options
+    let is_null = |option: &Value| option["type"] == "null";
+    // alternatives of which none is null are no nullable
+    let options = schema["anyOf"]
+        .as_array()
+        .filter(|options| {
+            options
+                .iter()
+                .any(is_null)
+        });
+    match (options, &schema["type"]) {
+        (Some(options), _) => options
             .iter()
-            .find(|option| option["type"] != "null"),
+            .find(|option| !is_null(option)),
         (_, Value::Array(_)) => Some(schema),
         _ => None,
     }
@@ -115,6 +132,8 @@ pub fn pointer<'a>(
     at.split('/')
         .skip(1)
         .fold(resolve(defs, schema), |schema, key| {
+            // through a nullable to what it holds
+            let schema = optional(schema).map_or(schema, |some| resolve(defs, some));
             let variant = variants(schema)
                 .into_iter()
                 .find(|(name, _)| *name == key);
