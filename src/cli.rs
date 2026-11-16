@@ -1,24 +1,39 @@
 use std::collections::BTreeMap;
 use std::ffi::OsStr;
-use std::fs::File;
-use std::io::IsTerminal;
+use std::fs::{File, OpenOptions};
+use std::io::{IsTerminal, Read};
 use std::path::Path;
 use std::time::Instant;
 
 use crate::polars::prelude::*;
-use crate::{Pipeline, Registry};
+use crate::{Pipeline, Registry, stream};
 
 const USAGE: &str = "usage:
   run <pipeline.json> <out-dir>   each output to <out-dir>/<id>.parquet
   run <pipeline.json>             the one output, if there is one, to stdout as Parquet
   check <pipeline.json>           every node's columns and types, or error, as JSON
   catalog                         every block's args, as JSON Schema
+  gui <pipeline.json>             edit and run the pipeline visually
 
 a <pipeline.json> of `-` is read from stdin";
 
+/// Set for the commands that the editor runs, which add to its log.
+pub(crate) const CHILD: &str = "POLAROID_CHILD";
+
 fn start_log() {
     let started = Instant::now();
-    match File::create("polaroid.log") {
+    // a fresh log, unless the editor that runs this command has started one
+    let fresh = match std::env::var_os(CHILD) {
+        Some(_) => Ok(()),
+        None => File::create("polaroid.log").map(drop),
+    };
+    let log = fresh.and_then(|()| {
+        OpenOptions::new()
+            .append(true)
+            .open("polaroid.log")
+    });
+
+    match log {
         Ok(file) => {
             // fails if a logger is already set, which then stays in charge
             let _ = fern::Dispatch::new()
@@ -43,11 +58,13 @@ pub fn cli(registry: Registry) -> PolarsResult<()> {
         .skip(1)
         .collect();
 
-    // only a run tells of itself, so that no other command empties its log
-    if args
-        .first()
-        .is_some_and(|command| command == "run")
-    {
+    // a run and the editor tell of themselves, and so does what the editor runs
+    let is_told = matches!(
+        args.first()
+            .map(String::as_str),
+        Some("run" | "gui")
+    );
+    if is_told || std::env::var_os(CHILD).is_some() {
         start_log();
     }
     log::info!("polaroid {}", args.join(" "));
@@ -109,6 +126,27 @@ fn command(
             }
         }
 
+        // for the editor alone: the pipeline and its known frames in, the outputs out
+        ["collect"] if std::env::var_os(CHILD).is_some() => {
+            let mut input = Vec::new();
+            std::io::stdin().read_to_end(&mut input)?;
+            let mut input = input.as_slice();
+            let pipeline: Pipeline = serde_json::from_slice(stream::part(&mut input)?)
+                .map_err(|e| polars_err!(ComputeError: "the pipeline: {e}"))?;
+            let known = stream::read(input)?
+                .into_iter()
+                .collect();
+            let mut out = std::io::stdout().lock();
+            for (id, mut frame) in pipeline
+                .outputs
+                .iter()
+                .zip(pipeline.run_from(&registry, &known)?)
+            {
+                log::info!("writing {} rows of '{id}' to stdout", frame.height());
+                stream::write(&mut out, id, &mut frame)?;
+            }
+        }
+
         ["check", path] => {
             let pipeline = Pipeline::load(path)?;
             let schemas = pipeline.schemas(&registry)?;
@@ -135,6 +173,12 @@ fn command(
             "{}",
             serde_json::to_string_pretty(&registry.catalog()).expect("a catalog serializes")
         ),
+
+        #[cfg(feature = "gui")]
+        ["gui", path] => crate::gui::open(registry, path)?,
+
+        #[cfg(not(feature = "gui"))]
+        ["gui", _] => polars_bail!(ComputeError: "this build has no gui: add `--features gui`"),
 
         _ => polars_bail!(ComputeError: "{USAGE}"),
     }
