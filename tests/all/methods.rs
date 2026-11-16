@@ -186,7 +186,7 @@ fn every_receiver_and_input_is_an_expression_in_the_schema() {
                     true => is_expr(&format!("{}/0", input.at)),
                     false => is_expr(&input.at),
                 });
-        assert!(is_fit, "{}", label(&method));
+        assert!(is_fit, "{}", label(method));
     }
 }
 
@@ -224,7 +224,7 @@ fn every_option_is_a_part_of_its_payload_in_the_schema() {
             assert!(
                 is_in_schema && (is_field || is_part || is_whole),
                 "{}: {option:?} is no part of {payload}",
-                label(&method)
+                label(method)
             );
         }
     }
@@ -235,7 +235,7 @@ fn every_method_round_trips_and_is_read_by_itself_alone() {
     let methods = methods();
     let mut problems = Vec::new();
 
-    for method in &methods {
+    for method in methods {
         let node = filled(method);
 
         match serde_json::from_value::<Expr>(node.clone()).map(json_of) {
@@ -273,27 +273,27 @@ fn every_name_is_once_a_method_and_once_a_function_at_most() {
 fn a_call_is_what_polars_builds() {
     let methods = methods();
 
-    let contains = filled(method(&methods, "str", "contains"));
+    let contains = filled(method(methods, "str", "contains"));
     let built = col("receiver")
         .str()
         .contains(col("pattern"), true);
     assert_eq!(contains, json_of(built));
 
     // the receiver is inside the payload, beside the options
-    let cast = filled(method(&methods, "", "cast"));
+    let cast = filled(method(methods, "", "cast"));
     assert_eq!(cast, json_of(col("receiver").strict_cast(DataType::String)));
 
     // an operator is told by a field
-    let add = filled(method(&methods, "", "add"));
+    let add = filled(method(methods, "", "add"));
     assert_eq!(add, json_of(col("receiver") + col("other")));
 
     // a function has no receiver, and a variadic input is a list
-    let coalesce_ = method(&methods, "", "coalesce");
+    let coalesce_ = method(methods, "", "coalesce");
     assert_eq!(coalesce_.receiver, None);
     assert_eq!(filled(coalesce_), json_of(coalesce(&[col("exprs")])));
 
     // two methods of one node, told by its payload
-    let clip_min = method(&methods, "", "clip_min");
+    let clip_min = method(methods, "", "clip_min");
     assert!(clip_min.reads(&json_of(col("a").clip_min(lit(0)))));
     assert!(!clip_min.reads(&json_of(col("a").clip_max(lit(0)))));
     assert!(
@@ -321,7 +321,7 @@ fn a_chain_reads_from_its_last_call_back_to_its_root() {
 
     let mut names = Vec::new();
     let mut node = &chain;
-    while let Some(method) = read(&methods, node) {
+    while let Some(method) = read(methods, node) {
         names.push(method.name);
         let Some(receiver) = &method.receiver else {
             break;
@@ -342,11 +342,11 @@ fn a_chain_reads_from_its_last_call_back_to_its_root() {
     assert_eq!(names, expected);
     assert_eq!(*node, json!({ "Column": "name" }));
 
-    let alias = read(&methods, &chain).expect("the chain ends in a call");
+    let alias = read(methods, &chain).expect("the chain ends in a call");
     assert_eq!(*arg(&chain, &alias.options, "name"), json!("many"));
 
     let contains = &chain["Alias"][0]["BinaryExpr"]["left"]["Agg"]["Sum"];
-    let method = read(&methods, contains).expect("the chain holds a call");
+    let method = read(methods, contains).expect("the chain holds a call");
     assert_eq!(method.name, "contains");
     assert_eq!(*arg(contains, &method.inputs, "pattern"), json_of(lit("x")));
     assert_eq!(*arg(contains, &method.options, "literal"), json!(false));
