@@ -220,7 +220,6 @@ impl Tone {
             _ if default == Some(value) => Self::Default,
             // nothing where something has to be, as a null may be what is meant
             Value::Null if !is_nullable => Self::Missing,
-            Value::String(empty) if empty.is_empty() => Self::Missing,
             _ => Self::Given,
         }
     }
@@ -234,6 +233,37 @@ fn typed_in(tone: Tone) -> impl Fn(&Theme, text_input::Status) -> text_input::St
         match tone {
             Tone::Given => {}
             Tone::Default => style.value = style.placeholder,
+            Tone::Missing => {
+                style.border.color = palette
+                    .danger
+                    .base
+                    .color
+            }
+        }
+        style
+    }
+}
+
+/// The style of a box to tick, by the tone of whether it is ticked.
+fn ticked(
+    tone: Tone,
+    is_ticked: bool,
+) -> impl Fn(&Theme, checkbox::Status) -> checkbox::Style {
+    move |theme, status| {
+        let palette = theme.palette();
+        let mut style = checkbox::primary(theme, status);
+        let grey = palette
+            .background
+            .strong
+            .color;
+        match tone {
+            Tone::Given => {}
+            Tone::Default => {
+                style.border.color = grey;
+                if is_ticked {
+                    style.background = grey.into();
+                }
+            }
             Tone::Missing => {
                 style.border.color = palette
                     .danger
@@ -508,13 +538,16 @@ impl<'a> Form<'a, '_> {
                     .boxed()
                 }
             },
-            "boolean" => checkbox(
-                value
+            "boolean" => {
+                // none yet is an empty box, which a press ticks
+                let is_ticked = value
                     .as_bool()
-                    .unwrap_or_default(),
-            )
-            .on_toggle(move |on| put(on.into()))
-            .boxed(),
+                    .unwrap_or_default();
+                checkbox(is_ticked)
+                    .on_toggle(move |on| put(on.into()))
+                    .style(ticked(tone, is_ticked))
+                    .boxed()
+            }
             "integer" | "number" => {
                 let typed = match value {
                     Value::String(typed) => typed.clone(),

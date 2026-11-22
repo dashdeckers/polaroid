@@ -184,7 +184,8 @@ fn a_value_is_given_the_default_or_missing() {
 
     // nothing is missing where something has to be, and a null may be what is meant
     assert_eq!(Tone::of(&Value::Null, None, false), Tone::Missing);
-    assert_eq!(Tone::of(&json!(""), None, false), Tone::Missing);
+    // and a text that was typed and cleared is a text
+    assert_eq!(Tone::of(&json!(""), None, false), Tone::Given);
     assert_eq!(Tone::of(&Value::Null, None, true), Tone::Given);
     assert_eq!(
         Tone::of(&Value::Null, Some(&Value::Null), true),
