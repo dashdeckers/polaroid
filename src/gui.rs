@@ -50,7 +50,9 @@ card shows its args, and the saved frame or else the columns that Check found. S
 table, with shift for sideways. Drag the corner of the card to resize it, and across cells to \
 select them for Ctrl+C.
 
-Type an id and press Enter to rename a node. The cross deletes it.";
+Type an id and press Enter to rename a node. The cross deletes it.
+
+A card turns red at once when it is wired badly. What is wrong with a file shows on Check or Run.";
 
 /// A node's columns and their types, or its error, as the `check` command prints them.
 type Columns = Result<Vec<(String, DataType)>, String>;
@@ -382,9 +384,21 @@ impl Editor {
         self.wiring.clear();
         self.writes.clear();
         self.problem = None;
+        // a node that reads no other reads the disk, which is left to a Check: it is not built
+        let sources = self
+            .pipeline
+            .nodes
+            .iter()
+            .filter(|node| {
+                self.catalog["blocks"][&node.block]["inputs"]
+                    .as_array()
+                    .is_some_and(Vec::is_empty)
+            })
+            .map(|node| (node.id.clone(), DataFrame::empty()))
+            .collect();
         let frames = match self
             .pipeline
-            .frames(&self.registry)
+            .frames_from(&self.registry, &sources)
         {
             Ok(frames) => frames,
             Err(e) => return self.problem = Some(e.to_string()),

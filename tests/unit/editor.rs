@@ -293,3 +293,22 @@ fn a_field_keeps_the_typing_when_an_error_comes() {
         .count();
     assert_eq!(edits, 1);
 }
+
+#[test]
+fn a_scan_is_not_looked_up_on_disk_until_a_check() {
+    // a scan of a directory without Parquet files, which building its plan would reject
+    let directory = std::env::temp_dir().join(format!("polaroid-empty-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).unwrap();
+    let mut editor = chain(2);
+    let args = serde_json::json!({ "path": directory });
+    let _ = editor.update(Message::Edit("n0".to_owned(), Edit::Args(args)));
+    std::fs::remove_dir_all(directory).unwrap();
+
+    assert_eq!(
+        status(&editor),
+        [
+            Status::Unknown,
+            Status::Unknown
+        ]
+    );
+}
