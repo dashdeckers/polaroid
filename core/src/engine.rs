@@ -4,7 +4,7 @@ use std::time::Instant;
 use polars::prelude::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Map, Value};
 
 use crate::Registry;
 
@@ -18,6 +18,9 @@ pub struct Pipeline {
     pub nodes: Vec<Node>,
     /// The Nodes that provide the output frames.
     pub outputs: Vec<String>,
+    /// Expressions by name: `{"$expr": name}` in a Node's args stands for the one of that name.
+    #[serde(default, skip_serializing_if = "Map::is_empty")]
+    pub expressions: Map<String, Value>,
 }
 
 /// A Node is a frame-level operation.
@@ -106,7 +109,7 @@ impl Pipeline {
                         !ids.contains(input.as_str()) || frames.contains_key(input.as_str())
                     });
                 if !is_built && has_inputs {
-                    let frame = build(registry, node, &frames)
+                    let frame = build(registry, node, &self.expressions, &frames)
                         .map_err(|e| e.context(format!("node '{}'", node.id).into()));
                     frames.insert(node.id.as_str(), frame);
                 }
@@ -252,6 +255,7 @@ impl Pipeline {
 fn build(
     registry: &Registry,
     node: &Node,
+    expressions: &Map<String, Value>,
     frames: &HashMap<&str, PolarsResult<LazyFrame>>,
 ) -> PolarsResult<LazyFrame> {
     let entry = registry
@@ -274,7 +278,37 @@ fn build(
         })
         .collect::<PolarsResult<_>>()?;
 
-    guard(|| entry.build(node.args.clone(), inputs))
+    let args = named(node.args.clone(), expressions)?;
+    guard(|| entry.build(args, inputs))
+}
+
+/// `args` with each `{"$expr": name}` in them replaced by the expression of that name.
+fn named(
+    mut args: Value,
+    expressions: &Map<String, Value>,
+) -> PolarsResult<Value> {
+    let name = match &args {
+        Value::Object(marker) if marker.len() == 1 => marker
+            .get("$expr")
+            .and_then(Value::as_str),
+        _ => None,
+    };
+    if let Some(name) = name {
+        return expressions
+            .get(name)
+            .cloned()
+            .ok_or_else(|| polars_err!(ComputeError: "no expression is called '{name}'"));
+    }
+
+    let parts: Box<dyn Iterator<Item = &mut Value>> = match &mut args {
+        Value::Array(items) => Box::new(items.iter_mut()),
+        Value::Object(fields) => Box::new(fields.values_mut()),
+        _ => Box::new(std::iter::empty()),
+    };
+    for part in parts {
+        *part = named(part.take(), expressions)?;
+    }
+    Ok(args)
 }
 
 /// Whether a Node's plan writes its frame, as to a file.

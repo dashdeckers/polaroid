@@ -186,3 +186,41 @@ fn a_scanned_file_is_read_by_its_name_and_not_as_a_pattern() {
     assert_eq!(frames[0].height(), 5);
     std::fs::remove_dir_all(directory).unwrap();
 }
+
+#[test]
+fn an_expression_is_used_by_its_name() {
+    let pipeline = |name: &str| {
+        let pipeline = serde_json::json!({
+            "polars": polars::VERSION,
+            "nodes": [
+                { "id": "all", "block": "scan_parquet", "args": { "path": "" } },
+                {
+                    "id": "some",
+                    "block": "filter",
+                    "inputs": ["all"],
+                    "args": { "predicates": [{ "$expr": name }] },
+                },
+            ],
+            "outputs": ["some"],
+            "expressions": { "large": col("x").gt(lit(1)) },
+        });
+        serde_json::from_value::<Pipeline>(pipeline).unwrap()
+    };
+    let frame = df!("x" => [1, 2, 3]).unwrap();
+    let known = HashMap::from([("all".to_owned(), frame)]);
+    let registry = Registry::with_polars();
+
+    let frames = pipeline("large")
+        .run_from(&registry, &known)
+        .unwrap();
+    assert_eq!(frames[0], df!("x" => [2, 3]).unwrap());
+
+    let unnamed = pipeline("small")
+        .run_from(&registry, &known)
+        .unwrap_err();
+    assert!(
+        unnamed
+            .to_string()
+            .contains("no expression is called 'small'")
+    );
+}
