@@ -10,10 +10,10 @@ use std::sync::LazyLock;
 use serde_json::Value;
 
 use self::namespaces::rows;
-pub use self::render::{arguments, text};
+pub use self::render::{arguments, literal, text};
 
 /// How one kind of expression node reads as a method call.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Method {
     /// The `str` of `.str.contains()`.
     pub namespace: &'static str,
@@ -130,12 +130,9 @@ pub fn methods() -> &'static [Method] {
     &METHODS
 }
 
-/// The Method that `node` is a call of, if it is one of `methods`.
-pub fn read<'a>(
-    methods: &'a [Method],
-    node: &Value,
-) -> Option<&'a Method> {
-    methods
+/// The Method that `node` is a call of, if it is one.
+pub fn read(node: &Value) -> Option<&'static Method> {
+    methods()
         .iter()
         .find(|method| method.reads(node))
 }

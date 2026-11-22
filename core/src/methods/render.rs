@@ -5,11 +5,8 @@ use serde_json::Value;
 use super::{Arg, Method, read};
 
 /// `node` as a chain of calls: `pl.col("a").str.contains("x", …)`.
-pub fn text(
-    methods: &[Method],
-    node: &Value,
-) -> String {
-    let Some(method) = read(methods, node) else {
+pub fn text(node: &Value) -> String {
+    let Some(method) = read(node) else {
         let variant = match node {
             Value::Null => return "_".to_owned(),
             Value::String(variant) => variant.as_str(),
@@ -25,7 +22,7 @@ pub fn text(
         .namespace
         .is_empty();
     let root = match &method.receiver {
-        Some(at) => text(methods, pointer(node, at)),
+        Some(at) => text(pointer(node, at)),
         None if in_namespace => String::new(),
         None => "pl".to_owned(),
     };
@@ -39,12 +36,11 @@ pub fn text(
     .collect::<Vec<_>>()
     .join(".");
 
-    format!("{path}({})", arguments(methods, method, node))
+    format!("{path}({})", arguments(method, node))
 }
 
 /// The arguments of `node` in short: its inputs or else its first option, and `…` for the rest.
 pub fn arguments(
-    methods: &[Method],
     method: &Method,
     node: &Value,
 ) -> String {
@@ -73,9 +69,9 @@ pub fn arguments(
             Some(items) => args.extend(
                 items
                     .iter()
-                    .map(|item| argument(methods, item)),
+                    .map(argument),
             ),
-            None => args.push(argument(methods, value)),
+            None => args.push(argument(value)),
         }
     }
 
@@ -110,15 +106,12 @@ fn pointer<'a>(
 }
 
 /// An expression that is an argument: a literal as its bare value.
-fn argument(
-    methods: &[Method],
-    node: &Value,
-) -> String {
-    literal(node).unwrap_or_else(|| text(methods, node))
+fn argument(node: &Value) -> String {
+    literal(node).unwrap_or_else(|| text(node))
 }
 
 /// A plain literal as Python writes it: a number, string, boolean or null.
-fn literal(node: &Value) -> Option<String> {
+pub fn literal(node: &Value) -> Option<String> {
     let value = &node["Literal"];
     let is_null = value["Scalar"]["Null"].is_string();
     [

@@ -305,7 +305,6 @@ fn a_call_is_what_polars_builds() {
 
 #[test]
 fn a_chain_reads_from_its_last_call_back_to_its_root() {
-    let methods = methods();
     let chain = json_of(
         col("name")
             .str()
@@ -321,7 +320,7 @@ fn a_chain_reads_from_its_last_call_back_to_its_root() {
 
     let mut names = Vec::new();
     let mut node = &chain;
-    while let Some(method) = read(methods, node) {
+    while let Some(method) = read(node) {
         names.push(method.name);
         let Some(receiver) = &method.receiver else {
             break;
@@ -342,11 +341,11 @@ fn a_chain_reads_from_its_last_call_back_to_its_root() {
     assert_eq!(names, expected);
     assert_eq!(*node, json!({ "Column": "name" }));
 
-    let alias = read(methods, &chain).expect("the chain ends in a call");
+    let alias = read(&chain).expect("the chain ends in a call");
     assert_eq!(*arg(&chain, &alias.options, "name"), json!("many"));
 
     let contains = &chain["Alias"][0]["BinaryExpr"]["left"]["Agg"]["Sum"];
-    let method = read(methods, contains).expect("the chain holds a call");
+    let method = read(contains).expect("the chain holds a call");
     assert_eq!(method.name, "contains");
     assert_eq!(*arg(contains, &method.inputs, "pattern"), json_of(lit("x")));
     assert_eq!(*arg(contains, &method.options, "literal"), json!(false));
