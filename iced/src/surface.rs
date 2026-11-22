@@ -57,7 +57,8 @@ pub fn card<'a, Key, Message>(
         content: content._boxed(),
         inputs: Vec::new(),
         output: None,
-        grows: (false, false),
+        is_resizable: false,
+        tall: None,
         handle: None,
         is_loose: true,
     }
@@ -70,8 +71,9 @@ pub struct Card<'a, Key, Message> {
     content: Element<'a, Message>,
     inputs: Vec<f32>,
     output: Option<f32>,
-    /// Whether its grip makes it wider, and taller.
-    grows: (bool, bool),
+    is_resizable: bool,
+    /// The height it was made, which what it holds may exceed.
+    tall: Option<f32>,
     handle: Option<Rectangle>,
     /// Whether a press that nothing in it takes drags it, and a double one opens it.
     is_loose: bool,
@@ -116,13 +118,21 @@ impl<Key, Message> Card<'_, Key, Message> {
         self
     }
 
-    /// Whether its lower right corner is a grip that makes it wider, and taller.
+    /// Makes it this tall if what it holds is less, whose fills in height then take the rest.
+    pub fn tall(
+        mut self,
+        tall: f32,
+    ) -> Self {
+        self.tall = Some(tall);
+        self
+    }
+
+    /// Whether its lower right corner is a grip to resize it by.
     pub fn resizable(
         mut self,
-        wider: bool,
-        taller: bool,
+        is_resizable: bool,
     ) -> Self {
-        self.grows = (wider, taller);
+        self.is_resizable = is_resizable;
         self
     }
 }
@@ -133,7 +143,7 @@ pub struct Surface<'a, Key, Message> {
     /// From the output of a card to an input of another, by its slot.
     wires: Vec<(Key, Key, usize)>,
     on_move: Option<Box<dyn Fn(Key, Point) -> Message + 'a>>,
-    on_resize: Option<Box<dyn Fn(Key, Vector) -> Message + 'a>>,
+    on_resize: Option<Box<dyn Fn(Key, Size) -> Message + 'a>>,
     on_wire: Option<OnWire<'a, Key, Message>>,
     on_unwire: Option<Box<dyn Fn(Key, usize) -> Message + 'a>>,
     on_menu: Option<Box<dyn Fn(Point, Point) -> Message + 'a>>,
@@ -172,10 +182,10 @@ impl<'a, Key, Message> Surface<'a, Key, Message> {
         self
     }
 
-    /// The message for a card whose grip was dragged this much further.
+    /// The message for a card whose grip was dragged to make it this size.
     pub fn on_resize(
         mut self,
-        on_resize: impl Fn(Key, Vector) -> Message + 'a,
+        on_resize: impl Fn(Key, Size) -> Message + 'a,
     ) -> Self {
         self.on_resize = Some(Box::new(on_resize));
         self
@@ -236,8 +246,8 @@ enum Drag<Key> {
     Pan(Point),
     /// A card, held this far from its corner.
     Card(Key, Vector),
-    /// The grip of a card, from where the cursor last was, and whether it grows each way.
-    Grip(Key, Point, (bool, bool)),
+    /// The grip of a card, held this far from its lower right corner.
+    Grip(Key, Vector),
     /// A wire from the output of a card to where the cursor is, as the cards see it.
     Wire(Key, Point),
 }
@@ -335,9 +345,7 @@ impl<'a, Key: PartialEq, Message> Surface<'a, Key, Message> {
                 match (input, output) {
                     (Some(slot), _) => Some(Hit::Input(index, slot)),
                     (None, Some(_)) => Some(Hit::Output(index)),
-                    _ if card.grows != (false, false) && grip.contains(point) => {
-                        Some(Hit::Grip(index))
-                    }
+                    _ if card.is_resizable && grip.contains(point) => Some(Hit::Grip(index)),
                     _ if handle.is_some_and(|handle| handle.contains(point)) => {
                         Some(Hit::Handle(index))
                     }
@@ -437,14 +445,29 @@ where
         limits: &layout::Limits,
     ) {
         tree.size = limits.resolve(Fill, Fill, Size::ZERO);
-        let loose = layout::Limits::new(Size::ZERO, tree.size);
+        // a card is as large as what it holds, whatever the surface is: its fills take nothing
+        let all = Size::new(true, true);
+        let least = layout::Limits::with_flags(Size::ZERO, Size::INFINITE, all, all);
         for (card, tree) in self
             .cards
             .iter_mut()
             .zip(&mut tree.children)
         {
             card.content
-                .layout(tree, renderer, &loose);
+                .layout(tree, renderer, &least);
+            let made = card
+                .tall
+                .filter(|tall| *tall > tree.size.height);
+            if let Some(tall) = made {
+                let tall = layout::Limits::with_flags(
+                    Size::new(0.0, tall),
+                    Size::new(f32::INFINITY, tall),
+                    Size::new(true, false),
+                    Size::new(true, false),
+                );
+                card.content
+                    .layout(tree, renderer, &tall);
+            }
         }
     }
 
@@ -542,7 +565,13 @@ where
                 };
                 state.drag = Some(match hit {
                     Some(Hit::Output(index)) => Drag::Wire(key(index), point),
-                    Some(Hit::Grip(index)) => Drag::Grip(key(index), at, self.cards[index].grows),
+                    Some(Hit::Grip(index)) => {
+                        let card = view
+                            .layout(self.cards[index].at, &tree.children[index])
+                            .bounds();
+                        let corner = Point::new(card.x + card.width, card.y + card.height);
+                        Drag::Grip(key(index), corner - point)
+                    }
                     // a card that is not loose is dragged by its handle alone
                     Some(Hit::Card(index) | Hit::Input(index, _))
                         if !self.cards[index].is_loose =>
@@ -596,15 +625,16 @@ where
                             shell.publish(on_move(key.clone(), point - view.origin - *held));
                         }
                     }
-                    Some(Drag::Grip(key, from, (wider, taller))) => {
-                        let Vector { x, y } = (*position - *from) * view.inverse();
-                        let grown = Vector::new(
-                            x * f32::from(u8::from(*wider)),
-                            y * f32::from(u8::from(*taller)),
-                        );
-                        *from = *position;
-                        if let Some(on_resize) = &self.on_resize {
-                            shell.publish(on_resize(key.clone(), grown));
+                    Some(Drag::Grip(key, held)) => {
+                        let card = self
+                            .cards
+                            .iter()
+                            .find(|card| card.key == *key);
+                        if let (Some(card), Some(on_resize)) = (card, &self.on_resize) {
+                            let Vector { x, y } =
+                                point + *held - view.origin - card.at - Point::ORIGIN;
+                            let size = Size::new(x.max(0.0), y.max(0.0));
+                            shell.publish(on_resize(key.clone(), size));
                         }
                     }
                     Some(Drag::Wire(_, end)) => *end = point,
@@ -649,8 +679,9 @@ where
             .hit(tree, view, local)
             .filter(|_| cursor.is_over(layout.bounds()));
         match (&state.drag, hit) {
-            (Some(Drag::Grip(.., grows)), _) => resizing(*grows),
-            (None, Some(Hit::Grip(index))) => resizing(self.cards[index].grows),
+            (Some(Drag::Grip(..)), _) | (None, Some(Hit::Grip(_))) => {
+                mouse::Interaction::ResizingDiagonallyDown
+            }
             (Some(Drag::Wire(..)), _) | (None, Some(Hit::Input(..) | Hit::Output(_))) => {
                 mouse::Interaction::Crosshair
             }
@@ -760,7 +791,7 @@ where
                                 renderer.fill_quad(quad(dot.expand(1.5), 1.5), muted);
                             }
                         }
-                        if card.grows != (false, false) {
+                        if card.is_resizable {
                             // three dots along the corner
                             for (x, y) in [
                                 (8.0, 8.0),
@@ -807,15 +838,6 @@ where
             })
             .map(|inner| scaled(inner, view.scale))
             .collect()
-    }
-}
-
-/// The cursor over a grip that makes a card wider, and taller.
-fn resizing(grows: (bool, bool)) -> mouse::Interaction {
-    match grows {
-        (true, false) => mouse::Interaction::ResizingHorizontally,
-        (false, true) => mouse::Interaction::ResizingVertically,
-        _ => mouse::Interaction::ResizingDiagonallyDown,
     }
 }
 

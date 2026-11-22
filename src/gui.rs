@@ -27,7 +27,7 @@ use iced::widget::{
     text,
     tooltip,
 };
-use iced::{Center, Fill, Function, Point, Subscription, Task, Vector, Widget, clipboard, task};
+use iced::{Fill, Function, Point, Size, Subscription, Task, Widget, clipboard, task};
 use polaroid_iced::surface;
 use serde_json::Value;
 
@@ -52,10 +52,35 @@ select them for Ctrl+C.
 
 Type an id and press Enter to rename a node. The cross deletes it.
 
-A card turns red at once when it is wired badly. What is wrong with a file shows on Check or Run.";
+A card turns red at once when it is wired badly. What is wrong with a file shows on Check, which \
+comes before a Run: its button covers Run and Rerun until every node that a Run computes is \
+checked and sound.
+
+Save is lit when there is something to save. Load asks for another pipeline and New for the name \
+of an empty one; either takes the place of this pipeline, and drops what was not saved.";
 
 /// A node's columns and their types, or its error, as the `check` command prints them.
 type Columns = Result<Vec<(String, DataType)>, String>;
+
+/// A pipeline of no nodes.
+fn empty() -> Pipeline {
+    Pipeline {
+        polars: polars::VERSION.to_owned(),
+        nodes: vec![],
+        outputs: vec![],
+    }
+}
+
+/// A dialog that asks for the file of a pipeline.
+fn dialog() -> rfd::AsyncFileDialog {
+    rfd::AsyncFileDialog::new().add_filter("pipeline", &["json"])
+}
+
+fn path_of(file: rfd::FileHandle) -> String {
+    file.path()
+        .to_string_lossy()
+        .into_owned()
+}
 
 /// Opens the editor on the pipeline at `path`, which need not exist yet.
 pub fn open(
@@ -64,11 +89,7 @@ pub fn open(
 ) -> PolarsResult<()> {
     let mut pipeline = match std::fs::exists(path)? {
         true => Pipeline::load(path)?,
-        false => Pipeline {
-            polars: polars::VERSION.to_owned(),
-            nodes: vec![],
-            outputs: vec![],
-        },
+        false => empty(),
     };
     layout::layout(&mut pipeline);
     // the window's own chatter would drown the log
@@ -121,8 +142,8 @@ struct Known {
 #[derive(Debug, Clone)]
 enum Message {
     Move(String, Point),
-    /// The open card of this node is to be this much larger.
-    Grow(String, Vector),
+    /// The open card of this node is to be of this size.
+    Resize(String, Size),
     /// The menu of blocks is asked for here on the surface, which is this point among the cards.
     Menu(Point, Point),
     /// A node of this block, at this point among the cards.
@@ -132,6 +153,14 @@ enum Message {
     /// Text to put on the clipboard.
     Copy(String),
     Save,
+    /// A file is asked for, to read a pipeline from in the place of this one.
+    Load,
+    /// The file that was picked, if one was.
+    Loaded(Option<String>),
+    /// A name is asked for, to start an empty pipeline under in the place of this one.
+    New,
+    /// The name that was given, if one was.
+    Named(Option<String>),
     Check,
     Checked(Result<BTreeMap<String, Columns>, String>),
     Run,
@@ -191,9 +220,9 @@ impl Editor {
                     layout::place(node, position);
                 }
             }
-            Message::Grow(id, by) => {
+            Message::Resize(id, size) => {
                 if let Some(node) = self.node_mut(&id) {
-                    layout::grow(node, by);
+                    layout::resize(node, size);
                 }
             }
             Message::Copy(text) => return clipboard::write(text).discard(),
@@ -227,6 +256,21 @@ impl Editor {
                 self.check_wiring();
             }
             Message::Edit(id, edit) => self.edit(&id, edit),
+            Message::Load => {
+                let file = dialog().pick_file();
+                return Task::perform(file, |file| Message::Loaded(file.map(path_of)));
+            }
+            Message::New => {
+                let file = dialog().save_file();
+                return Task::perform(file, |file| Message::Named(file.map(path_of)));
+            }
+            Message::Loaded(Some(path)) => match Pipeline::load(&path) {
+                Ok(pipeline) => self.replace(path, pipeline, false),
+                Err(e) => self.problem = Some(e.to_string()),
+            },
+            // its file is made by the first Save
+            Message::Named(Some(path)) => self.replace(path, empty(), true),
+            Message::Loaded(None) | Message::Named(None) => {}
             Message::Save => {
                 let pipeline =
                     serde_json::to_string_pretty(&self.pipeline).expect("a pipeline serializes");
@@ -250,8 +294,10 @@ impl Editor {
                 match checks {
                     Ok(checks) => {
                         for (id, columns) in checks {
-                            self.known_mut(id)
-                                .columns = Some(columns);
+                            let known = self.known_mut(id);
+                            known.columns = Some(columns);
+                            // why a Run failed before may no longer hold
+                            known.failed = None;
                         }
                     }
                     Err(problem) => self.problem = Some(problem),
@@ -309,22 +355,7 @@ impl Editor {
             }
             Message::Ran(targets, Ok(frames)) => {
                 self.job = None;
-                // it computed these and all they read: as many passes as nodes reach those
-                let mut ran: HashSet<String> = targets
-                    .into_iter()
-                    .collect();
-                for _ in &self.pipeline.nodes {
-                    for node in &self.pipeline.nodes {
-                        if ran.contains(&node.id) {
-                            ran.extend(
-                                node.inputs
-                                    .iter()
-                                    .cloned(),
-                            );
-                        }
-                    }
-                }
-                for id in ran {
+                for id in self.reached(targets) {
                     self.known_mut(id)
                         .is_run = true;
                 }
@@ -365,6 +396,23 @@ impl Editor {
         let (job, handle) = job.abortable();
         self.job = Some(handle.abort_on_drop());
         job
+    }
+
+    /// Puts `pipeline` in the place of this one, as that of the file at `path`.
+    fn replace(
+        &mut self,
+        path: String,
+        mut pipeline: Pipeline,
+        is_dirty: bool,
+    ) {
+        layout::layout(&mut pipeline);
+        self.path = path;
+        self.pipeline = pipeline;
+        self.known.clear();
+        self.job = None;
+        self.menu = None;
+        self.is_dirty = is_dirty;
+        self.check_wiring();
     }
 
     /// The node of this id, whose card was moved or resized.
@@ -415,6 +463,29 @@ impl Editor {
                 ),
             }
         }
+    }
+
+    /// These nodes and all they read, which is what a Run of them computes.
+    fn reached(
+        &self,
+        targets: impl IntoIterator<Item = String>,
+    ) -> HashSet<String> {
+        let mut reached: HashSet<String> = targets
+            .into_iter()
+            .collect();
+        // as many passes as there are nodes reach every one that is read
+        for _ in &self.pipeline.nodes {
+            for node in &self.pipeline.nodes {
+                if reached.contains(&node.id) {
+                    reached.extend(
+                        node.inputs
+                            .iter()
+                            .cloned(),
+                    );
+                }
+            }
+        }
+        reached
     }
 
     /// Forgets what is known of node `index` and of every node that reads it, and stops a job.
@@ -508,37 +579,76 @@ impl Editor {
             .into_iter()
             .flat_map(|blocks| blocks.keys())
             .collect();
-        let jobs = match self.job {
-            Some(_) => row![
-                "Working…",
-                button("Stop").on_press(Message::Stop)
-            ],
-            None => row![
-                button("Check").on_press(Message::Check),
-                button("Run").on_press(Message::Run),
-                button("Rerun").on_press(Message::Rerun),
-            ],
-        };
+        let save = self
+            .is_dirty
+            .then_some(Message::Save);
+        // a Check goes before a Run: its button covers theirs until every node is sound
+        let targets = self
+            .pipeline
+            .outputs
+            .iter()
+            .chain(&self.writes)
+            .cloned();
+        let reached = self.reached(targets);
+        let is_checked = self
+            .pipeline
+            .nodes
+            .iter()
+            .all(|node| {
+                let is_sound = matches!(self.status(&node.id), Status::Checked | Status::Ran);
+                // no Check mends bad wiring, which is no matter in a node that no Run computes
+                let is_aside = self
+                    .wiring
+                    .contains_key(&node.id)
+                    && !reached.contains(&node.id);
+                is_sound || is_aside
+            });
+        let over = match (&self.job, is_checked) {
+            (Some(_), _) => Some(("Stop", Message::Stop)),
+            (None, false) => Some(("Check", Message::Check)),
+            (None, true) => None,
+        }
+        .map(|(label, message)| {
+            button(
+                text(label)
+                    .width(Fill)
+                    .center(),
+            )
+            .width(Fill)
+            .height(Fill)
+            .on_press(message)
+        });
+        let runs = row![
+            button("Run").on_press(Message::Run),
+            button("Rerun").on_press(Message::Rerun),
+        ]
+        .spacing(1);
+        let files = row![
+            button("Save").on_press_maybe(save),
+            button("Load")
+                .style(button::secondary)
+                .on_press(Message::Load),
+            button("New")
+                .style(button::secondary)
+                .on_press(Message::New),
+        ]
+        .spacing(1);
         let help = container(text(HELP))
             .width(460)
             .padding(10)
             .style(container::bordered_box);
-        let save = self
-            .is_dirty
-            .then_some(Message::Save);
         let toolbar = row![
             tooltip(container("Help").padding(5), help).position(tooltip::Position::Bottom),
             space::horizontal(),
-            jobs.spacing(10)
-                .align_y(Center),
-            button("Save").on_press_maybe(save),
+            stack![runs, over],
+            files,
         ]
         .spacing(10)
         .padding(10);
 
         let mut graph = surface()
             .on_move(Message::Move)
-            .on_resize(Message::Grow)
+            .on_resize(Message::Resize)
             .on_wire(|from, to, slot| Message::Edit(to, Edit::Wire(slot, from)))
             .on_unwire(|to, slot| Message::Edit(to, Edit::Wire(slot, String::new())))
             .on_open(|id| Message::Edit(id, Edit::Toggle))
@@ -548,19 +658,20 @@ impl Editor {
                 .as_array()
                 .map_or(0, Vec::len);
             let (inputs, output) = card::ports(inputs);
+            let is_open = layout::is_open(node);
+            let tall = match is_open {
+                true => layout::size(node).height,
+                false => 0.0,
+            };
             let id = node.id.clone();
             let card = polaroid_iced::card(id, layout::position(node), component(self.card(node)))
                 .inputs(inputs)
                 .output(output)
                 .handle(card::handle())
                 // an open card is moved and closed by its buttons alone, which leaves its text
-                .loose(!layout::is_open(node))
-                // a card is as tall as what it holds, but for the rows of a saved frame
-                .resizable(
-                    layout::is_open(node),
-                    self.frame(&node.id)
-                        .is_some(),
-                );
+                .loose(!is_open)
+                .resizable(is_open)
+                .tall(tall);
             graph = graph.push(card);
             let wired = node
                 .inputs

@@ -2,16 +2,15 @@
 
 use std::collections::HashMap;
 
-use iced::{Point, Size, Vector};
+use iced::{Point, Size};
 use serde_json::json;
 
-use super::table;
 use crate::{Node, Pipeline};
 
 /// The width of a closed card.
 pub const WIDTH: f32 = 220.0;
-/// The width of an open card and the height of the table in it, until it is resized.
-const OPEN: Size = Size::new(520.0, 240.0);
+/// The width of an open card until it is resized; it is as tall as what it holds.
+const OPEN: f32 = 520.0;
 
 /// Where a node's card is drawn, as its `ui` says.
 pub fn position(node: &Node) -> Point {
@@ -44,25 +43,23 @@ pub fn toggle(node: &mut Node) {
     node.ui["expanded"] = (!is_open(node)).into();
 }
 
-/// The width of a node's open card and the height of the table in it, as its `ui` says.
+/// The size of a node's open card as its `ui` says, which what the card holds may exceed.
 pub fn size(node: &Node) -> Size {
     let axis = |name, default| {
         node.ui[name]
             .as_f64()
             .map_or(default, |axis| axis as f32)
     };
-    Size::new(axis("w", OPEN.width), axis("h", OPEN.height))
+    Size::new(axis("w", OPEN), axis("h", 0.0))
 }
 
-/// Draws a node's open card this much larger from now on, down to a row of its table.
-pub fn grow(
+/// Draws a node's open card at `size` from now on, or as large as what it holds if that is more.
+pub fn resize(
     node: &mut Node,
-    by: Vector,
+    size: Size,
 ) {
-    let Size { width, height } = size(node);
-    let least = table::HEADER + table::ROW;
-    node.ui["w"] = json!((width + by.x).max(WIDTH));
-    node.ui["h"] = json!((height + by.y).max(least));
+    node.ui["w"] = json!(size.width.round());
+    node.ui["h"] = json!(size.height.round());
 }
 
 /// Places every node that has no place yet: a column per step from the sources.

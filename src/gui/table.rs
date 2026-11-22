@@ -54,6 +54,20 @@ impl<'a> Table<'a> {
         }
     }
 
+    /// The least height that shows it: its header, and up to five of its rows if it has any.
+    pub fn least(&self) -> f32 {
+        match self.frame {
+            Some(frame) => {
+                HEADER
+                    + ROW
+                        * frame
+                            .height()
+                            .clamp(1, 5) as f32
+            }
+            None => HEADER,
+        }
+    }
+
     fn rows(&self) -> usize {
         self.frame
             .map_or(0, DataFrame::height)

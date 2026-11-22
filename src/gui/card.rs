@@ -1,6 +1,10 @@
 //! The card of a node: its id, inputs and args, and what is known of it.
 
+use iced::advanced::graphics::text::Paragraph;
+use iced::advanced::text::{Paragraph as _, Text};
+use iced::alignment::Vertical;
 use iced::widget::canvas::{self, Frame, Path, Stroke};
+use iced::widget::text::Span;
 use iced::widget::{
     Component,
     button,
@@ -8,9 +12,10 @@ use iced::widget::{
     column,
     container,
     pick_list,
+    rich_text,
     row,
     space,
-    stack,
+    span,
     text,
     text_input,
 };
@@ -18,11 +23,10 @@ use iced::{
     Center,
     Color,
     Fill,
-    Length,
+    Font,
     Point,
     Rectangle,
     Renderer,
-    Shrink,
     Size,
     Theme,
     Widget,
@@ -31,7 +35,7 @@ use iced::{
 };
 use serde_json::Value;
 
-use super::table::{self, Table};
+use super::table::Table;
 use super::{Editor, Message, error, form, layout};
 use crate::polars::prelude::{DataFrame, DataType};
 use crate::{Node, schema};
@@ -39,10 +43,14 @@ use crate::{Node, schema};
 /// The space around what a card holds, and between its lines.
 const PAD: f32 = 10.0;
 const GAP: f32 = 6.0;
-/// The heights of the lines above the args: the id, the block, and each input.
+/// The heights of the lines above the args: the id, and each input.
 const HEAD: f32 = 28.0;
-const BLOCK: f32 = 16.0;
 const INPUT: f32 = 26.0;
+/// The widths of the buttons beside the id: those of a sign, and that of the small table.
+const BUTTON: f32 = 22.0;
+const SAVE: f32 = 27.0;
+/// The size of the text of an id.
+const ID: f32 = 14.0;
 /// The width of the handle that drags a card.
 const GRAB: f32 = 14.0;
 /// The width of a border that shows a status.
@@ -228,7 +236,7 @@ pub fn handle() -> Rectangle {
 
 /// How far below the top of a card its input ports are, and its output port.
 pub fn ports(inputs: usize) -> (impl Iterator<Item = f32>, f32) {
-    let first = PAD + HEAD + GAP + BLOCK + GAP + INPUT / 2.0;
+    let first = PAD + HEAD + GAP + INPUT / 2.0;
     let inputs = (0..inputs).map(move |slot| first + slot as f32 * (INPUT + GAP));
     (inputs, PAD + HEAD / 2.0)
 }
@@ -310,14 +318,8 @@ impl<'a> Component<'a, Message> for Card<'a> {
         let node = self.node;
         let status = self.status;
         let is_open = layout::is_open(node);
-        let size = layout::size(node);
         let schema = schema::resolve(self.defs, &self.block["args"]);
 
-        // an open card is as wide as it was made, and a closed one as what it holds
-        let (width, wide) = match is_open {
-            true => (Length::Fixed(size.width), Fill),
-            false => (Shrink, Shrink),
-        };
         let name = state
             .name
             .clone()
@@ -333,42 +335,39 @@ impl<'a> Component<'a, Message> for Card<'a> {
         let icon = draw(Icon(self.is_output))
             .width(15)
             .height(11);
-        // under the field, the id as text, which makes a closed card wide enough for it
-        let sizer = text(name.clone())
-            .size(14)
-            .wrapping(text::Wrapping::None);
-        let id = stack![
-            container(sizer).padding([4, 6]),
-            text_input("id", name)
-                .on_input(Event::Name)
-                .on_submit(Event::Rename)
-                .size(14)
-                .padding(4),
-        ]
-        .width(wide);
+        // as wide as it was made, and as the line of its id with all of the id in view
+        let made = match is_open {
+            true => layout::size(node).width,
+            false => layout::WIDTH,
+        };
+        let beside = 2.0 * PAD + GRAB + 2.0 * BUTTON + SAVE + 4.0 * GAP + 12.0;
+        let width = made.max(beside + width_of(&name, ID));
         let head = row![
             // where the surface draws the handle that drags the card
             space().width(GRAB),
             button(toggle)
                 .style(button::text)
+                .width(BUTTON)
                 .padding([0, 6])
                 .on_press(Event::Edit(Edit::Toggle)),
             button(icon)
                 .style(save)
                 .padding(6)
                 .on_press(Event::Edit(Edit::Output(!self.is_output))),
-            id,
+            text_input("id", name)
+                .on_input(Event::Name)
+                .on_submit(Event::Rename)
+                .size(ID)
+                .padding(4),
             button("×")
                 .style(button::danger)
+                .width(BUTTON)
                 .padding([0, 6])
                 .on_press(Event::Edit(Edit::Delete)),
         ]
         .spacing(GAP)
         .align_y(Center)
         .height(HEAD);
-        let block = text(&node.block)
-            .size(12)
-            .style(text::secondary);
 
         let others = self.others.clone();
         let inputs = self.block["inputs"]
@@ -403,63 +402,85 @@ impl<'a> Component<'a, Message> for Card<'a> {
                 .height(INPUT)
             });
 
-        let open = is_open.then(|| {
-            let description = schema["description"]
-                .as_str()
-                .map(|description| {
-                    text(description.replace('\n', " "))
-                        .size(12)
-                        .style(text::secondary)
-                });
+        // the block as code, and on an open card what it does
+        let does = schema["description"]
+            .as_str()
+            .filter(|_| is_open)
+            .map(|does| span(format!(": {}", does.replace('\n', " "))));
+        let about: Vec<Span<'a>> = std::iter::once(span(&node.block).font(Font::MONOSPACE))
+            .chain(does)
+            .collect();
+        let about = rich_text(about)
+            .size(12)
+            .width(Fill)
+            .style(text::secondary);
+
+        let form = is_open.then(|| {
             let columns = self.columns.clone();
-            let form = form::view(&state.form, self.defs, schema, &node.args, columns);
-            // a saved frame, or else the columns that a Check found
-            let table = match (self.frame, self.found) {
-                (Some(frame), _) => Some(draw(Table::of(frame)).height(size.height)),
-                (None, Some(Ok(columns))) => {
-                    Some(draw(Table::listing(columns)).height(table::HEADER))
-                }
-                _ => None,
-            };
-            column![
-                description,
-                form.map(Event::Form),
-                table.map(|table| {
-                    table
-                        .width(Fill)
-                        .map(Event::Copy)
-                }),
-            ]
-            .spacing(GAP)
+            form::view(&state.form, self.defs, schema, &node.args, columns).map(Event::Form)
         });
-        // the least a card is wide, which is where its errors wrap
-        let least = match is_open {
-            true => Fill,
-            false => Length::Fixed(layout::WIDTH - 2.0 * PAD),
+        // a saved frame, or else the columns that a Check found
+        let table = match (self.frame, self.found) {
+            (Some(frame), _) => Some(Table::of(frame)),
+            (None, Some(Ok(columns))) => Some(Table::listing(columns)),
+            _ => None,
         };
+        let table = table
+            .filter(|_| is_open)
+            .map(|table| {
+                // it takes what the card has left over, and its first rows at the least
+                let height = Fill.min(table.least());
+                draw(table)
+                    .width(Fill)
+                    .height(height)
+                    .map(Event::Copy)
+            });
         let wrong = match self.found {
-            Some(Err(e)) => Some(error(e).width(least)),
+            Some(Err(e)) => Some(error(e).width(Fill)),
             _ => None,
         };
 
         // the errors last: a line that comes and goes takes the state of all below it
         let lines = column![
             head,
-            container(block)
-                .width(least)
-                .height(BLOCK),
             column(inputs.map(|input| input.boxed())).spacing(GAP),
-            open,
+            about,
+            form,
+            table,
             wrong,
             self.failed
-                .map(|failed| error(failed).width(least)),
+                .map(|failed| error(failed).width(Fill)),
         ]
-        .spacing(GAP);
+        .spacing(GAP)
+        .height(Fill);
+        // as tall as what it holds, or as the surface makes it, where the table takes the rest
         container(lines)
             .width(width)
+            .height(Fill)
             .padding(PAD)
             .style(move |theme| framed(theme, status))
     }
+}
+
+/// The width of a line of text of this size.
+fn width_of(
+    content: &str,
+    size: f32,
+) -> f32 {
+    let line = Text {
+        content,
+        bounds: Size::INFINITE,
+        size: size.into(),
+        line_height: text::LineHeight::default(),
+        font: Font::DEFAULT,
+        align_x: text::Alignment::Default,
+        align_y: Vertical::Top,
+        shaping: text::Shaping::default(),
+        wrapping: text::Wrapping::None,
+        ellipsis: text::Ellipsis::None,
+        hint_factor: None,
+    };
+    Paragraph::with_text(line).min_width()
 }
 
 /// The paper of a card, in a border of the colour of its status.

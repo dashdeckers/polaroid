@@ -2,7 +2,7 @@
 
 use iced::mouse::{self, ScrollDelta};
 use iced::widget::{button, column, container, pick_list, space, text, text_input};
-use iced::{Event, Point, Rectangle, Size, Transformation, Vector, Widget};
+use iced::{Event, Fill, Point, Rectangle, Size, Transformation, Widget};
 use iced_test::selector::id;
 use iced_test::simulator::{Simulator, click, simulator};
 use polaroid_iced::{card, surface};
@@ -139,7 +139,7 @@ enum Wiring {
     Wired(u32, u32, usize),
     Unwired(u32, usize),
     Menu(Point, Point),
-    Grown(u32, Vector),
+    Grown(u32, Size),
     Opened(u32),
 }
 
@@ -160,7 +160,7 @@ fn ports() -> impl Widget<Wiring> {
             card(2, Point::new(300.0, 20.0), blank())
                 .inputs([30.0])
                 .output(30.0)
-                .resizable(true, true)
+                .resizable(true)
                 .loose(false),
         )
         .on_wire(Wiring::Wired)
@@ -240,7 +240,7 @@ fn a_right_press_on_no_card_asks_for_a_menu_and_a_grip_resizes() {
     let messages: Vec<_> = simulator
         .into_messages()
         .collect();
-    let grown = Wiring::Grown(2, Vector::new(20.0, 10.0));
+    let grown = Wiring::Grown(2, Size::new(120.0, 70.0));
     assert_eq!(
         messages,
         [
@@ -304,4 +304,28 @@ fn a_double_press_opens_a_loose_card_alone() {
         .into_messages()
         .collect();
     assert_eq!(messages, [Wiring::Opened(1)]);
+}
+
+#[test]
+fn a_card_made_taller_than_what_it_holds_gives_the_rest_to_its_fills() {
+    let scene = |tall: f32| {
+        let content = column![
+            space().height(Fill),
+            text("last"),
+        ]
+        .width(100);
+        surface::<u32, ()>().push(card(1, Point::ORIGIN, content).tall(tall))
+    };
+    let bottom = |tall: f32| {
+        let found = simulator(scene(tall))
+            .find("last")
+            .expect("the last line is shown");
+        let bounds = found.bounds();
+        bounds.y + bounds.height
+    };
+
+    // no taller than its one line, whatever it was made
+    let line = bottom(0.0);
+    assert!(line > 0.0 && line < 40.0);
+    assert_eq!(bottom(200.0), 200.0);
 }

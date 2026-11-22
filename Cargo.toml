@@ -24,7 +24,7 @@ keywords = [
 ]
 
 [features]
-gui = ["dep:iced", "dep:polaroid_iced", "dep:tokio"]
+gui = ["dep:iced", "dep:polaroid_iced", "dep:rfd", "dep:tokio"]
 
 [dependencies]
 fern = "0.7.1"
@@ -32,6 +32,7 @@ iced = { workspace = true, features = ["advanced", "canvas", "tokio"], optional 
 log = "0.4"
 polaroid_core = { path = "core" }
 polaroid_iced = { path = "iced", optional = true }
+rfd = { version = "0.18.0", optional = true }
 serde_json = "1"
 tokio = { version = "1", features = ["io-util", "process"], optional = true }
 
