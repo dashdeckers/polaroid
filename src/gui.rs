@@ -1,12 +1,11 @@
-//! The visual editor: the pipeline as a graph, and a form for the selected node.
+//! The visual editor: the pipeline as a graph of cards, each the form of its node.
 
+mod card;
 mod child;
 mod form;
-mod graph;
-mod inspector;
+mod layout;
 mod table;
 
-use std::borrow::Cow;
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 
@@ -15,12 +14,10 @@ use iced::keyboard::{self, Key};
 use iced::widget::{
     Text,
     button,
-    canvas,
-    center,
     column,
+    component,
     container,
     mouse_area,
-    pick_list,
     pin,
     row,
     rule,
@@ -28,26 +25,32 @@ use iced::widget::{
     space,
     stack,
     text,
+    tooltip,
 };
-use iced::{Center, Fill, Function, Point, Subscription, Task, Widget, clipboard, task};
+use iced::{Center, Fill, Function, Point, Subscription, Task, Vector, Widget, clipboard, task};
+use polaroid_iced::surface;
 use serde_json::Value;
 
-use self::inspector::Edit;
-use crate::polars::prelude::{DataFrame, DataType, PolarsResult, df, polars_err};
+use self::card::{Edit, Status};
+use crate::polars::prelude::{DataFrame, DataType, PolarsResult, polars_err};
 use crate::{Node, Pipeline, Registry, is_sink, polars, schema};
 
 const HELP: &str = "\
-Drag a node to move it, and the background to pan. Scroll to zoom.
+Drag a closed card to move it, or any card by the dots in its corner. Drag the background to pan, \
+and scroll to zoom.
 
-Drag from the dot on a node's right to a dot on another's left to wire them. Right-click that dot \
+Drag from the dot on a card's right to a dot on another's left to wire them. Right-click that dot \
 to unwire it, and the background to add a node there.
 
-Tick \"save output\" on a node and Run to keep its frame. A Run reads again only what was edited \
+Press the small table on a card and Run to keep its frame. A Run reads again only what was edited \
 since, and a Rerun everything.
 
-Double-click the id of a node to lay its card open, and to close it. An open card shows the saved \
-frame, or else the columns that Check found. Scroll over it, with shift for sideways. Drag its \
-corner to resize it, and across its cells to select them for Ctrl+C.";
+Double-click a closed card or press its plus to lay it open, and the minus to close it. An open \
+card shows its args, and the saved frame or else the columns that Check found. Scroll over the \
+table, with shift for sideways. Drag the corner of the card to resize it, and across cells to \
+select them for Ctrl+C.
+
+Type an id and press Enter to rename a node. The cross deletes it.";
 
 /// A node's columns and their types, or its error, as the `check` command prints them.
 type Columns = Result<Vec<(String, DataType)>, String>;
@@ -65,7 +68,7 @@ pub fn open(
             outputs: vec![],
         },
     };
-    graph::layout(&mut pipeline);
+    layout::layout(&mut pipeline);
     // the window's own chatter would drown the log
     log::set_max_level(log::LevelFilter::Warn);
     let registry = Arc::new(registry);
@@ -88,11 +91,8 @@ struct Editor {
     path: String,
     pipeline: Pipeline,
     is_dirty: bool,
-    selected: Option<usize>,
-    /// Where the menu of blocks is open: on the canvas, and in the graph.
+    /// Where the menu of blocks is open: on the surface, and among the cards.
     menu: Option<(Point, Point)>,
-    /// What the form of the selected node shows beside its args.
-    form: form::State,
     /// What is wrong with the wiring of each node, as of the latest edit.
     wiring: BTreeMap<String, String>,
     /// The nodes that write their frame, as to a file, which every Run does.
@@ -118,11 +118,17 @@ struct Known {
 
 #[derive(Debug, Clone)]
 enum Message {
-    Graph(graph::Event),
-    /// A node of this block, at this point of the graph or else beside the selected node.
-    Add(String, Option<Point>),
+    Move(String, Point),
+    /// The open card of this node is to be this much larger.
+    Grow(String, Vector),
+    /// The menu of blocks is asked for here on the surface, which is this point among the cards.
+    Menu(Point, Point),
+    /// A node of this block, at this point among the cards.
+    Add(String, Point),
     CloseMenu,
-    Edit(Edit),
+    Edit(String, Edit),
+    /// Text to put on the clipboard.
+    Copy(String),
     Save,
     Check,
     Checked(Result<BTreeMap<String, Columns>, String>),
@@ -146,9 +152,7 @@ impl Editor {
             path,
             pipeline,
             is_dirty: false,
-            selected: None,
             menu: None,
-            form: form::State::default(),
             wiring: BTreeMap::new(),
             writes: Vec::new(),
             known: BTreeMap::new(),
@@ -166,16 +170,13 @@ impl Editor {
 
     /// Escape closes the menu of blocks.
     fn subscription(&self) -> Subscription<Message> {
-        match self.menu {
-            Some(_) => keyboard::listen().filter_map(|event| match event {
-                keyboard::Event::KeyPressed {
-                    key: Key::Named(Named::Escape),
-                    ..
-                } => Some(Message::CloseMenu),
-                _ => None,
-            }),
-            None => Subscription::none(),
-        }
+        keyboard::listen().filter_map(|event| match event {
+            keyboard::Event::KeyPressed {
+                key: Key::Named(Named::Escape),
+                ..
+            } => Some(Message::CloseMenu),
+            _ => None,
+        })
     }
 
     fn update(
@@ -183,40 +184,18 @@ impl Editor {
         message: Message,
     ) -> Task<Message> {
         match message {
-            Message::Graph(graph::Event::Select(index)) => self.select(Some(index)),
-            Message::Graph(graph::Event::Move(index, position)) => {
-                graph::place(&mut self.pipeline.nodes[index], position);
-                self.is_dirty = true;
+            Message::Move(id, position) => {
+                if let Some(node) = self.node_mut(&id) {
+                    layout::place(node, position);
+                }
             }
-            Message::Graph(graph::Event::Resize(index, size)) => {
-                graph::resize(&mut self.pipeline.nodes[index], size);
-                self.is_dirty = true;
+            Message::Grow(id, by) => {
+                if let Some(node) = self.node_mut(&id) {
+                    layout::grow(node, by);
+                }
             }
-            Message::Graph(graph::Event::Toggle(index)) => {
-                graph::toggle(&mut self.pipeline.nodes[index]);
-                self.is_dirty = true;
-            }
-            Message::Graph(graph::Event::Save(index)) => {
-                let is_saved = self
-                    .pipeline
-                    .outputs
-                    .contains(&self.pipeline.nodes[index].id);
-                // as if selected and ticked in its panel
-                self.select(Some(index));
-                return self.update(Message::Edit(Edit::Output(!is_saved)));
-            }
-            Message::Graph(graph::Event::Copy(text)) => return clipboard::write(text).discard(),
-            Message::Graph(graph::Event::Wire { to, slot, from }) => {
-                let source = from.map_or(String::new(), |from| {
-                    self.pipeline.nodes[from]
-                        .id
-                        .clone()
-                });
-                // as if selected and wired in its panel
-                self.select(Some(to));
-                return self.update(Message::Edit(Edit::Wire(slot, source)));
-            }
-            Message::Graph(graph::Event::Menu { at, point }) => self.menu = Some((at, point)),
+            Message::Copy(text) => return clipboard::write(text).discard(),
+            Message::Menu(at, point) => self.menu = Some((at, point)),
             Message::CloseMenu => self.menu = None,
             Message::Add(block, point) => {
                 self.menu = None;
@@ -240,28 +219,22 @@ impl Editor {
                     args: schema::default(&self.catalog["$defs"], &entry["args"]),
                     ui: Value::Null,
                 };
-                let position = match (point, self.selected) {
-                    (Some(point), _) => point,
-                    (None, Some(index)) => graph::beside(&nodes[index]),
-                    (None, None) => Point::new(20.0, 20.0),
-                };
-                graph::place(&mut node, position);
+                layout::place(&mut node, point);
                 nodes.push(node);
-                let added = nodes.len() - 1;
-                self.select(Some(added));
                 self.is_dirty = true;
                 self.check_wiring();
             }
-            Message::Edit(edit) => inspector::edit(self, edit),
+            Message::Edit(id, edit) => self.edit(&id, edit),
             Message::Save => {
                 let pipeline =
                     serde_json::to_string_pretty(&self.pipeline).expect("a pipeline serializes");
-                self.problem = std::fs::write(&self.path, pipeline + "\n")
-                    .err()
-                    .map(|e| format!("{}: {e}", self.path));
-                self.is_dirty = self
-                    .problem
-                    .is_some();
+                let written = std::fs::write(&self.path, pipeline + "\n");
+                self.is_dirty = written.is_err();
+                // what is wrong with the pipeline itself stays to be seen
+                self.check_wiring();
+                if let Err(e) = written {
+                    self.problem = Some(format!("{}: {e}", self.path));
+                }
             }
             Message::Check => {
                 let check = child::check(
@@ -282,17 +255,18 @@ impl Editor {
                     Err(problem) => self.problem = Some(problem),
                 }
             }
-            Message::Rerun => {
+            Message::Run | Message::Rerun => {
+                let is_rerun = matches!(message, Message::Rerun);
                 for known in self
                     .known
                     .values_mut()
                 {
-                    known.frame = None;
-                    known.is_run = false;
+                    known.failed = None;
+                    if is_rerun {
+                        known.frame = None;
+                        known.is_run = false;
+                    }
                 }
-                return self.update(Message::Run);
-            }
-            Message::Run => {
                 let mut pipeline = self
                     .pipeline
                     .clone();
@@ -311,50 +285,56 @@ impl Editor {
                     .cloned()
                     .collect();
                 // a read frame goes along, but not a write's, which it would stand in for
-                let is_read = |id: &String| {
-                    pipeline
-                        .nodes
-                        .iter()
-                        .any(|node| {
-                            node.inputs
-                                .contains(id)
-                        })
-                };
-                let known = self
-                    .known
+                let known = pipeline
+                    .nodes
                     .iter()
-                    .filter(|(id, _)| {
-                        is_read(id)
-                            && !self
-                                .writes
-                                .contains(id)
+                    .flat_map(|node| &node.inputs)
+                    .filter(|id| {
+                        !self
+                            .writes
+                            .contains(id)
                     })
-                    .filter_map(|(id, known)| {
+                    .filter_map(|id| {
                         Some((
                             id.clone(),
-                            known
-                                .frame
-                                .clone()?,
+                            self.frame(id)?
+                                .clone(),
                         ))
                     })
                     .collect();
-
-                for known in self
-                    .known
-                    .values_mut()
-                {
-                    known.failed = None;
-                }
                 let run = child::run(pipeline, known);
                 return self.start(Task::perform(run, Message::Ran.with(targets)));
             }
             Message::Ran(targets, Ok(frames)) => {
                 self.job = None;
-                for id in self.sources(&targets) {
+                // it computed these and all they read: as many passes as nodes reach those
+                let mut ran: HashSet<String> = targets
+                    .into_iter()
+                    .collect();
+                for _ in &self.pipeline.nodes {
+                    for node in &self.pipeline.nodes {
+                        if ran.contains(&node.id) {
+                            ran.extend(
+                                node.inputs
+                                    .iter()
+                                    .cloned(),
+                            );
+                        }
+                    }
+                }
+                for id in ran {
                     self.known_mut(id)
                         .is_run = true;
                 }
                 for (id, mut frame) in frames {
+                    // one unticked while the Run was under way is not saved
+                    let is_saved = self
+                        .pipeline
+                        .outputs
+                        .contains(&id);
+                    if !is_saved {
+                        continue;
+                    }
                     // in one chunk, a cell is found in constant time
                     frame.rechunk_mut();
                     self.known_mut(id)
@@ -385,15 +365,16 @@ impl Editor {
         job
     }
 
-    /// Selects a node, or none, and forgets what the form showed of another.
-    fn select(
+    /// The node of this id, whose card was moved or resized.
+    fn node_mut(
         &mut self,
-        selected: Option<usize>,
-    ) {
-        if self.selected != selected {
-            self.form = form::State::default();
-        }
-        self.selected = selected;
+        id: &str,
+    ) -> Option<&mut Node> {
+        self.is_dirty = true;
+        self.pipeline
+            .nodes
+            .iter_mut()
+            .find(|node| node.id == id)
     }
 
     /// Notes what is wrong with the wiring of each node, and which nodes write.
@@ -449,31 +430,6 @@ impl Editor {
         self.job = None;
     }
 
-    /// The nodes `ids` and every node that they read, however indirectly.
-    fn sources(
-        &self,
-        ids: &[String],
-    ) -> HashSet<String> {
-        let nodes = &self.pipeline.nodes;
-        let mut sources: HashSet<String> = ids
-            .iter()
-            .cloned()
-            .collect();
-        // as many passes as there are nodes reach every source
-        for _ in nodes {
-            for node in nodes {
-                if sources.contains(&node.id) {
-                    sources.extend(
-                        node.inputs
-                            .iter()
-                            .cloned(),
-                    );
-                }
-            }
-        }
-        sources
-    }
-
     /// What is known of node `id`, to add to.
     fn known_mut(
         &mut self,
@@ -515,7 +471,7 @@ impl Editor {
     fn status(
         &self,
         id: &str,
-    ) -> graph::Status {
+    ) -> Status {
         let known = self.known.get(id);
         let has_failed = known.is_some_and(|known| {
             known
@@ -524,42 +480,11 @@ impl Editor {
         });
         let is_run = known.is_some_and(|known| known.is_run);
         match self.found(id) {
-            _ if has_failed => graph::Status::Failed,
-            Some(Err(_)) => graph::Status::Rejected,
-            _ if is_run => graph::Status::Ran,
-            Some(Ok(_)) => graph::Status::Checked,
-            None => graph::Status::Unknown,
-        }
-    }
-
-    /// The pipeline as a graph, with what is known of each node.
-    fn graph(&self) -> graph::Graph<'_> {
-        let nodes = &self.pipeline.nodes;
-        // an open card shows the saved frame, or else the columns
-        let table = |node: &Node| match (self.frame(&node.id), self.found(&node.id)) {
-            (Some(frame), _) => Some(Cow::Borrowed(frame)),
-            (None, Some(Ok(columns))) if graph::is_open(node) => Some(Cow::Owned(listed(columns))),
-            _ => None,
-        };
-        graph::Graph {
-            pipeline: &self.pipeline,
-            blocks: &self.catalog["blocks"],
-            selected: self.selected,
-            status: nodes
-                .iter()
-                .map(|node| self.status(&node.id))
-                .collect(),
-            tables: nodes
-                .iter()
-                .map(table)
-                .collect(),
-            saved: nodes
-                .iter()
-                .map(|node| {
-                    self.frame(&node.id)
-                        .is_some()
-                })
-                .collect(),
+            _ if has_failed => Status::Failed,
+            Some(Err(_)) => Status::Rejected,
+            _ if is_run => Status::Ran,
+            Some(Ok(_)) => Status::Checked,
+            None => Status::Unknown,
         }
     }
 
@@ -580,13 +505,15 @@ impl Editor {
                 button("Rerun").on_press(Message::Rerun),
             ],
         };
+        let help = container(text(HELP))
+            .width(460)
+            .padding(10)
+            .style(container::bordered_box);
         let save = self
             .is_dirty
             .then_some(Message::Save);
         let toolbar = row![
-            pick_list(None::<&String>, blocks.clone(), ToString::to_string)
-                .on_select(|block| Message::Add(block.clone(), None))
-                .placeholder("Add a block…"),
+            tooltip(container("Help").padding(5), help).position(tooltip::Position::Bottom),
             space::horizontal(),
             jobs.spacing(10)
                 .align_y(Center),
@@ -595,10 +522,41 @@ impl Editor {
         .spacing(10)
         .padding(10);
 
-        let graph = canvas(self.graph())
-            .width(Fill)
-            .height(Fill)
-            .map(Message::Graph);
+        let mut graph = surface()
+            .on_move(Message::Move)
+            .on_resize(Message::Grow)
+            .on_wire(|from, to, slot| Message::Edit(to, Edit::Wire(slot, from)))
+            .on_unwire(|to, slot| Message::Edit(to, Edit::Wire(slot, String::new())))
+            .on_open(|id| Message::Edit(id, Edit::Toggle))
+            .on_menu(Message::Menu);
+        for node in &self.pipeline.nodes {
+            let inputs = self.catalog["blocks"][&node.block]["inputs"]
+                .as_array()
+                .map_or(0, Vec::len);
+            let (inputs, output) = card::ports(inputs);
+            let id = node.id.clone();
+            let card = polaroid_iced::card(id, layout::position(node), component(self.card(node)))
+                .inputs(inputs)
+                .output(output)
+                .handle(card::handle())
+                // an open card is moved and closed by its buttons alone, which leaves its text
+                .loose(!layout::is_open(node))
+                // a card is as tall as what it holds, but for the rows of a saved frame
+                .resizable(
+                    layout::is_open(node),
+                    self.frame(&node.id)
+                        .is_some(),
+                );
+            graph = graph.push(card);
+            let wired = node
+                .inputs
+                .iter()
+                .enumerate()
+                .filter(|(_, source)| !source.is_empty());
+            for (slot, source) in wired {
+                graph = graph.wire(source.clone(), node.id.clone(), slot);
+            }
+        }
         let menu = self
             .menu
             .map(|(at, point)| {
@@ -608,36 +566,18 @@ impl Editor {
                         button(text(block.as_str()))
                             .style(button::text)
                             .width(Fill)
-                            .on_press(Message::Add((*block).clone(), Some(point)))
+                            .on_press(Message::Add((*block).clone(), point))
                     });
                 let list = container(scrollable(column(blocks)))
                     .width(200)
                     .height(320)
                     .style(container::bordered_box);
-                // over the graph, so that a press beside the menu closes it
-                let beside = container("")
-                    .width(Fill)
-                    .height(Fill);
-                stack![
-                    mouse_area(beside)
-                        .on_press(Message::CloseMenu)
-                        .on_right_press(Message::CloseMenu),
-                    pin(list).position(at),
-                ]
+                // a pin fills the graph, so that a press beside the menu closes it
+                mouse_area(pin(list).position(at))
+                    .on_press(Message::CloseMenu)
+                    .on_right_press(Message::CloseMenu)
             });
 
-        let node = self
-            .selected
-            .map(|index| &self.pipeline.nodes[index]);
-        let inspector = match node {
-            Some(node) => scrollable(inspector::view(self, node).map(Message::Edit))
-                // the scrollbar beside the form, not over it
-                .spacing(0)
-                .boxed(),
-            None => center(HELP)
-                .padding(20)
-                .boxed(),
-        };
         let problem = self
             .problem
             .as_deref()
@@ -646,23 +586,10 @@ impl Editor {
         column![
             toolbar,
             rule::horizontal(1),
-            row![
-                stack![graph, menu],
-                rule::vertical(1),
-                container(inspector).width(450)
-            ],
+            stack![graph, menu],
             problem,
         ]
     }
-}
-
-/// The columns of a node and their types, as a table.
-fn listed(columns: &[(String, DataType)]) -> DataFrame {
-    let (names, types): (Vec<&str>, Vec<String>) = columns
-        .iter()
-        .map(|(name, dtype)| (name.as_str(), dtype.to_string()))
-        .unzip();
-    df!("column" => names, "type" => types).expect("two columns of one length")
 }
 
 /// An error, which can be selected to copy it.

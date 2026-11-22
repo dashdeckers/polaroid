@@ -1,15 +1,13 @@
 //! A form for a JSON value, laid out by its JSON Schema; a null is a hole to be filled.
 
 mod chain;
-mod edit;
 
 use std::collections::BTreeSet;
 
 use iced::widget::{button, checkbox, column, pick_list, row, text, text_input};
-use iced::{Center, Element, Fill, Widget};
-use serde_json::{Value, json};
+use iced::{Center, Element, Fill, Function, Widget};
+use serde_json::{Number, Value, json};
 
-pub use self::edit::Edit;
 use crate::methods::{self, Method};
 use crate::schema::{blank, default, json_type, optional, resolve, variants};
 
@@ -26,15 +24,17 @@ pub struct State {
 #[derive(Debug, Clone)]
 pub enum Message {
     /// Put a value at a JSON pointer.
-    Edit(Edit),
+    Put(String, Value),
+    /// Take the array element at a JSON pointer away.
+    Drop(String),
     /// Lay out the arguments of the call at this pointer, or fold them away.
     Toggle(String),
     /// Offer the methods of this namespace to call on the expression at this pointer.
     Narrow(String, &'static str),
-    /// Call the Method of this index on the expression at this pointer.
-    Call(String, usize),
-    /// Put a call of the Method of this index at this pointer, on the receiver that is there.
-    Replace(String, usize),
+    /// Call this Method on the expression at this pointer.
+    Call(String, &'static Method),
+    /// Put a call of this Method at this pointer, on the receiver that is there.
+    Replace(String, &'static Method),
     /// Take the call at this pointer away and leave its receiver, or a hole.
     Remove(String),
 }
@@ -46,18 +46,16 @@ impl State {
         message: Message,
         value: &mut Value,
     ) -> bool {
-        let methods = methods::methods();
-        // the pointer to the receiver of the call at `node`, from the node
-        let receiver = |node: &Value| {
-            methods::read(methods, node).and_then(|method| {
-                method
-                    .receiver
-                    .clone()
-            })
-        };
-
         match message {
-            Message::Edit(edit) => edit.apply(value),
+            Message::Put(at, new) => put(value, &at, Some(new)),
+            Message::Drop(at) => {
+                put(value, &at, None);
+                // the later elements move down, away from the marks under the array
+                let array = at
+                    .rsplit_once('/')
+                    .map_or("", |(array, _)| array);
+                self.relocate(array, None, "");
+            }
             Message::Toggle(at) => {
                 if !self
                     .expanded
@@ -72,68 +70,52 @@ impl State {
                 self.namespace = Some((at, namespace));
                 return false;
             }
-            Message::Call(at, index) => {
-                let (Some(node), Some(method)) = (value.pointer_mut(&at), methods.get(index))
-                else {
+            Message::Call(at, method) => {
+                let Some(node) = value.pointer_mut(&at) else {
                     return false;
                 };
                 *node = method.call(node.take());
 
-                // what was here is the receiver now
+                // what was here is the receiver now, if the call takes one
                 let inner = method
                     .receiver
-                    .as_deref()
-                    .unwrap_or_default();
-                self.relocate(&at, Some(&at), &format!("{at}{inner}"));
-                self.expand(at, method);
+                    .as_deref();
+                self.relocate(&at, inner.and(Some("")), inner.unwrap_or_default());
+                if method.inputs.len() + method.options.len() > 0 {
+                    self.expanded
+                        .insert(at);
+                }
             }
-            Message::Replace(at, index) => {
-                let (Some(node), Some(method)) = (value.pointer_mut(&at), methods.get(index))
-                else {
-                    return false;
-                };
-                let old = receiver(node);
-                let kept = old
-                    .as_deref()
-                    .and_then(|old| node.pointer_mut(old))
-                    .map(Value::take)
-                    .unwrap_or_default();
-                *node = method.call(kept);
-
-                // the receiver stays, if the new call has one, and the arguments go
-                let from = old
-                    .filter(|_| {
-                        method
-                            .receiver
-                            .is_some()
-                    })
-                    .map(|old| format!("{at}{old}"));
-                let inner = method
-                    .receiver
-                    .as_deref()
-                    .unwrap_or_default();
-                self.relocate(&at, from.as_deref(), &format!("{at}{inner}"));
-                self.expand(at, method);
+            // another call in its place is a call on what it leaves; the same again is no change
+            Message::Replace(at, method) => {
+                let is_same = value
+                    .pointer(&at)
+                    .and_then(methods::read)
+                    == Some(method);
+                return !is_same
+                    && self.update(Message::Remove(at.clone()), value)
+                    && self.update(Message::Call(at, method), value);
             }
             Message::Remove(at) => {
                 let Some(node) = value.pointer_mut(&at) else {
                     return false;
                 };
-                let old = receiver(node);
+                let old = methods::read(node).and_then(|method| {
+                    method
+                        .receiver
+                        .as_deref()
+                });
                 *node = old
-                    .as_deref()
                     .and_then(|old| node.pointer_mut(old))
                     .map(Value::take)
                     .unwrap_or_default();
-
-                let from = old.map(|old| format!("{at}{old}"));
-                self.relocate(&at, from.as_deref(), &at);
+                self.relocate(&at, old, "");
             }
         }
         true
     }
 
-    /// Follows a change to the node at `at`: what was at `from` is at `to`, the rest is gone.
+    /// Follows a change to the node at `at`: what was at `from` below it is at `to`, the rest gone.
     fn relocate(
         &mut self,
         at: &str,
@@ -153,43 +135,25 @@ impl State {
         self.expanded = std::mem::take(&mut self.expanded)
             .into_iter()
             .filter_map(|pointer| {
-                if below(&pointer, at).is_none() {
+                let Some(rest) = below(&pointer, at) else {
                     return Some(pointer);
-                }
-                let rest = below(&pointer, from?)?;
-                Some(format!("{to}{rest}"))
+                };
+                let rest = below(rest, from?)?;
+                Some(format!("{at}{to}{rest}"))
             })
             .collect();
         self.namespace = None;
-    }
-
-    /// Lays out the arguments of a new call of `method` at `at`, to be filled next.
-    fn expand(
-        &mut self,
-        at: String,
-        method: &Method,
-    ) {
-        let has_arguments = !(method
-            .inputs
-            .is_empty()
-            && method
-                .options
-                .is_empty());
-        if has_arguments {
-            self.expanded
-                .insert(at);
-        }
     }
 }
 
 /// The form for `value`, by `schema`; `columns` are those the value may name.
 pub fn view<'a>(
-    state: &'a State,
+    state: &State,
     defs: &'a Value,
     schema: &'a Value,
     value: &'a Value,
     columns: Vec<String>,
-) -> impl Widget<Message> {
+) -> impl Widget<Message> + use<'a> {
     let form = Form {
         state,
         defs,
@@ -201,13 +165,13 @@ pub fn view<'a>(
 /// A form as it is laid out: what every part of it is laid out with.
 #[derive(Clone, Copy)]
 struct Form<'a, 'c> {
-    state: &'a State,
+    state: &'c State,
     defs: &'a Value,
     columns: &'c [String],
 }
 
 impl<'a> Form<'a, '_> {
-    /// The form for the value at the JSON pointer `at`, which may be null if the schema says so.
+    /// The form for the value at the pointer `at`: an expression as a chain, a nullable to clear.
     fn value(
         self,
         schema: &'a Value,
@@ -215,35 +179,25 @@ impl<'a> Form<'a, '_> {
         at: String,
     ) -> Element<'a, Message> {
         let schema = resolve(self.defs, schema);
-        let Some(inner) = optional(schema) else {
-            return self.present(schema, value, at);
-        };
+        let inner = optional(schema).map(|inner| resolve(self.defs, inner));
+        let clear = (inner.is_some() && !value.is_null())
+            .then(|| small("×", Message::Put(at.clone(), Value::Null)));
 
-        let null = Message::Edit(Edit(at.clone(), Some(Value::Null)));
-        let clear = (!value.is_null()).then(|| small("×", null));
-        row![
-            self.present(resolve(self.defs, inner), value, at),
-            clear
-        ]
-        .spacing(5)
-        .align_y(Center)
-        .boxed()
-    }
-
-    /// The form for a value that is there, or the hole it leaves; an expression is a chain.
-    fn present(
-        self,
-        schema: &'a Value,
-        value: &'a Value,
-        at: String,
-    ) -> Element<'a, Message> {
-        match std::ptr::eq(schema, &self.defs["Expr"]) {
+        let shown = inner.unwrap_or(schema);
+        let form = match std::ptr::eq(shown, &self.defs["Expr"]) {
             true => self.chain(value, at),
-            false => self.plain(schema, value, at),
+            false => self.plain(shown, value, at),
+        };
+        if inner.is_none() {
+            return form;
         }
+        row![form, clear]
+            .spacing(5)
+            .align_y(Center)
+            .boxed()
     }
 
-    /// The form for a value by nothing but its schema.
+    /// The form for a value by nothing but its schema, or the hole it leaves.
     fn plain(
         self,
         schema: &'a Value,
@@ -251,10 +205,7 @@ impl<'a> Form<'a, '_> {
         at: String,
     ) -> Element<'a, Message> {
         let defs = self.defs;
-        let put = {
-            let at = at.clone();
-            move |value: Value| Message::Edit(Edit(at.clone(), Some(value)))
-        };
+        let put = Message::Put.with(at.clone());
 
         if value.is_null() {
             let blank = blank(defs, schema);
@@ -266,19 +217,15 @@ impl<'a> Form<'a, '_> {
         let variants = variants(schema);
         if !variants.is_empty() {
             // a variant is its name, or its name around its payload
-            let name = value
-                .as_str()
-                .or_else(|| {
-                    let (name, _) = value
-                        .as_object()?
-                        .iter()
-                        .next()?;
-                    Some(name.as_str())
-                });
             let selected = variants
                 .iter()
                 .copied()
-                .find(|(variant, _)| Some(*variant) == name);
+                .find(|(name, payload)| match payload {
+                    Some(_) => value
+                        .get(name)
+                        .is_some(),
+                    None => value == name,
+                });
             let pick = pick_list(selected, variants, |(name, _)| name.to_string())
                 .on_select(move |(name, payload)| {
                     put(match payload {
@@ -328,10 +275,8 @@ impl<'a> Form<'a, '_> {
                         .as_array()
                         .map(Vec::as_slice)
                         .unwrap_or_default();
-                    let add = Edit(
-                        format!("{at}/{}", elements.len()),
-                        Some(default(defs, items)),
-                    );
+                    let add =
+                        Message::Put(format!("{at}/{}", elements.len()), default(defs, items));
                     column(
                         elements
                             .iter()
@@ -339,14 +284,14 @@ impl<'a> Form<'a, '_> {
                             .map(|(i, element)| {
                                 let at = format!("{at}/{i}");
                                 row![
-                                    small("×", Message::Edit(Edit(at.clone(), None))),
+                                    small("×", Message::Drop(at.clone())),
                                     self.value(items, element, at)
                                 ]
                                 .spacing(5)
                                 .boxed()
                             }),
                     )
-                    .push(small("+", Message::Edit(add)).boxed())
+                    .push(small("+", add).boxed())
                     .spacing(5)
                     .boxed()
                 }
@@ -364,7 +309,7 @@ impl<'a> Form<'a, '_> {
                     number => number.to_string(),
                 };
                 text_input("", typed)
-                    .on_input(move |typed| put(number(typed)))
+                    .on_input(move |typed| put(number(&typed).map_or(typed.into(), Value::from)))
                     .width(Fill.max(100))
                     .boxed()
             }
@@ -382,12 +327,42 @@ impl<'a> Form<'a, '_> {
     }
 }
 
-/// What was typed for a number: the number, or the text while it reads as none, as `1.` or `-`.
-fn number(typed: String) -> Value {
-    match typed.parse::<serde_json::Number>() {
-        Ok(number) if number.to_string() == typed => number.into(),
-        _ => typed.into(),
+/// Puts `new` at the pointer `at`, or removes the element there; a missing field or end is added.
+fn put(
+    root: &mut Value,
+    at: &str,
+    new: Option<Value>,
+) {
+    let Some((parent, key)) = at.rsplit_once('/') else {
+        *root = new.unwrap_or_default();
+        return;
+    };
+
+    match (root.pointer_mut(parent), new) {
+        (Some(Value::Object(fields)), Some(new)) => {
+            fields.insert(key.to_owned(), new);
+        }
+        (Some(Value::Array(items)), new) => {
+            if let Ok(index) = key.parse::<usize>()
+                && index <= items.len()
+            {
+                // none, one or both of an element out and a value in
+                let end = items
+                    .len()
+                    .min(index + 1);
+                items.splice(index..end, new);
+            }
+        }
+        _ => {}
     }
+}
+
+/// The number that `typed` writes exactly; `1.` or `-` is none yet.
+fn number(typed: &str) -> Option<Number> {
+    typed
+        .parse::<Number>()
+        .ok()
+        .filter(|number| number.to_string() == typed)
 }
 
 fn small(

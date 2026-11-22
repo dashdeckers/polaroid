@@ -1,3 +1,10 @@
+[workspace]
+members = ["core", "iced"]
+
+[workspace.dependencies]
+iced = { git = "https://github.com/iced-rs/iced", branch = "master" }
+iced_test = { git = "https://github.com/iced-rs/iced", branch = "master" }
+
 [package]
 name = "polaroid"
 version = "0.1.0"
@@ -5,7 +12,7 @@ edition = "2024"
 authors = ["Travis Hammond <dashdeckers@gmail.com>"]
 repository = "https://github.com/dashdeckers/polaroid"
 homepage = "https://github.com/dashdeckers/polaroid"
-description = "A pipeline abstraction and GUI over Polars."
+description = "An abstraction and GUI over Polars."
 license-file = "LICENSE"
 readme = "README.md"
 keywords = [
@@ -13,32 +20,21 @@ keywords = [
     "polars",
     "gui",
     "data",
-    "plot",
+    "visualization",
 ]
 
 [features]
-gui = ["dep:iced", "dep:tokio"]
+gui = ["dep:iced", "dep:polaroid_iced", "dep:tokio"]
 
 [dependencies]
-# workspace crates
-polaroid_core = { path = "core" }
-# telemetry
 fern = "0.7.1"
-iced = { git = "https://github.com/iced-rs/iced", branch = "master", features = ["canvas", "tokio"], optional = true }
+iced = { workspace = true, features = ["advanced", "canvas", "tokio"], optional = true }
 log = "0.4"
-# serialization
+polaroid_core = { path = "core" }
+polaroid_iced = { path = "iced", optional = true }
 serde_json = "1"
 tokio = { version = "1", features = ["io-util", "process"], optional = true }
 
 [dev-dependencies]
-iced_test = { git = "https://github.com/iced-rs/iced", branch = "master" }
+iced_test = { workspace = true }
 schemars = "1.2"
-
-[workspace]
-members = [
-    "core",
-]
-
-[workspace.dependencies]
-iced = { git = "https://github.com/iced-rs/iced", rev = "98bd48fe011efc0ec5819fee0fa7673a7169ff11" }
-iced_test = { git = "https://github.com/iced-rs/iced", rev = "98bd48fe011efc0ec5819fee0fa7673a7169ff11" }

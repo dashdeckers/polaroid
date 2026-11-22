@@ -17,6 +17,7 @@ fn a_literal_is_typed_as_python_writes_it() {
         ("\"5\"", json!({ "Scalar": { "String": "5" } })),
         ("\"True\"", json!({ "Scalar": { "String": "True" } })),
     ];
+    let typed = |value: &Value| typed(&json!({ "Literal": value }));
     for (text, value) in cases {
         assert_eq!(literal(text), value, "{text}");
         assert_eq!(typed(&value).as_deref(), Some(text), "{text}");

@@ -5,8 +5,13 @@ use std::collections::HashMap;
 use iced::{Point, Size, Vector};
 use serde_json::json;
 
-use super::{HEADER, INPUT, SAVE, TABLE, WIDTH};
+use super::table;
 use crate::{Node, Pipeline};
+
+/// The width of a closed card.
+pub const WIDTH: f32 = 220.0;
+/// The width of an open card and the height of the table in it, until it is resized.
+const OPEN: Size = Size::new(520.0, 240.0);
 
 /// Where a node's card is drawn, as its `ui` says.
 pub fn position(node: &Node) -> Point {
@@ -23,17 +28,8 @@ pub fn place(
     node: &mut Node,
     position: Point,
 ) {
-    if !node.ui.is_object() {
-        node.ui = json!({});
-    }
-    node.ui["x"] = position
-        .x
-        .round()
-        .into();
-    node.ui["y"] = position
-        .y
-        .round()
-        .into();
+    node.ui["x"] = json!(position.x.round());
+    node.ui["y"] = json!(position.y.round());
 }
 
 /// Whether a node's card is laid open, as its `ui` says.
@@ -48,34 +44,25 @@ pub fn toggle(node: &mut Node) {
     node.ui["expanded"] = (!is_open(node)).into();
 }
 
-/// The size of a node's open card, as its `ui` says.
+/// The width of a node's open card and the height of the table in it, as its `ui` says.
 pub fn size(node: &Node) -> Size {
     let axis = |name, default| {
         node.ui[name]
             .as_f64()
             .map_or(default, |axis| axis as f32)
     };
-    Size::new(axis("w", TABLE.width), axis("h", TABLE.height))
+    Size::new(axis("w", OPEN.width), axis("h", OPEN.height))
 }
 
-/// Draws a node's open card at `size` from now on.
-pub fn resize(
+/// Draws a node's open card this much larger from now on, down to a row of its table.
+pub fn grow(
     node: &mut Node,
-    size: Size,
+    by: Vector,
 ) {
-    node.ui["w"] = size
-        .width
-        .round()
-        .into();
-    node.ui["h"] = size
-        .height
-        .round()
-        .into();
-}
-
-/// A free-looking place for a new card: right of that of `node`.
-pub fn beside(node: &Node) -> Point {
-    position(node) + Vector::new(WIDTH + 70.0, 0.0)
+    let Size { width, height } = size(node);
+    let least = table::HEADER + table::ROW;
+    node.ui["w"] = json!((width + by.x).max(WIDTH));
+    node.ui["h"] = json!((height + by.y).max(least));
 }
 
 /// Places every node that has no place yet: a column per step from the sources.
@@ -96,7 +83,9 @@ pub fn layout(pipeline: &mut Pipeline) {
 
     let mut rows = HashMap::new();
     for node in &mut pipeline.nodes {
-        if node.ui.is_null() {
+        if !node.ui.is_object() {
+            // whatever it was instead could hold no place
+            node.ui = json!({});
             let column = columns[&node.id];
             let row = rows
                 .entry(column)
@@ -105,7 +94,7 @@ pub fn layout(pipeline: &mut Pipeline) {
                 node,
                 Point::new(
                     20.0 + column as f32 * (WIDTH + 70.0),
-                    20.0 + *row as f32 * (HEADER + 2.0 * INPUT + SAVE + 30.0),
+                    20.0 + *row as f32 * 160.0,
                 ),
             );
             *row += 1;

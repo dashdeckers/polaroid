@@ -29,11 +29,11 @@ fn chain(len: usize) -> Editor {
         nodes,
         outputs: vec![],
     };
-    graph::layout(&mut pipeline);
+    layout::layout(&mut pipeline);
     Editor::new(registry, "p.json".to_owned(), pipeline)
 }
 
-fn status(editor: &Editor) -> Vec<graph::Status> {
+fn status(editor: &Editor) -> Vec<Status> {
     editor
         .pipeline
         .nodes
@@ -44,7 +44,7 @@ fn status(editor: &Editor) -> Vec<graph::Status> {
 
 #[test]
 fn an_edit_forgets_the_node_and_its_readers() {
-    use graph::Status::*;
+    use Status::*;
 
     let mut editor = chain(3);
     assert_eq!(status(&editor), [Unknown, Unknown, Unknown]);
@@ -58,8 +58,8 @@ fn an_edit_forgets_the_node_and_its_readers() {
     let _ = editor.update(Message::Ran(vec!["n1".to_owned()], Ok(vec![])));
     assert_eq!(status(&editor), [Ran, Ran, Checked]);
 
-    editor.select(Some(1));
-    let _ = editor.update(Message::Edit(Edit::Wire(0, "n0".to_owned())));
+    let wire = Edit::Wire(0, "n0".to_owned());
+    let _ = editor.update(Message::Edit("n1".to_owned(), wire));
     assert_eq!(status(&editor), [Ran, Unknown, Unknown]);
 
     let _ = editor.update(Message::Ran(vec!["n2".to_owned()], Err("no".to_owned())));
@@ -68,73 +68,92 @@ fn an_edit_forgets_the_node_and_its_readers() {
 
 #[test]
 fn a_node_wired_badly_is_rejected() {
-    use graph::Status::*;
+    use Status::*;
 
     let mut editor = chain(2);
-    editor.select(Some(1));
-    let _ = editor.update(Message::Edit(Edit::Wire(0, "gone".to_owned())));
+    let wire = Edit::Wire(0, "gone".to_owned());
+    let _ = editor.update(Message::Edit("n1".to_owned(), wire));
     assert_eq!(status(&editor), [Unknown, Rejected]);
 }
 
 #[test]
-fn a_double_click_on_its_id_lays_a_card_open() {
-    let mut editor = chain(2);
-    // the first card is at 20, 20 and its "save output" box below its id
-    let id = Point::new(60.0, 35.0);
-    let save = Point::new(40.0, 77.0);
-
-    let presses = |editor: &Editor, at: Point, times: usize| {
-        let mut ui = simulator(
-            canvas(editor.graph())
-                .width(Fill)
-                .height(Fill),
-        );
-        ui.point_at(at);
-        for _ in 0..times {
-            ui.simulate(iced_test::simulator::click());
-        }
-        ui.into_messages()
-            .collect::<Vec<_>>()
-    };
-    let toggles = |events: &[graph::Event]| {
-        events
-            .iter()
-            .filter(|event| matches!(event, graph::Event::Toggle(0)))
-            .count()
-    };
-
-    assert_eq!(toggles(&presses(&editor, id, 1)), 0);
-    assert_eq!(toggles(&presses(&editor, id, 2)), 1);
-    assert_eq!(toggles(&presses(&editor, id, 3)), 1);
-    assert_eq!(toggles(&presses(&editor, save, 2)), 0);
-
-    assert!(!graph::is_open(
-        &editor
+fn a_press_on_its_plus_lays_a_card_open() {
+    let mut editor = chain(1);
+    let node = |editor: &Editor| {
+        editor
             .pipeline
             .nodes[0]
-    ));
-    let _ = editor.update(Message::Graph(graph::Event::Toggle(0)));
-    assert!(graph::is_open(
-        &editor
-            .pipeline
-            .nodes[0]
-    ));
+            .clone()
+    };
+    assert!(!layout::is_open(&node(&editor)));
+
+    let mut ui = simulator(editor.view());
+    ui.click("+")
+        .unwrap();
+    for message in ui
+        .into_messages()
+        .collect::<Vec<_>>()
+    {
+        let _ = editor.update(message);
+    }
+    assert!(layout::is_open(&node(&editor)));
     assert!(editor.is_dirty);
-    let _ = editor.update(Message::Graph(graph::Event::Toggle(0)));
-    assert!(!graph::is_open(
-        &editor
+
+    let _ = editor.update(Message::Edit("n0".to_owned(), Edit::Toggle));
+    assert!(!layout::is_open(&node(&editor)));
+}
+
+#[test]
+fn an_id_is_renamed_on_enter_and_its_readers_follow() {
+    let mut editor = chain(2);
+    let _ = editor.update(Message::Edit("n1".to_owned(), Edit::Output(true)));
+
+    // an id that is taken is not given
+    let _ = editor.update(Message::Edit(
+        "n0".to_owned(),
+        Edit::Rename("n1".to_owned()),
+    ));
+    assert_eq!(
+        editor
             .pipeline
             .nodes[0]
-    ));
+            .id,
+        "n0"
+    );
 
-    let saves = presses(&editor, save, 1);
-    assert!(matches!(saves.as_slice(), [graph::Event::Save(0)]));
-    let _ = editor.update(Message::Graph(graph::Event::Save(0)));
+    let _ = editor.update(Message::Edit(
+        "n1".to_owned(),
+        Edit::Rename("last".to_owned()),
+    ));
+    let _ = editor.update(Message::Edit(
+        "n0".to_owned(),
+        Edit::Rename("first".to_owned()),
+    ));
+    assert_eq!(
+        editor
+            .pipeline
+            .nodes[1]
+            .inputs,
+        ["first"]
+    );
     assert_eq!(
         editor
             .pipeline
             .outputs,
-        ["n0"]
+        ["last"]
+    );
+}
+
+#[test]
+fn a_deleted_node_leaves_its_readers_unwired() {
+    let mut editor = chain(2);
+    let _ = editor.update(Message::Edit("n0".to_owned(), Edit::Delete));
+    assert_eq!(
+        editor
+            .pipeline
+            .nodes[0]
+            .inputs,
+        [""]
     );
 }
 
@@ -147,13 +166,7 @@ fn a_run_keeps_the_saved_frames_and_a_rerun_does_not() {
     let frame = ("n1".to_owned(), DataFrame::empty());
     let _ = editor.update(Message::Run);
     let _ = editor.update(Message::Ran(vec!["n1".to_owned()], Ok(vec![frame])));
-    assert_eq!(
-        status(&editor),
-        [
-            graph::Status::Ran,
-            graph::Status::Ran
-        ]
-    );
+    assert_eq!(status(&editor), [Status::Ran, Status::Ran]);
 
     let _ = editor.update(Message::Run);
     assert!(
@@ -161,13 +174,7 @@ fn a_run_keeps_the_saved_frames_and_a_rerun_does_not() {
             .frame("n1")
             .is_some()
     );
-    assert_eq!(
-        status(&editor),
-        [
-            graph::Status::Ran,
-            graph::Status::Ran
-        ]
-    );
+    assert_eq!(status(&editor), [Status::Ran, Status::Ran]);
 
     let _ = editor.update(Message::Rerun);
     assert!(
@@ -178,15 +185,15 @@ fn a_run_keeps_the_saved_frames_and_a_rerun_does_not() {
     assert_eq!(
         status(&editor),
         [
-            graph::Status::Unknown,
-            graph::Status::Unknown
+            Status::Unknown,
+            Status::Unknown
         ]
     );
 }
 
 #[test]
 fn a_run_has_the_writes_done() {
-    use graph::Status::*;
+    use Status::*;
 
     let mut editor = chain(2);
     editor
@@ -259,4 +266,30 @@ fn a_right_click_on_the_background_adds_a_node_there() {
     assert_eq!(added.block, "limit");
     assert_eq!(added.ui["x"], point.x.round());
     assert_eq!(added.ui["y"], point.y.round());
+}
+
+#[test]
+fn a_field_keeps_the_typing_when_an_error_comes() {
+    // the views outlive the editors they are of, as those of the window do
+    let open = || {
+        let mut editor = chain(1);
+        let _ = editor.update(Message::Edit("n0".to_owned(), Edit::Toggle));
+        Box::leak(Box::new(editor))
+    };
+    let before = open();
+    let after = open();
+    let checks = [("n0".to_owned(), Err("no such file".to_owned()))].into();
+    let _ = after.update(Message::Checked(Ok(checks)));
+
+    let mut ui = simulator(before.view());
+    ui.click("a.parquet")
+        .unwrap();
+    let mut ui = ui.rebuild(after.view());
+    ui.typewrite("x");
+
+    let edits = ui
+        .into_messages()
+        .filter(|message| matches!(message, Message::Edit(_, Edit::Args(_))))
+        .count();
+    assert_eq!(edits, 1);
 }

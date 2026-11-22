@@ -28,15 +28,15 @@ impl Form {
             .update(message, &mut self.args)
     }
 
-    /// The index of a method, or of a function if `namespace` is `pl`.
+    /// A method, or a function if `namespace` is `pl`.
     fn method(
         &self,
         namespace: &str,
         name: &str,
-    ) -> usize {
+    ) -> &'static Method {
         methods::methods()
             .iter()
-            .position(|method| match namespace {
+            .find(|method| match namespace {
                 "pl" => {
                     method.name == name
                         && method
@@ -69,8 +69,7 @@ fn json_of(expr: Expr) -> Value {
 fn a_chain_is_built_call_by_call() {
     let mut form = Form::of(Value::Null);
     let at = || "/exprs/0".to_owned();
-    let put =
-        |pointer: &str, value: &str| Message::Edit(Edit(pointer.to_owned(), Some(value.into())));
+    let put = |pointer: &str, value: &str| Message::Put(pointer.to_owned(), value.into());
 
     assert!(form.send(Message::Replace(at(), form.method("pl", "col"))));
     assert!(form.send(put("/exprs/0/Column", "name")));
