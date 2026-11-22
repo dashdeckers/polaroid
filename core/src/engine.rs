@@ -58,11 +58,11 @@ impl Pipeline {
         &self,
         registry: &Registry,
     ) -> PolarsResult<HashMap<&str, PolarsResult<LazyFrame>>> {
-        self.plans(registry, &HashMap::new())
+        self.frames_from(registry, &HashMap::new())
     }
 
-    /// As [`Self::frames`], but a Node in `known` is that frame.
-    fn plans(
+    /// As [`Self::frames`], but a Node in `known` is that frame and is not built.
+    pub fn frames_from(
         &self,
         registry: &Registry,
         known: &HashMap<String, DataFrame>,
@@ -161,7 +161,7 @@ impl Pipeline {
         registry: &Registry,
         known: &HashMap<String, DataFrame>,
     ) -> PolarsResult<Vec<DataFrame>> {
-        let frames = self.plans(registry, known)?;
+        let frames = self.frames_from(registry, known)?;
 
         // a node that reads no source is under construction, and is left out
         let mut attached = HashSet::new();
