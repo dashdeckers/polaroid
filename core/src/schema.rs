@@ -19,7 +19,7 @@ pub fn default(
     }
 }
 
-/// An empty value of the schema's type, or null where a variant has to be picked.
+/// The fields or parts of the schema's type, each from its default; null where one is to be given.
 pub fn blank(
     defs: &Value,
     schema: &Value,
@@ -38,12 +38,6 @@ pub fn blank(
             .flatten()
             .map(|item| default(defs, item))
             .collect(),
-        "boolean" => false.into(),
-        "integer" | "number" => schema
-            .get("minimum")
-            .cloned()
-            .unwrap_or(0.into()),
-        "string" if variants(schema).is_empty() => "".into(),
         _ => Value::Null,
     }
 }
