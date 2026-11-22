@@ -56,6 +56,7 @@ pub fn card<'a, Key, Message>(
         at: at - Point::ORIGIN,
         content: content._boxed(),
         inputs: Vec::new(),
+        anchors: Vec::new(),
         output: None,
         is_resizable: false,
         tall: None,
@@ -70,6 +71,8 @@ pub struct Card<'a, Key, Message> {
     at: Vector,
     content: Element<'a, Message>,
     inputs: Vec<f32>,
+    /// The ids of the containers in it that its input ports are level with, if they follow those.
+    anchors: Vec<widget::Id>,
     output: Option<f32>,
     is_resizable: bool,
     /// The height it was made, which what it holds may exceed.
@@ -86,6 +89,17 @@ impl<Key, Message> Card<'_, Key, Message> {
         inputs: impl IntoIterator<Item = f32>,
     ) -> Self {
         self.inputs = inputs
+            .into_iter()
+            .collect();
+        self
+    }
+
+    /// A port on its left edge level with each container of these ids in it, to end wires at.
+    pub fn ports(
+        mut self,
+        ports: impl IntoIterator<Item = widget::Id>,
+    ) -> Self {
+        self.anchors = ports
             .into_iter()
             .collect();
         self
@@ -468,6 +482,21 @@ where
                 card.content
                     .layout(tree, renderer, &tall);
             }
+            // the ports are where the content was laid out, so they cannot drift from it
+            if !card
+                .anchors
+                .is_empty()
+            {
+                let whole = Rectangle::with_size(tree.size);
+                let mut found = Anchors {
+                    ids: &card.anchors,
+                    heights: vec![0.0; card.anchors.len()],
+                };
+                let layout = Layout::new(tree.size);
+                card.content
+                    .operate(tree, layout, &whole, renderer, &mut found);
+                card.inputs = found.heights;
+            }
         }
     }
 
@@ -575,6 +604,20 @@ where
                     // a card that is not loose is dragged by its handle alone
                     Some(Hit::Card(index) | Hit::Input(index, _))
                         if !self.cards[index].is_loose =>
+                    {
+                        return;
+                    }
+                    // nor is one by what shows a cursor of its own, as text to select does
+                    Some(Hit::Card(index))
+                        if {
+                            let card = &self.cards[index];
+                            let tree = &tree.children[index];
+                            let layout = view.layout(card.at, tree);
+                            let viewport = *viewport * view.inverse();
+                            card.content
+                                .mouse_interaction(tree, layout, local, &viewport, renderer)
+                                != mouse::Interaction::None
+                        } =>
                     {
                         return;
                     }
@@ -849,6 +892,36 @@ fn is_double(
     let click = mouse::Click::new(at, mouse::Button::Left, *pressed);
     *pressed = Some(click);
     click.kind() == mouse::click::Kind::Double
+}
+
+/// Finds how far below the top of what it operates on the containers of some ids are.
+struct Anchors<'a> {
+    ids: &'a [widget::Id],
+    heights: Vec<f32>,
+}
+
+impl widget::Operation for Anchors<'_> {
+    fn traverse(
+        &mut self,
+        operate: &mut dyn FnMut(&mut dyn widget::Operation),
+    ) {
+        operate(self);
+    }
+
+    fn container(
+        &mut self,
+        id: Option<&widget::Id>,
+        bounds: Rectangle,
+        _viewport: &Rectangle,
+    ) {
+        let slot = self
+            .ids
+            .iter()
+            .position(|anchor| Some(anchor) == id);
+        if let Some(slot) = slot {
+            self.heights[slot] = bounds.center_y();
+        }
+    }
 }
 
 /// A rounded quad.

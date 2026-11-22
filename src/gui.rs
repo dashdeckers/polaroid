@@ -2,6 +2,7 @@
 
 mod card;
 mod child;
+mod drawer;
 mod form;
 mod layout;
 mod table;
@@ -17,6 +18,7 @@ use iced::widget::{
     column,
     component,
     container,
+    markdown,
     mouse_area,
     pin,
     row,
@@ -27,11 +29,25 @@ use iced::widget::{
     text,
     tooltip,
 };
-use iced::{Fill, Function, Point, Size, Subscription, Task, Widget, clipboard, task};
-use polaroid_iced::surface;
+use iced::{
+    Fill,
+    Function,
+    Point,
+    Size,
+    Subscription,
+    Task,
+    Theme,
+    Widget,
+    clipboard,
+    system,
+    task,
+    theme,
+};
+use polaroid_iced::{split, surface};
 use serde_json::Value;
 
 use self::card::{Edit, Status};
+use self::drawer::Drawer;
 use crate::polars::prelude::{DataFrame, DataType, PolarsResult, polars_err};
 use crate::{Node, Pipeline, Registry, is_sink, polars, schema};
 
@@ -56,6 +72,9 @@ A card turns red at once when it is wired badly. What is wrong with a file shows
 comes before a Run: its button covers Run and Rerun until every node that a Run computes is \
 checked and sound.
 
+Expressions are kept in the drawer on the left, each under a name, and a card picks them by \
+that name. The Expressions button hides the drawer, and its edge is dragged to resize it.
+
 Save is lit when there is something to save. Load asks for another pipeline and New for the name \
 of an empty one; either takes the place of this pipeline, and drops what was not saved.";
 
@@ -68,6 +87,7 @@ fn empty() -> Pipeline {
         polars: polars::VERSION.to_owned(),
         nodes: vec![],
         outputs: vec![],
+        expressions: Default::default(),
     }
 }
 
@@ -98,11 +118,16 @@ pub fn open(
     let path = path.to_owned();
 
     iced::application(
-        move || Editor::new(registry.clone(), path.clone(), pipeline.clone()),
+        move || {
+            let editor = Editor::new(registry.clone(), path.clone(), pipeline.clone());
+            // light or dark, as the system is
+            (editor, system::theme().map(Message::Tone))
+        },
         Editor::update,
         Editor::view,
     )
     .title(Editor::title)
+    .theme(|editor: &Editor| editor.theme.clone())
     .subscription(Editor::subscription)
     .run()
     .map_err(|e| polars_err!(ComputeError: "{e}"))
@@ -125,6 +150,11 @@ struct Editor {
     problem: Option<String>,
     /// The Check or Run under way, whose child is killed when this is dropped.
     job: Option<task::Handle>,
+    drawer: Drawer,
+    is_drawer_shown: bool,
+    /// What each block does, as the Markdown its description is written in.
+    docs: BTreeMap<String, markdown::Content>,
+    theme: Theme,
 }
 
 /// What a Check and the Runs found of a node, until it or one it reads is edited.
@@ -169,6 +199,11 @@ enum Message {
     /// What a Run made of the nodes it was to save or have write.
     Ran(Vec<String>, Result<Vec<(String, DataFrame)>, String>),
     Stop,
+    Drawer(drawer::Message),
+    /// The drawer is shown, or hidden if it is shown.
+    ToggleDrawer,
+    /// The system is light or dark.
+    Tone(theme::Mode),
 }
 
 impl Editor {
@@ -177,10 +212,26 @@ impl Editor {
         path: String,
         pipeline: Pipeline,
     ) -> Self {
+        let catalog = registry.catalog();
+        // each block by its name as code, then what its description says
+        let docs = catalog["blocks"]
+            .as_object()
+            .into_iter()
+            .flatten()
+            .map(|(block, entry)| {
+                let schema = schema::resolve(&catalog["$defs"], &entry["args"]);
+                let doc = match schema["description"].as_str() {
+                    Some(described) => format!("`{block}`: {described}"),
+                    None => format!("`{block}`"),
+                };
+                (block.clone(), markdown::Content::parse(&doc))
+            })
+            .collect();
         let mut editor = Self {
-            catalog: registry.catalog(),
+            catalog,
             registry,
             path,
+            drawer: Drawer::new(&pipeline),
             pipeline,
             is_dirty: false,
             menu: None,
@@ -189,6 +240,9 @@ impl Editor {
             known: BTreeMap::new(),
             problem: None,
             job: None,
+            is_drawer_shown: true,
+            docs,
+            theme: Theme::Light,
         };
         editor.check_wiring();
         editor
@@ -201,13 +255,17 @@ impl Editor {
 
     /// Escape closes the menu of blocks.
     fn subscription(&self) -> Subscription<Message> {
-        keyboard::listen().filter_map(|event| match event {
+        let escape = keyboard::listen().filter_map(|event| match event {
             keyboard::Event::KeyPressed {
                 key: Key::Named(Named::Escape),
                 ..
             } => Some(Message::CloseMenu),
             _ => None,
-        })
+        });
+        Subscription::batch([
+            escape,
+            system::theme_changes().map(Message::Tone),
+        ])
     }
 
     fn update(
@@ -383,6 +441,40 @@ impl Editor {
                 }
             }
             Message::Stop => self.job = None,
+            Message::Drawer(message) => {
+                let change = self
+                    .drawer
+                    .update(message, &mut self.pipeline);
+                let name = match change {
+                    drawer::Change::Nothing => return Task::none(),
+                    drawer::Change::Pipeline => None,
+                    drawer::Change::Expression(name) => Some(name),
+                };
+                // what is known of a node holds for the expressions it was computed with
+                let users: Vec<usize> = self
+                    .pipeline
+                    .nodes
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, node)| {
+                        name.as_deref()
+                            .is_some_and(|name| drawer::uses(&node.args, name))
+                    })
+                    .map(|(index, _)| index)
+                    .collect();
+                for index in users {
+                    self.forget(index);
+                }
+                self.is_dirty = true;
+                self.check_wiring();
+            }
+            Message::ToggleDrawer => self.is_drawer_shown = !self.is_drawer_shown,
+            Message::Tone(mode) => {
+                self.theme = match mode {
+                    theme::Mode::Dark => Theme::Dark,
+                    _ => Theme::Light,
+                };
+            }
         }
 
         Task::none()
@@ -412,6 +504,7 @@ impl Editor {
         self.job = None;
         self.menu = None;
         self.is_dirty = is_dirty;
+        self.drawer = Drawer::new(&self.pipeline);
         self.check_wiring();
     }
 
@@ -638,6 +731,9 @@ impl Editor {
             .padding(10)
             .style(container::bordered_box);
         let toolbar = row![
+            button("Expressions")
+                .style(button::secondary)
+                .on_press(Message::ToggleDrawer),
             tooltip(container("Help").padding(5), help).position(tooltip::Position::Bottom),
             space::horizontal(),
             stack![runs, over],
@@ -657,7 +753,7 @@ impl Editor {
             let inputs = self.catalog["blocks"][&node.block]["inputs"]
                 .as_array()
                 .map_or(0, Vec::len);
-            let (inputs, output) = card::ports(inputs);
+            let ports = (0..inputs).map(card::anchor);
             let is_open = layout::is_open(node);
             let tall = match is_open {
                 true => layout::size(node).height,
@@ -665,8 +761,8 @@ impl Editor {
             };
             let id = node.id.clone();
             let card = polaroid_iced::card(id, layout::position(node), component(self.card(node)))
-                .inputs(inputs)
-                .output(output)
+                .ports(ports)
+                .output(card::output())
                 .handle(card::handle())
                 // an open card is moved and closed by its buttons alone, which leaves its text
                 .loose(!is_open)
@@ -703,6 +799,31 @@ impl Editor {
                     .on_right_press(Message::CloseMenu)
             });
 
+        // every column that a Check found, once each, for the expressions to name
+        let mut columns = Vec::new();
+        let found = self
+            .pipeline
+            .nodes
+            .iter()
+            .filter_map(|node| {
+                self.found(&node.id)?
+                    .ok()
+            })
+            .flatten();
+        for (name, _) in found {
+            if !columns.contains(name) {
+                columns.push(name.clone());
+            }
+        }
+        let expressions = &self
+            .pipeline
+            .expressions;
+        let drawer = self
+            .drawer
+            .view(&self.catalog["$defs"], expressions, &columns)
+            .map(Message::Drawer);
+        let panes = split(drawer, stack![graph, menu]).shown(self.is_drawer_shown);
+
         let problem = self
             .problem
             .as_deref()
@@ -711,7 +832,7 @@ impl Editor {
         column![
             toolbar,
             rule::horizontal(1),
-            stack![graph, menu],
+            panes,
             problem,
         ]
     }

@@ -329,3 +329,29 @@ fn a_card_made_taller_than_what_it_holds_gives_the_rest_to_its_fills() {
     assert!(line > 0.0 && line < 40.0);
     assert_eq!(bottom(200.0), 200.0);
 }
+
+#[test]
+fn a_port_is_level_with_the_container_of_its_id() {
+    // the second line of a card is its input, wherever the first puts it
+    let content = column![
+        container(space()).height(70),
+        container(space())
+            .height(20)
+            .id("input"),
+    ]
+    .width(100);
+    let wired = card(1, Point::new(20.0, 20.0), content)
+        .ports([iced::advanced::widget::Id::new("input")])
+        .output(10.0);
+    let scene = surface()
+        .push(wired)
+        .on_unwire(Wiring::Unwired);
+    let mut simulator = simulator(scene);
+
+    let port = Point::new(20.0, 100.0);
+    drag(&mut simulator, mouse::Button::Right, port, port);
+    let messages: Vec<_> = simulator
+        .into_messages()
+        .collect();
+    assert_eq!(messages, [Wiring::Unwired(1, 0)]);
+}

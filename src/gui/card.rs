@@ -1,21 +1,17 @@
 //! The card of a node: its id, inputs and args, and what is known of it.
 
-use iced::advanced::graphics::text::Paragraph;
-use iced::advanced::text::{Paragraph as _, Text};
-use iced::alignment::Vertical;
+use iced::advanced::widget;
 use iced::widget::canvas::{self, Frame, Path, Stroke};
-use iced::widget::text::Span;
 use iced::widget::{
     Component,
     button,
     canvas as draw,
     column,
     container,
+    markdown,
     pick_list,
-    rich_text,
     row,
     space,
-    span,
     text,
     text_input,
 };
@@ -33,8 +29,9 @@ use iced::{
     border,
     mouse,
 };
-use serde_json::Value;
+use serde_json::{Map, Value};
 
+use super::form::Tone;
 use super::table::Table;
 use super::{Editor, Message, error, form, layout};
 use crate::polars::prelude::{DataFrame, DataType};
@@ -43,9 +40,8 @@ use crate::{Node, schema};
 /// The space around what a card holds, and between its lines.
 const PAD: f32 = 10.0;
 const GAP: f32 = 6.0;
-/// The heights of the lines above the args: the id, and each input.
+/// The height of the line of the id.
 const HEAD: f32 = 28.0;
-const INPUT: f32 = 26.0;
 /// The widths of the buttons beside the id: those of a sign, and that of the small table.
 const BUTTON: f32 = 22.0;
 const SAVE: f32 = 27.0;
@@ -186,18 +182,6 @@ impl Editor {
         &'a self,
         node: &'a Node,
     ) -> Card<'a> {
-        // the columns its args may name are those of its inputs, once each
-        let mut columns = Vec::new();
-        let named = node
-            .inputs
-            .iter()
-            .filter_map(|id| self.found(id)?.ok())
-            .flatten();
-        for (name, _) in named {
-            if !columns.contains(name) {
-                columns.push(name.clone());
-            }
-        }
         Card {
             node,
             defs: &self.catalog["$defs"],
@@ -209,7 +193,9 @@ impl Editor {
                 .map(|other| other.id.as_str())
                 .filter(|id| *id != node.id)
                 .collect(),
-            columns,
+            expressions: &self
+                .pipeline
+                .expressions,
             is_output: self
                 .pipeline
                 .outputs
@@ -225,6 +211,10 @@ impl Editor {
                         .as_deref()
                 }),
             frame: self.frame(&node.id),
+            doc: self
+                .docs
+                .get(&node.block),
+            theme: &self.theme,
         }
     }
 }
@@ -234,11 +224,14 @@ pub fn handle() -> Rectangle {
     Rectangle::new(Point::new(PAD, PAD), Size::new(GRAB, HEAD))
 }
 
-/// How far below the top of a card its input ports are, and its output port.
-pub fn ports(inputs: usize) -> (impl Iterator<Item = f32>, f32) {
-    let first = PAD + HEAD + GAP + INPUT / 2.0;
-    let inputs = (0..inputs).map(move |slot| first + slot as f32 * (INPUT + GAP));
-    (inputs, PAD + HEAD / 2.0)
+/// The id of the line of a card that the port of its input `slot` is level with.
+pub fn anchor(slot: usize) -> widget::Id {
+    widget::Id::from(format!("input {slot}"))
+}
+
+/// How far below the top of a card its output port is: level with its id.
+pub fn output() -> f32 {
+    PAD + HEAD / 2.0
 }
 
 /// A node as a card: closed it is its id and inputs, and open its args and table as well.
@@ -249,12 +242,16 @@ pub struct Card<'a> {
     block: &'a Value,
     /// The ids of the other nodes, which it may read.
     others: Vec<&'a str>,
-    columns: Vec<String>,
+    /// The expressions by name, which its args pick from.
+    expressions: &'a Map<String, Value>,
     is_output: bool,
     status: Status,
     found: Option<Result<&'a Vec<(String, DataType)>, &'a String>>,
     failed: Option<&'a str>,
     frame: Option<&'a DataFrame>,
+    /// What its block does, as Markdown, and the theme to lay that out in.
+    doc: Option<&'a markdown::Content>,
+    theme: &'a Theme,
 }
 
 /// What a card shows that its node does not hold.
@@ -272,6 +269,8 @@ pub enum Event {
     Form(form::Message),
     Edit(Edit),
     Copy(String),
+    /// A link in what a block does was pressed, which leads nowhere.
+    Link,
 }
 
 impl<'a> Component<'a, Message> for Card<'a> {
@@ -306,6 +305,7 @@ impl<'a> Component<'a, Message> for Card<'a> {
             }
             Event::Edit(edit) => edit,
             Event::Copy(text) => return Some(Message::Copy(text)),
+            Event::Link => return None,
         };
         let id = self.node.id.clone();
         Some(Message::Edit(id, edit))
@@ -341,7 +341,7 @@ impl<'a> Component<'a, Message> for Card<'a> {
             false => layout::WIDTH,
         };
         let beside = 2.0 * PAD + GRAB + 2.0 * BUTTON + SAVE + 4.0 * GAP + 12.0;
-        let width = made.max(beside + width_of(&name, ID));
+        let width = made.max(beside + form::width_of(&name, ID));
         let head = row![
             // where the surface draws the handle that drags the card
             space().width(GRAB),
@@ -369,6 +369,18 @@ impl<'a> Component<'a, Message> for Card<'a> {
         .align_y(Center)
         .height(HEAD);
 
+        // the names of all it is given in one column: the nodes it reads, then its args
+        let read = self.block["inputs"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str);
+        let args = schema["properties"]
+            .as_object()
+            .into_iter()
+            .flat_map(|args| args.keys())
+            .map(String::as_str);
+        let names = form::names(read.chain(args));
         let others = self.others.clone();
         let inputs = self.block["inputs"]
             .as_array()
@@ -382,42 +394,56 @@ impl<'a> Component<'a, Message> for Card<'a> {
                     .map(String::as_str)
                     .filter(|source| !source.is_empty());
                 let wire = move |source: &str| Event::Edit(Edit::Wire(slot, source.to_owned()));
-                row![
-                    text(
-                        name.as_str()
-                            .unwrap_or_default()
-                    )
-                    .size(12),
-                    is_open.then(|| {
-                        pick_list(source, others.clone(), ToString::to_string)
-                            .on_select(wire)
-                            .placeholder("unwired")
-                            .text_size(12)
-                            .padding(4)
-                            .width(Fill)
-                    }),
-                ]
-                .spacing(GAP)
-                .align_y(Center)
-                .height(INPUT)
+                // a node to read is as much an argument as any, and without one it is missing
+                let tone = match source {
+                    Some(_) => Tone::Given,
+                    None => Tone::Missing,
+                };
+                let wired = is_open.then(|| {
+                    pick_list(source, others.clone(), ToString::to_string)
+                        .on_select(wire)
+                        .placeholder("unwired")
+                        .text_size(13)
+                        .padding(4)
+                        .width(Fill)
+                        .style(form::picked(tone))
+                });
+                let name = name
+                    .as_str()
+                    .unwrap_or_default();
+                container(form::labelled(name, names, None, wired)).id(anchor(slot))
             });
 
-        // the block as code, and on an open card what it does
-        let does = schema["description"]
-            .as_str()
+        // what the block does, laid out as the Markdown it is written in
+        let theme = self.theme.clone();
+        let does = self
+            .doc
             .filter(|_| is_open)
-            .map(|does| span(format!(": {}", does.replace('\n', " "))));
-        let about: Vec<Span<'a>> = std::iter::once(span(&node.block).font(Font::MONOSPACE))
-            .chain(does)
-            .collect();
-        let about = rich_text(about)
-            .size(12)
-            .width(Fill)
-            .style(text::secondary);
+            .map(|doc| {
+                markdown::view(doc.items(), markdown::Settings::with_text_size(12), theme)
+                    .map(|_| Event::Link)
+            });
+        // a closed card says no more of its block than its name
+        let block = (!is_open).then(|| {
+            text(&node.block)
+                .size(12)
+                .font(Font::MONOSPACE)
+                .style(text::secondary)
+        });
 
         let form = is_open.then(|| {
-            let columns = self.columns.clone();
-            form::view(&state.form, self.defs, schema, &node.args, columns).map(Event::Form)
+            // an expression is picked by its name, and edited in the drawer
+            let named = Some(self.expressions);
+            form::view(
+                &state.form,
+                self.defs,
+                schema,
+                &node.args,
+                Vec::new(),
+                named,
+                names,
+            )
+            .map(Event::Form)
         });
         // a saved frame, or else the columns that a Check found
         let table = match (self.frame, self.found) {
@@ -443,9 +469,10 @@ impl<'a> Component<'a, Message> for Card<'a> {
         // the errors last: a line that comes and goes takes the state of all below it
         let lines = column![
             head,
-            column(inputs.map(|input| input.boxed())).spacing(GAP),
-            about,
+            does,
+            column(inputs.map(|input| input.boxed())).spacing(5),
             form,
+            block,
             table,
             wrong,
             self.failed
@@ -460,27 +487,6 @@ impl<'a> Component<'a, Message> for Card<'a> {
             .padding(PAD)
             .style(move |theme| framed(theme, status))
     }
-}
-
-/// The width of a line of text of this size.
-fn width_of(
-    content: &str,
-    size: f32,
-) -> f32 {
-    let line = Text {
-        content,
-        bounds: Size::INFINITE,
-        size: size.into(),
-        line_height: text::LineHeight::default(),
-        font: Font::DEFAULT,
-        align_x: text::Alignment::Default,
-        align_y: Vertical::Top,
-        shaping: text::Shaping::default(),
-        wrapping: text::Wrapping::None,
-        ellipsis: text::Ellipsis::None,
-        hint_factor: None,
-    };
-    Paragraph::with_text(line).min_width()
 }
 
 /// The paper of a card, in a border of the colour of its status.

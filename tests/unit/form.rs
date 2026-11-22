@@ -57,7 +57,7 @@ impl Form {
     fn view(&self) -> impl Widget<Message> {
         let defs = &self.catalog["$defs"];
         let schema = resolve(defs, &self.catalog["blocks"]["select"]["args"]);
-        view(&self.state, defs, schema, &self.args, vec![])
+        view(&self.state, defs, schema, &self.args, vec![], None, 0.0)
     }
 }
 
@@ -172,4 +172,22 @@ fn arguments_are_written_until_they_are_laid_out() -> Result<(), Error> {
             .is_err()
     );
     Ok(())
+}
+
+#[test]
+fn a_value_is_given_the_default_or_missing() {
+    let five = json!(5);
+    // the default is told from what was given, though it be the same again
+    assert_eq!(Tone::of(&five, Some(&five), false), Tone::Default);
+    assert_eq!(Tone::of(&json!(6), Some(&five), false), Tone::Given);
+    assert_eq!(Tone::of(&five, None, false), Tone::Given);
+
+    // nothing is missing where something has to be, and a null may be what is meant
+    assert_eq!(Tone::of(&Value::Null, None, false), Tone::Missing);
+    assert_eq!(Tone::of(&json!(""), None, false), Tone::Missing);
+    assert_eq!(Tone::of(&Value::Null, None, true), Tone::Given);
+    assert_eq!(
+        Tone::of(&Value::Null, Some(&Value::Null), true),
+        Tone::Default
+    );
 }

@@ -6,7 +6,7 @@ use iced::widget::{PickList, column, container, mouse_area, pick_list, row, text
 use iced::{Center, Element, Fill, Font, Function, Widget, padding};
 use serde_json::{Value, json};
 
-use super::{Form, Message, number, small};
+use super::{Form, Message, Tone, number, small};
 use crate::methods::{self, Method};
 use crate::schema;
 
@@ -45,7 +45,7 @@ impl<'a> Form<'a, '_> {
                 None if node.is_null() => pick(None, choices(None), label, "pl.…")
                     .on_select(Message::Replace.with(pointer))
                     .boxed(),
-                None => self.plain(&self.defs["Expr"], node, pointer),
+                None => self.plain(&self.defs["Expr"], node, pointer, Tone::Given),
             });
         let add = (!value.is_null()).then(|| self.add(at));
         let lines = lines

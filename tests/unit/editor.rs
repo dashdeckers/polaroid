@@ -28,6 +28,7 @@ fn chain(len: usize) -> Editor {
         polars: polars::VERSION.to_owned(),
         nodes,
         outputs: vec![],
+        expressions: Default::default(),
     };
     layout::layout(&mut pipeline);
     Editor::new(registry, "p.json".to_owned(), pipeline)
@@ -459,4 +460,152 @@ fn an_open_card_is_resized_and_its_table_shows_five_rows_at_the_least() {
     assert_eq!(Table::of(&rows(3)).least(), HEADER + 3.0 * ROW);
     assert_eq!(Table::of(&rows(40)).least(), HEADER + 5.0 * ROW);
     assert_eq!(Table::listing(&[]).least(), HEADER);
+}
+
+#[test]
+fn an_expression_is_renamed_edited_and_deleted_for_the_nodes_that_use_it() {
+    let mut editor = chain(2);
+    let drawer = |editor: &mut Editor, message: drawer::Message| {
+        let _ = editor.update(Message::Drawer(message));
+    };
+    let checked = |editor: &mut Editor| {
+        let checks = ["n0", "n1"]
+            .map(|id| (id.to_owned(), Ok(vec![])))
+            .into();
+        let _ = editor.update(Message::Checked(Ok(checks)));
+    };
+
+    drawer(&mut editor, drawer::Message::New);
+    drawer(&mut editor, drawer::Message::Name(0, "few".to_owned()));
+    drawer(&mut editor, drawer::Message::Rename(0));
+    assert!(editor.is_dirty);
+    let args = Edit::Args(serde_json::json!({ "n": drawer::marker("few") }));
+    let _ = editor.update(Message::Edit("n1".to_owned(), args));
+
+    // an edit to it forgets the nodes that use it, and no others
+    checked(&mut editor);
+    let five = form::Message::Put(String::new(), serde_json::json!(5));
+    drawer(&mut editor, drawer::Message::Form(0, five));
+    assert_eq!(
+        editor
+            .pipeline
+            .expressions["few"],
+        5
+    );
+    assert_eq!(
+        status(&editor),
+        [
+            Status::Checked,
+            Status::Unknown
+        ]
+    );
+
+    // under another name it is the same to them
+    checked(&mut editor);
+    drawer(&mut editor, drawer::Message::Name(0, "some".to_owned()));
+    drawer(&mut editor, drawer::Message::Rename(0));
+    let args = &editor
+        .pipeline
+        .nodes[1]
+        .args;
+    assert_eq!(args["n"], drawer::marker("some"));
+    assert_eq!(
+        status(&editor),
+        [
+            Status::Checked,
+            Status::Checked
+        ]
+    );
+
+    // and gone, they are wired badly
+    drawer(&mut editor, drawer::Message::Delete(0));
+    assert!(
+        editor
+            .pipeline
+            .expressions
+            .is_empty()
+    );
+    assert_eq!(
+        status(&editor),
+        [
+            Status::Checked,
+            Status::Rejected
+        ]
+    );
+}
+
+#[test]
+fn a_card_picks_an_expression_by_its_name() {
+    use crate::polars::prelude::{col, lit};
+
+    let mut editor = chain(1);
+    let large = serde_json::to_value(col("x").gt(lit(1))).unwrap();
+    editor
+        .pipeline
+        .expressions
+        .insert("large".to_owned(), large);
+    let _ = editor.update(Message::Add("filter".to_owned(), Point::new(300.0, 20.0)));
+    let args = Edit::Args(serde_json::json!({ "predicates": [drawer::marker("large")] }));
+    let _ = editor.update(Message::Edit("filter_1".to_owned(), args));
+    let _ = editor.update(Message::Edit("filter_1".to_owned(), Edit::Toggle));
+
+    // with the drawer hidden, what names and writes the expression is the card
+    let _ = editor.update(Message::ToggleDrawer);
+    let mut ui = simulator(editor.view());
+    assert!(
+        ui.find("large")
+            .is_ok()
+    );
+    assert!(
+        ui.find(r#"pl.col("x").gt(1)"#)
+            .is_ok()
+    );
+    assert!(
+        ui.find("Expressions")
+            .is_ok()
+    );
+}
+
+/// What dragging across the label of an open or closed card of a scan selects.
+fn selected(is_open: bool) -> String {
+    use iced::advanced::widget::operation::{self, Operation, Outcome};
+    use iced::mouse;
+
+    let mut editor = chain(1);
+    let checks = [("n0".to_owned(), Err("no such file".to_owned()))].into();
+    let _ = editor.update(Message::Checked(Ok(checks)));
+    if is_open {
+        let _ = editor.update(Message::Edit("n0".to_owned(), Edit::Toggle));
+    }
+
+    let mut ui = simulator(editor.view());
+    let bounds = ui
+        .find("no such file")
+        .unwrap()
+        .bounds();
+    let y = bounds.center_y();
+    let position = Point::new(bounds.x + 1.0, y);
+    ui.point_at(position);
+    ui.simulate([
+        iced::Event::Mouse(mouse::Event::CursorMoved { position }),
+        iced::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+    ]);
+    let position = Point::new(bounds.x + bounds.width - 1.0, y);
+    ui.point_at(position);
+    ui.simulate([iced::Event::Mouse(
+        mouse::Event::CursorMoved { position },
+    )]);
+
+    let mut copy = operation::text::copy();
+    ui.operate(&mut operation::black_box(&mut copy));
+    match copy.finish() {
+        Outcome::Some(text) => text,
+        _ => String::new(),
+    }
+}
+
+#[test]
+fn the_text_of_a_card_is_selected_by_a_drag_across_it() {
+    assert_eq!(selected(true), "no such file");
+    assert_eq!(selected(false), "no such file");
 }
