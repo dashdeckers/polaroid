@@ -6,7 +6,7 @@ use iced::widget::{button, column, container, row, scrollable, space, text, text
 use iced::{Center, Fill, Function, Widget};
 use serde_json::{Map, Value};
 
-use super::form;
+use super::form::{self, Expressions};
 use crate::{Pipeline, methods};
 
 /// What the drawer shows of the expressions of a pipeline, by their names.
@@ -172,8 +172,8 @@ impl Drawer {
                 let body = match section.is_open {
                     true => {
                         let schema = &defs["Expr"];
-                        let columns = columns.to_vec();
-                        form::view(&section.form, defs, schema, expression, columns, None, 0.0)
+                        let chained = Expressions::Chained(columns);
+                        form::view(&section.form, defs, schema, expression, chained, 0.0)
                             .map(Message::Form.with(name.clone()))
                             .boxed()
                     }

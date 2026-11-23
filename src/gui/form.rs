@@ -175,24 +175,30 @@ impl State {
     }
 }
 
-/// The form for `value`, by `schema`; `columns` are those the value may name.
+/// How a form shows the expressions in its value.
+#[derive(Clone, Copy)]
+pub enum Expressions<'a, 'c> {
+    /// Each is picked by its name from these, and is not edited here.
+    Named(&'a Map<String, Value>),
+    /// Each is edited here as a chain of calls, which may name these columns.
+    Chained(&'c [String]),
+}
+
+/// The form for `value`, by `schema`.
 ///
-/// With `named`, an expression is picked from those by its name, and is not edited here.
 /// The names of its arguments are in a column of the width `names` at the least.
 pub fn view<'a>(
     state: &State,
     defs: &'a Value,
     schema: &'a Value,
     value: &'a Value,
-    columns: Vec<String>,
-    named: Option<&'a Map<String, Value>>,
+    expressions: Expressions<'a, '_>,
     names: f32,
 ) -> impl Widget<Message> + use<'a> {
     let form = Form {
         state,
         defs,
-        columns: &columns,
-        named,
+        expressions,
         names,
     };
     form.value(schema, value, String::new())
@@ -203,8 +209,7 @@ pub fn view<'a>(
 struct Form<'a, 'c> {
     state: &'c State,
     defs: &'a Value,
-    columns: &'c [String],
-    named: Option<&'a Map<String, Value>>,
+    expressions: Expressions<'a, 'c>,
     /// The least width of the column of the names of the arguments.
     names: f32,
 }
@@ -430,9 +435,9 @@ impl<'a> Form<'a, '_> {
 
         let shown = inner.unwrap_or(schema);
         let is_expression = std::ptr::eq(shown, &self.defs["Expr"]);
-        let form = match (is_expression, self.named) {
-            (true, Some(named)) => name(named, value, at, tone),
-            (true, None) => self.chain(value, at),
+        let form = match (is_expression, self.expressions) {
+            (true, Expressions::Named(named)) => name(named, value, at, tone),
+            (true, Expressions::Chained(_)) => self.chain(value, at),
             (false, _) => self.plain(shown, value, at, tone),
         };
         if inner.is_none() {

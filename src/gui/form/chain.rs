@@ -6,7 +6,7 @@ use iced::widget::{PickList, column, container, mouse_area, pick_list, row, text
 use iced::{Center, Element, Fill, Font, Function, Widget, padding};
 use serde_json::Value;
 
-use super::{Form, Message, Tone, small};
+use super::{Expressions, Form, Message, Tone, small};
 use crate::methods::{self, Method};
 use crate::schema;
 
@@ -165,10 +165,11 @@ impl<'a> Form<'a, '_> {
                 let name = value
                     .as_str()
                     .unwrap_or_default();
-                if self
-                    .columns
-                    .is_empty()
-                {
+                let columns = match self.expressions {
+                    Expressions::Chained(columns) => columns,
+                    Expressions::Named(_) => &[],
+                };
+                if columns.is_empty() {
                     return Some(
                         text_input("column", name)
                             .on_input(move |name| put(name.into()))
@@ -177,8 +178,7 @@ impl<'a> Form<'a, '_> {
                     );
                 }
                 // it shows a name that is none of the columns, as one named before they were known
-                let selected = self
-                    .columns
+                let selected = columns
                     .iter()
                     .find(|column| *column == name)
                     .cloned();
@@ -187,15 +187,10 @@ impl<'a> Form<'a, '_> {
                     name => name,
                 };
                 Some(
-                    pick_list(
-                        selected,
-                        self.columns
-                            .to_vec(),
-                        String::clone,
-                    )
-                    .on_select(move |name| put(name.into()))
-                    .placeholder(placeholder.to_owned())
-                    .boxed(),
+                    pick_list(selected, columns.to_vec(), String::clone)
+                        .on_select(move |name| put(name.into()))
+                        .placeholder(placeholder.to_owned())
+                        .boxed(),
                 )
             }
             "/Literal" => Some(

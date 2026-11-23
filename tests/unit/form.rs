@@ -57,7 +57,14 @@ impl Form {
     fn view(&self) -> impl Widget<Message> {
         let defs = &self.catalog.defs;
         let schema = resolve(defs, &self.catalog.blocks["select"].args);
-        view(&self.state, defs, schema, &self.args, vec![], None, 0.0)
+        view(
+            &self.state,
+            defs,
+            schema,
+            &self.args,
+            Expressions::Chained(&[]),
+            0.0,
+        )
     }
 }
 
@@ -205,7 +212,15 @@ fn a_number_that_is_being_typed_is_shown_but_not_put_in_the_value() -> Result<()
     // on its way to a number it is none, and is shown as it was typed
     assert!(state.update(typed("1."), &mut args));
     assert_eq!(args, json!({ "n": null }));
-    simulator(view(&state, defs, schema, &args, vec![], None, 0.0)).find("1.")?;
+    simulator(view(
+        &state,
+        defs,
+        schema,
+        &args,
+        Expressions::Chained(&[]),
+        0.0,
+    ))
+    .find("1.")?;
     // more of what is no number changes nothing
     assert!(!state.update(typed("1.e"), &mut args));
 
@@ -215,7 +230,14 @@ fn a_number_that_is_being_typed_is_shown_but_not_put_in_the_value() -> Result<()
     // what else is done ends the typing, and the field shows the value again
     assert!(state.update(typed("-"), &mut args));
     let _ = state.update(Message::Toggle(String::new()), &mut args);
-    let mut ui = simulator(view(&state, defs, schema, &args, vec![], None, 0.0));
+    let mut ui = simulator(view(
+        &state,
+        defs,
+        schema,
+        &args,
+        Expressions::Chained(&[]),
+        0.0,
+    ));
     assert!(
         ui.find("-")
             .is_err()

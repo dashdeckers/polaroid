@@ -40,7 +40,7 @@ use iced::{
     task,
     theme,
 };
-use polaroid_iced::{menu, split, surface};
+use polaroid_iced::{Menu, Surface, menu, split, surface};
 use serde_json::Value;
 
 use self::card::{Edit, Status};
@@ -265,49 +265,12 @@ impl Editor {
         message: Message,
     ) -> Task<Message> {
         match message {
-            Message::Move(id, position) => {
-                if let Some(node) = self.node_mut(&id) {
-                    layout::place(node, position);
-                }
-            }
-            Message::Resize(id, size) => {
-                if let Some(node) = self.node_mut(&id) {
-                    layout::resize(node, size);
-                }
-            }
+            Message::Move(id, position) => self.lay(&id, |node| layout::place(node, position)),
+            Message::Resize(id, size) => self.lay(&id, |node| layout::resize(node, size)),
             Message::Copy(text) => return clipboard::write(text).discard(),
             Message::Menu(at, point) => self.menu = Some((at, point)),
             Message::CloseMenu => self.menu = None,
-            Message::Add(block, point) => {
-                self.menu = None;
-                let described = self
-                    .catalog
-                    .blocks
-                    .get(block.as_str());
-                let Some(entry) = described else {
-                    return Task::none();
-                };
-                let nodes = &mut self.pipeline.nodes;
-                let id = (1..)
-                    .map(|n| format!("{block}_{n}"))
-                    .find(|id| {
-                        nodes
-                            .iter()
-                            .all(|node| node.id != *id)
-                    })
-                    .expect("some number is free");
-                let mut node = Node {
-                    id,
-                    block,
-                    inputs: vec![String::new(); entry.inputs.len()],
-                    args: schema::default(&self.catalog.defs, &entry.args),
-                    ui: Value::Null,
-                };
-                layout::place(&mut node, point);
-                nodes.push(node);
-                self.is_dirty = true;
-                self.check_wiring();
-            }
+            Message::Add(block, point) => self.add(block, point),
             Message::Edit(id, edit) => self.edit(&id, edit),
             Message::Load => {
                 let file = dialog().pick_file();
@@ -324,17 +287,7 @@ impl Editor {
             // its file is made by the first Save
             Message::Named(Some(path)) => self.replace(path, Pipeline::default(), true),
             Message::Loaded(None) | Message::Named(None) => {}
-            Message::Save => {
-                let pipeline =
-                    serde_json::to_string_pretty(&self.pipeline).expect("a pipeline serializes");
-                let written = std::fs::write(&self.path, pipeline + "\n");
-                self.is_dirty = written.is_err();
-                // what is wrong with the pipeline itself stays to be seen
-                self.check_wiring();
-                if let Err(e) = written {
-                    self.problem = Some(format!("{}: {e}", self.path));
-                }
-            }
+            Message::Save => self.save(),
             Message::Check => {
                 let check = child::check(
                     self.pipeline
@@ -356,86 +309,11 @@ impl Editor {
                     Err(problem) => self.problem = Some(problem),
                 }
             }
-            Message::Run | Message::Rerun => {
-                let is_rerun = matches!(message, Message::Rerun);
-                for known in self
-                    .known
-                    .values_mut()
-                {
-                    known.failed = None;
-                    if is_rerun {
-                        known.frame = None;
-                        known.is_run = false;
-                    }
-                }
-                let mut pipeline = self
-                    .pipeline
-                    .clone();
-                // a frame that is saved is not collected again
-                pipeline
-                    .outputs
-                    .retain(|id| {
-                        self.frame(id)
-                            .is_none()
-                    });
-                // but every write is done again, as its file may be gone
-                let targets: Vec<String> = pipeline
-                    .outputs
-                    .iter()
-                    .chain(&self.writes)
-                    .cloned()
-                    .collect();
-                // a read frame goes along, but not a write's, which it would stand in for
-                let known = pipeline
-                    .nodes
-                    .iter()
-                    .flat_map(|node| &node.inputs)
-                    .filter(|id| {
-                        !self
-                            .writes
-                            .contains(id)
-                    })
-                    .filter_map(|id| {
-                        Some((
-                            id.clone(),
-                            self.frame(id)?
-                                .clone(),
-                        ))
-                    })
-                    .collect();
-                let run = child::run(pipeline, known);
-                return self.start(Task::perform(run, Message::Ran.with(targets)));
-            }
+            Message::Run => return self.run(false),
+            Message::Rerun => return self.run(true),
             Message::Ran(targets, Ok(frames)) => {
                 self.job = None;
-                // these and all they read are what the Run computed
-                let targets = targets
-                    .iter()
-                    .map(String::as_str);
-                let computed: Vec<String> = self
-                    .pipeline
-                    .upstream(targets)
-                    .into_iter()
-                    .map(str::to_owned)
-                    .collect();
-                for id in computed {
-                    self.known_mut(id)
-                        .is_run = true;
-                }
-                for (id, mut frame) in frames {
-                    // one unticked while the Run was under way is not saved
-                    let is_saved = self
-                        .pipeline
-                        .outputs
-                        .contains(&id);
-                    if !is_saved {
-                        continue;
-                    }
-                    // in one chunk, a cell is found in constant time
-                    frame.rechunk_mut();
-                    self.known_mut(id)
-                        .frame = Some(frame);
-                }
+                self.ran(&targets, frames);
             }
             Message::Ran(targets, Err(e)) => {
                 self.job = None;
@@ -469,6 +347,190 @@ impl Editor {
         }
 
         Task::none()
+    }
+
+    /// Has `lay` change where the card of node `id` is or how large, which is then to be saved.
+    fn lay(
+        &mut self,
+        id: &str,
+        lay: impl FnOnce(&mut Node),
+    ) {
+        let node = self
+            .pipeline
+            .nodes
+            .iter_mut()
+            .find(|node| node.id == id);
+        if let Some(node) = node {
+            lay(node);
+            self.is_dirty = true;
+        }
+    }
+
+    /// Adds a node of `block` at `point` among the cards, under an id that is free.
+    fn add(
+        &mut self,
+        block: String,
+        point: Point,
+    ) {
+        self.menu = None;
+        let described = self
+            .catalog
+            .blocks
+            .get(block.as_str());
+        let Some(described) = described else {
+            return;
+        };
+        let nodes = &mut self.pipeline.nodes;
+        let id = (1..)
+            .map(|n| format!("{block}_{n}"))
+            .find(|id| {
+                nodes
+                    .iter()
+                    .all(|node| node.id != *id)
+            })
+            .expect("some number is free");
+        let mut node = Node {
+            id,
+            block,
+            inputs: vec![
+                String::new();
+                described
+                    .inputs
+                    .len()
+            ],
+            args: schema::default(&self.catalog.defs, &described.args),
+            ui: Value::Null,
+        };
+        layout::place(&mut node, point);
+        nodes.push(node);
+        self.is_dirty = true;
+        self.check_wiring();
+    }
+
+    /// Writes the pipeline to its file.
+    fn save(&mut self) {
+        let pipeline = serde_json::to_string_pretty(&self.pipeline).expect("a pipeline serializes");
+        let written = std::fs::write(&self.path, pipeline + "\n");
+        self.is_dirty = written.is_err();
+        // what is wrong with the pipeline itself stays to be seen
+        self.check_wiring();
+        if let Err(e) = written {
+            self.problem = Some(format!("{}: {e}", self.path));
+        }
+    }
+
+    /// Starts a Run of what is not saved yet, or of everything if it is a Rerun.
+    fn run(
+        &mut self,
+        is_rerun: bool,
+    ) -> Task<Message> {
+        for known in self
+            .known
+            .values_mut()
+        {
+            known.failed = None;
+            if is_rerun {
+                known.frame = None;
+                known.is_run = false;
+            }
+        }
+        let mut pipeline = self
+            .pipeline
+            .clone();
+        // a frame that is saved is not collected again
+        pipeline
+            .outputs
+            .retain(|id| {
+                self.frame(id)
+                    .is_none()
+            });
+        // but every write is done again, as its file may be gone
+        let targets: Vec<String> = pipeline
+            .outputs
+            .iter()
+            .chain(&self.writes)
+            .cloned()
+            .collect();
+        // a read frame goes along, but not a write's, which it would stand in for
+        let known = pipeline
+            .nodes
+            .iter()
+            .flat_map(|node| &node.inputs)
+            .filter(|id| {
+                !self
+                    .writes
+                    .contains(id)
+            })
+            .filter_map(|id| {
+                Some((
+                    id.clone(),
+                    self.frame(id)?
+                        .clone(),
+                ))
+            })
+            .collect();
+        let run = child::run(pipeline, known);
+        self.start(Task::perform(run, Message::Ran.with(targets)))
+    }
+
+    /// Notes that a Run computed `targets` and all they read, and keeps the frames it saved.
+    fn ran(
+        &mut self,
+        targets: &[String],
+        frames: Vec<(String, DataFrame)>,
+    ) {
+        let targets = targets
+            .iter()
+            .map(String::as_str);
+        let computed: Vec<String> = self
+            .pipeline
+            .upstream(targets)
+            .into_iter()
+            .map(str::to_owned)
+            .collect();
+        for id in computed {
+            self.known_mut(id)
+                .is_run = true;
+        }
+        for (id, mut frame) in frames {
+            // one unticked while the Run was under way is not saved
+            let is_saved = self
+                .pipeline
+                .outputs
+                .contains(&id);
+            if !is_saved {
+                continue;
+            }
+            // in one chunk, a cell is found in constant time
+            frame.rechunk_mut();
+            self.known_mut(id)
+                .frame = Some(frame);
+        }
+    }
+
+    /// Whether a Check is behind every node that a Run computes: until then it goes before a Run.
+    fn is_checked(&self) -> bool {
+        let targets = self
+            .pipeline
+            .outputs
+            .iter()
+            .chain(&self.writes)
+            .map(String::as_str);
+        let reached = self
+            .pipeline
+            .upstream(targets);
+        self.pipeline
+            .nodes
+            .iter()
+            .all(|node| {
+                let is_sound = matches!(self.status(&node.id), Status::Checked | Status::Ran);
+                // no Check mends bad wiring, which is no matter in a node that no Run computes
+                let is_aside = self
+                    .wiring
+                    .contains_key(&node.id)
+                    && !reached.contains(node.id.as_str());
+                is_sound || is_aside
+            })
     }
 
     /// Has `job` run as the Check or Run under way, which Stop ends.
@@ -509,18 +571,6 @@ impl Editor {
             .get(name)
     }
 
-    /// The node of this id, whose card was moved or resized.
-    fn node_mut(
-        &mut self,
-        id: &str,
-    ) -> Option<&mut Node> {
-        self.is_dirty = true;
-        self.pipeline
-            .nodes
-            .iter_mut()
-            .find(|node| node.id == id)
-    }
-
     /// Notes what is wrong with the wiring of each node, and which nodes write.
     fn check_wiring(&mut self) {
         self.wiring.clear();
@@ -546,7 +596,10 @@ impl Editor {
             .frames_from(&self.registry, &sources)
         {
             Ok(frames) => frames,
-            Err(e) => return self.problem = Some(e.to_string()),
+            Err(e) => {
+                self.problem = Some(e.to_string());
+                return;
+            }
         };
         for (id, frame) in frames {
             match frame {
@@ -554,10 +607,10 @@ impl Editor {
                     .writes
                     .push(id.to_owned()),
                 Ok(_) => {}
-                Err(e) => drop(
+                Err(e) => {
                     self.wiring
-                        .insert(id.to_owned(), e.to_string()),
-                ),
+                        .insert(id.to_owned(), e.to_string());
+                }
             }
         }
     }
@@ -640,33 +693,34 @@ impl Editor {
     }
 
     fn view(&self) -> impl Widget<Message> {
+        let expressions = &self
+            .pipeline
+            .expressions;
+        let drawer = self
+            .drawer
+            .view(&self.catalog.defs, expressions, &self.columns())
+            .map(Message::Drawer);
+        let graph = stack![self.graph(), self.menu()];
+        let problem = self
+            .problem
+            .as_deref()
+            .map(|problem| container(error(problem)).padding(10));
+
+        column![
+            self.toolbar(),
+            rule::horizontal(1),
+            split(drawer, graph).shown(self.is_drawer_shown),
+            problem,
+        ]
+    }
+
+    /// The drawer's button and the help, then the jobs and the files.
+    fn toolbar(&self) -> impl Widget<Message> + use<> {
         let save = self
             .is_dirty
             .then_some(Message::Save);
         // a Check goes before a Run: its button covers theirs until every node is sound
-        let targets = self
-            .pipeline
-            .outputs
-            .iter()
-            .chain(&self.writes)
-            .map(String::as_str);
-        let reached = self
-            .pipeline
-            .upstream(targets);
-        let is_checked = self
-            .pipeline
-            .nodes
-            .iter()
-            .all(|node| {
-                let is_sound = matches!(self.status(&node.id), Status::Checked | Status::Ran);
-                // no Check mends bad wiring, which is no matter in a node that no Run computes
-                let is_aside = self
-                    .wiring
-                    .contains_key(&node.id)
-                    && !reached.contains(node.id.as_str());
-                is_sound || is_aside
-            });
-        let over = match (&self.job, is_checked) {
+        let over = match (&self.job, self.is_checked()) {
             (Some(_), _) => Some(("Stop", Message::Stop)),
             (None, false) => Some(("Check", Message::Check)),
             (None, true) => None,
@@ -700,7 +754,7 @@ impl Editor {
             .width(460)
             .padding(10)
             .style(container::bordered_box);
-        let toolbar = row![
+        row![
             button("Expressions")
                 .style(button::secondary)
                 .on_press(Message::ToggleDrawer),
@@ -710,8 +764,11 @@ impl Editor {
             files,
         ]
         .spacing(10)
-        .padding(10);
+        .padding(10)
+    }
 
+    /// The nodes as cards on a surface, wired as they read each other.
+    fn graph(&self) -> Surface<'_, String, Message> {
         let mut graph = surface()
             .on_move(Message::Move)
             .on_resize(Message::Resize)
@@ -748,10 +805,13 @@ impl Editor {
                 graph = graph.wire(source.clone(), node.id.clone(), slot);
             }
         }
-        let menu = self
-            .menu
+        graph
+    }
+
+    /// The menu of blocks under their categories, each to add a node of it where was pressed.
+    fn menu(&self) -> Option<Menu<Message>> {
+        self.menu
             .map(|(at, point)| {
-                // the blocks under their categories, each to add a node of it where was pressed
                 let catalog = &self.catalog;
                 let groups = catalog
                     .categories
@@ -768,9 +828,11 @@ impl Editor {
                     })
                     .collect();
                 menu(at, groups).on_close(Message::CloseMenu)
-            });
+            })
+    }
 
-        // every column that a Check found, once each, for the expressions to name
+    /// Every column that a Check found, once each, for the expressions to name.
+    fn columns(&self) -> Vec<String> {
         let mut columns = Vec::new();
         let found = self
             .pipeline
@@ -786,26 +848,7 @@ impl Editor {
                 columns.push(name.clone());
             }
         }
-        let expressions = &self
-            .pipeline
-            .expressions;
-        let drawer = self
-            .drawer
-            .view(&self.catalog.defs, expressions, &columns)
-            .map(Message::Drawer);
-        let panes = split(drawer, stack![graph, menu]).shown(self.is_drawer_shown);
-
-        let problem = self
-            .problem
-            .as_deref()
-            .map(|problem| container(error(problem)).padding(10));
-
-        column![
-            toolbar,
-            rule::horizontal(1),
-            panes,
-            problem,
-        ]
+        columns
     }
 }
 

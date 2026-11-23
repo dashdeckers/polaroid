@@ -31,7 +31,7 @@ use iced::{
 };
 use serde_json::{Map, Value};
 
-use super::form::Tone;
+use super::form::{Expressions, Tone};
 use super::table::Table;
 use super::{Editor, Message, error, form, layout};
 use crate::polars::prelude::{DataFrame, DataType};
@@ -405,17 +405,8 @@ impl<'a> Component<'a, Message> for Card<'a> {
 
         let form = is_open.then(|| {
             // an expression is picked by its name, and edited in the drawer
-            let named = Some(self.expressions);
-            form::view(
-                &state.form,
-                self.defs,
-                schema,
-                &node.args,
-                Vec::new(),
-                named,
-                names,
-            )
-            .map(Event::Form)
+            let named = Expressions::Named(self.expressions);
+            form::view(&state.form, self.defs, schema, &node.args, named, names).map(Event::Form)
         });
         // a saved frame, or else the columns that a Check found
         let table = match (self.frame, self.found) {
