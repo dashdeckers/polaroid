@@ -12,6 +12,11 @@ pub const WIDTH: f32 = 220.0;
 /// The width of an open card until it is resized; it is as tall as what it holds.
 const OPEN: f32 = 520.0;
 
+/// Where the first card is placed from the corner, and how far the next are beside and below it.
+const EDGE: f32 = 20.0;
+const BESIDE: f32 = 70.0;
+const BELOW: f32 = 160.0;
+
 /// Where a node's card is drawn, as its `ui` says.
 pub fn position(node: &Node) -> Point {
     let axis = |name| {
@@ -90,8 +95,8 @@ pub fn layout(pipeline: &mut Pipeline) {
             place(
                 node,
                 Point::new(
-                    20.0 + column as f32 * (WIDTH + 70.0),
-                    20.0 + *row as f32 * 160.0,
+                    EDGE + column as f32 * (WIDTH + BESIDE),
+                    EDGE + *row as f32 * BELOW,
                 ),
             );
             *row += 1;

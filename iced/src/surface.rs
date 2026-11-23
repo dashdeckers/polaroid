@@ -70,8 +70,9 @@ pub struct Card<'a, Key, Message> {
     key: Key,
     at: Vector,
     content: Element<'a, Message>,
+    /// How far below its top each input port is, as of the latest layout.
     inputs: Vec<f32>,
-    /// The ids of the containers in it that its input ports are level with, if they follow those.
+    /// The ids of the containers in it that its input ports are level with.
     anchors: Vec<widget::Id>,
     output: Option<f32>,
     is_resizable: bool,
@@ -83,17 +84,6 @@ pub struct Card<'a, Key, Message> {
 }
 
 impl<Key, Message> Card<'_, Key, Message> {
-    /// A port on its left edge for each height below its top, to end wires at.
-    pub fn inputs(
-        mut self,
-        inputs: impl IntoIterator<Item = f32>,
-    ) -> Self {
-        self.inputs = inputs
-            .into_iter()
-            .collect();
-        self
-    }
-
     /// A port on its left edge level with each container of these ids in it, to end wires at.
     pub fn ports(
         mut self,
@@ -370,6 +360,23 @@ impl<'a, Key: PartialEq, Message> Surface<'a, Key, Message> {
             })
     }
 
+    /// The cursor that the card of an index shows for what it holds under a cursor it sees.
+    fn interaction(
+        &self,
+        index: usize,
+        tree: &Tree,
+        view: View,
+        cursor: mouse::Cursor,
+        viewport: &Rectangle,
+        renderer: &Renderer,
+    ) -> mouse::Interaction {
+        let card = &self.cards[index];
+        let layout = view.layout(card.at, tree);
+        let viewport = *viewport * view.inverse();
+        card.content
+            .mouse_interaction(tree, layout, cursor, &viewport, renderer)
+    }
+
     /// Where the wire of an input `slot` of the card of a key ends, or that of its output starts.
     fn port(
         &self,
@@ -592,6 +599,11 @@ where
                 else {
                     return;
                 };
+                // the cursor that a card shows for what it holds where the press is
+                let shown = |index: usize| {
+                    let tree = &tree.children[index];
+                    self.interaction(index, tree, view, local, viewport, renderer)
+                };
                 state.drag = Some(match hit {
                     Some(Hit::Output(index)) => Drag::Wire(key(index), point),
                     Some(Hit::Grip(index)) => {
@@ -608,17 +620,7 @@ where
                         return;
                     }
                     // nor is one by what shows a cursor of its own, as text to select does
-                    Some(Hit::Card(index))
-                        if {
-                            let card = &self.cards[index];
-                            let tree = &tree.children[index];
-                            let layout = view.layout(card.at, tree);
-                            let viewport = *viewport * view.inverse();
-                            card.content
-                                .mouse_interaction(tree, layout, local, &viewport, renderer)
-                                != mouse::Interaction::None
-                        } =>
-                    {
+                    Some(Hit::Card(index)) if shown(index) != mouse::Interaction::None => {
                         return;
                     }
                     Some(Hit::Card(index)) if is_double(&mut state.pressed, at) => {
@@ -732,14 +734,11 @@ where
             (None, Some(Hit::Handle(_))) => mouse::Interaction::Grab,
             (None, Some(Hit::Card(index))) => {
                 let tree = &tree.children[index];
-                let card = &self.cards[index];
-                let layout = view.layout(card.at, tree);
-                let viewport = *viewport * view.inverse();
-                let inner = card
-                    .content
-                    .mouse_interaction(tree, layout, local, &viewport, renderer);
+                let inner = self.interaction(index, tree, view, local, viewport, renderer);
                 match inner {
-                    mouse::Interaction::None if card.is_loose => mouse::Interaction::Grab,
+                    mouse::Interaction::None if self.cards[index].is_loose => {
+                        mouse::Interaction::Grab
+                    }
                     inner => inner,
                 }
             }

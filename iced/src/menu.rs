@@ -1,12 +1,13 @@
 //! A menu of groups at a point: a group under the cursor opens its items beside it.
 
-use iced::advanced::graphics::text::Paragraph;
 use iced::advanced::layout::{self, Layout};
-use iced::advanced::text::{self, Paragraph as _, Renderer as _};
+use iced::advanced::text::{self, Renderer as _};
 use iced::advanced::widget::{self, Tree, tree};
 use iced::advanced::{Renderer as _, Shell, Text, Widget, mouse, renderer};
 use iced::alignment::Vertical;
 use iced::{Border, Color, Event, Fill, Font, Length, Point, Rectangle, Renderer, Size, Theme};
+
+use crate::width_of;
 
 /// The height of a line, the size of its text, and the room left and right of that.
 const LINE: f32 = 26.0;
@@ -26,7 +27,7 @@ pub fn menu<Message>(
     // a list is as wide as the widest of its labels
     let wide = |labels: &mut dyn Iterator<Item = &String>| {
         labels
-            .map(|label| width_of(label))
+            .map(|label| width_of(label, TEXT, Font::DEFAULT))
             .fold(0.0, f32::max)
             + 2.0 * SIDE
     };
@@ -432,22 +433,4 @@ fn is_between(
         .all(|side| *side >= 0.0);
     // not where it was, which is a corner of every such triangle
     point != from && (is_left || is_right)
-}
-
-/// The width of a label on a line.
-fn width_of(label: &str) -> f32 {
-    let line = Text {
-        content: label,
-        bounds: Size::INFINITE,
-        size: TEXT.into(),
-        line_height: text::LineHeight::default(),
-        font: Font::DEFAULT,
-        align_x: text::Alignment::Default,
-        align_y: Vertical::Top,
-        shaping: text::Shaping::default(),
-        wrapping: text::Wrapping::None,
-        ellipsis: text::Ellipsis::None,
-        hint_factor: None,
-    };
-    Paragraph::with_text(line).min_width()
 }

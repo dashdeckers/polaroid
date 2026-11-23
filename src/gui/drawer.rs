@@ -7,6 +7,7 @@ use iced::{Center, Fill, Function, Widget};
 use serde_json::{Map, Value};
 
 use super::form::{self, Expressions};
+use super::{NOTE, TITLE, cross, toggle};
 use crate::{Pipeline, methods};
 
 /// What the drawer shows of the expressions of a pipeline, by their names.
@@ -143,28 +144,18 @@ impl Drawer {
                     .sections
                     .get(name)
                     .unwrap_or(&closed);
-                let toggle = match section.is_open {
-                    true => "−",
-                    false => "+",
-                };
                 let typed = section
                     .name
                     .clone()
                     .unwrap_or_else(|| name.clone());
                 let head = row![
-                    button(toggle)
-                        .style(button::text)
-                        .padding([0, 6])
-                        .on_press(Message::Toggle(name.clone())),
+                    toggle(section.is_open, Message::Toggle(name.clone())),
                     text_input("name", typed)
                         .on_input(Message::Name.with(name.clone()))
                         .on_submit(Message::Rename(name.clone()))
-                        .size(14)
+                        .size(TITLE)
                         .padding(4),
-                    button("×")
-                        .style(button::danger)
-                        .padding([0, 6])
-                        .on_press(Message::Delete(name.clone())),
+                    cross(Message::Delete(name.clone())),
                 ]
                 .spacing(6)
                 .align_y(Center);
@@ -178,7 +169,7 @@ impl Drawer {
                             .boxed()
                     }
                     false => text(methods::text(expression))
-                        .size(12)
+                        .size(NOTE)
                         .style(text::secondary)
                         .boxed(),
                 };

@@ -6,7 +6,9 @@ use iced::keyboard::{self, Key};
 use iced::widget::canvas::{self, Frame};
 use iced::widget::text;
 use iced::{Color, Font, Point, Rectangle, Renderer, Size, Theme, mouse};
+use polaroid_iced::width_of;
 
+use super::NOTE;
 use crate::polars::prelude::{Column, DataFrame, DataType};
 
 pub const ROW: f32 = 20.0;
@@ -77,11 +79,10 @@ impl<'a> Table<'a> {
     fn gutter(&self) -> f32 {
         match self.frame {
             Some(frame) => {
-                let digits = frame
+                let last = frame
                     .height()
-                    .to_string()
-                    .len();
-                2.0 * PAD + 7.0 * digits as f32
+                    .to_string();
+                2.0 * PAD + width_of(&last, NOTE, Font::DEFAULT)
             }
             None => 0.0,
         }
@@ -402,7 +403,7 @@ fn cell(
         content: content.to_owned(),
         position: Point::new(x, y + ROW / 2.0),
         color,
-        size: 12.0.into(),
+        size: NOTE.into(),
         align_x,
         align_y: Vertical::Center,
         max_width: width - 2.0 * PAD,

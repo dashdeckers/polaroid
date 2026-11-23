@@ -29,11 +29,12 @@ use iced::{
     border,
     mouse,
 };
+use polaroid_iced::width_of;
 use serde_json::{Map, Value};
 
 use super::form::{Expressions, Tone};
 use super::table::Table;
-use super::{Editor, Message, error, form, layout};
+use super::{Editor, Message, NOTE, TEXT, TITLE, cross, error, form, layout, toggle};
 use crate::polars::prelude::{DataFrame, DataType};
 use crate::{Described, Node, schema};
 
@@ -42,15 +43,26 @@ const PAD: f32 = 10.0;
 const GAP: f32 = 6.0;
 /// The height of the line of the id.
 const HEAD: f32 = 28.0;
-/// The widths of the buttons beside the id: those of a sign, and that of the small table.
+/// The width of the buttons that are a sign: the toggle and the cross.
 const BUTTON: f32 = 22.0;
-const SAVE: f32 = 27.0;
-/// The size of the text of an id.
-const ID: f32 = 14.0;
+/// The small table, and the room around it in its button.
+const ICON: Size = Size::new(15.0, 11.0);
+const AROUND_ICON: f32 = 6.0;
+/// The room around the text of a field, and what its border and cursor take beside that.
+const FIELD: f32 = 4.0;
+const EDGE: f32 = 2.0;
 /// The width of the handle that drags a card.
 const GRAB: f32 = 14.0;
 /// The width of a border that shows a status.
 const STATUS: f32 = 4.0;
+
+/// The width of a card whose line of the id shows all of an id that is this wide.
+fn around(id: f32) -> f32 {
+    let buttons = 2.0 * BUTTON + ICON.width + 2.0 * AROUND_ICON;
+    let field = id + 2.0 * (FIELD + EDGE);
+    // in the card's padding: the handle, the buttons and the field, with a gap between each two
+    2.0 * PAD + GRAB + buttons + field + 4.0 * GAP
+}
 
 /// A change to a node.
 #[derive(Debug, Clone)]
@@ -159,13 +171,7 @@ impl Editor {
             node,
             defs: &self.catalog.defs,
             block: self.block(&node.block),
-            others: self
-                .pipeline
-                .nodes
-                .iter()
-                .map(|other| other.id.as_str())
-                .filter(|id| *id != node.id)
-                .collect(),
+            nodes: &self.pipeline.nodes,
             expressions: &self
                 .pipeline
                 .expressions,
@@ -213,8 +219,8 @@ pub struct Card<'a> {
     defs: &'a Value,
     /// What the catalog says of its block, if there is such a block.
     block: Option<&'a Described>,
-    /// The ids of the other nodes, which it may read.
-    others: Vec<&'a str>,
+    /// Every node of the pipeline, of which it may read the others.
+    nodes: &'a [Node],
     /// The expressions by name, which its args pick from.
     expressions: &'a Map<String, Value>,
     is_output: bool,
@@ -295,74 +301,136 @@ impl<'a> Component<'a, Message> for Card<'a> {
             .block
             .map_or(&Value::Null, |block| &block.args);
         let schema = schema::resolve(self.defs, args);
-        let reads = self
-            .block
-            .map_or(&[][..], |block| block.inputs);
 
         let name = state
             .name
             .clone()
             .unwrap_or_else(|| node.id.clone());
-        let toggle = match is_open {
-            true => "−",
-            false => "+",
-        };
-        let save = match self.is_output {
-            true => button::primary,
-            false => button::text,
-        };
-        let icon = draw(Icon(self.is_output))
-            .width(15)
-            .height(11);
         // as wide as it was made, and as the line of its id with all of the id in view
         let made = match is_open {
             true => layout::size(node).width,
             false => layout::WIDTH,
         };
-        let beside = 2.0 * PAD + GRAB + 2.0 * BUTTON + SAVE + 4.0 * GAP + 12.0;
-        let width = made.max(beside + form::width_of(&name, ID));
-        let head = row![
-            // where the surface draws the handle that drags the card
-            space().width(GRAB),
-            button(toggle)
-                .style(button::text)
-                .width(BUTTON)
-                .padding([0, 6])
-                .on_press(Event::Edit(Edit::Toggle)),
-            button(icon)
-                .style(save)
-                .padding(6)
-                .on_press(Event::Edit(Edit::Output(!self.is_output))),
-            text_input("id", name)
-                .on_input(Event::Name)
-                .on_submit(Event::Rename)
-                .size(ID)
-                .padding(4),
-            button("×")
-                .style(button::danger)
-                .width(BUTTON)
-                .padding([0, 6])
-                .on_press(Event::Edit(Edit::Delete)),
-        ]
-        .spacing(GAP)
-        .align_y(Center)
-        .height(HEAD);
-
+        let width = made.max(around(width_of(&name, TITLE, Font::DEFAULT)));
         // the names of all it is given in one column: the nodes it reads, then its args
-        let read = reads
-            .iter()
-            .copied();
         let args = schema["properties"]
             .as_object()
             .into_iter()
             .flat_map(|args| args.keys())
             .map(String::as_str);
-        let names = form::names(read.chain(args));
-        let others = self.others.clone();
-        let inputs = reads
+        let reads = self
+            .reads()
+            .iter()
+            .copied();
+        let names = form::names(reads.chain(args));
+
+        let head = self.head(name, is_open);
+        let inputs = self.inputs(names, is_open);
+        let wrong = match self.found {
+            Some(Err(e)) => Some(error(e).width(Fill)),
+            _ => None,
+        };
+        let failed = self
+            .failed
+            .map(|failed| error(failed).width(Fill));
+        // the errors last: a line that comes and goes takes the state of all below it
+        let lines = match is_open {
+            true => {
+                // what the block does, laid out as the Markdown it is written in
+                let does = self.doc.map(|doc| {
+                    let settings = markdown::Settings::with_text_size(NOTE);
+                    markdown::view(doc.items(), settings, self.theme.clone()).map(|_| Event::Link)
+                });
+                // an expression is picked by its name, and edited in the drawer
+                let named = Expressions::Named(self.expressions);
+                let form = form::view(&state.form, self.defs, schema, &node.args, named, names)
+                    .map(Event::Form);
+                column![
+                    head,
+                    does,
+                    inputs,
+                    form,
+                    self.table(),
+                    wrong,
+                    failed
+                ]
+            }
+            false => {
+                // a closed card says no more of its block than its name
+                let block = text(&node.block)
+                    .size(NOTE)
+                    .font(Font::MONOSPACE)
+                    .style(text::secondary);
+                column![
+                    head, inputs, block, wrong, failed
+                ]
+            }
+        };
+        // as tall as what it holds, or as the surface makes it, where the table takes the rest
+        container(
+            lines
+                .spacing(GAP)
+                .height(Fill),
+        )
+        .width(width)
+        .height(Fill)
+        .padding(PAD)
+        .style(move |theme| framed(theme, status))
+    }
+}
+
+impl<'a> Card<'a> {
+    /// The names of the frames that its block reads, in order.
+    fn reads(&self) -> &'static [&'static str] {
+        self.block
+            .map_or(&[], |block| block.inputs)
+    }
+
+    /// The line of its id: room for the handle, its toggle, the small table, the id and the cross.
+    fn head(
+        &self,
+        name: String,
+        is_open: bool,
+    ) -> impl Widget<Event> + use<'a> {
+        let save = match self.is_output {
+            true => button::primary,
+            false => button::text,
+        };
+        let icon = draw(Icon(self.is_output))
+            .width(ICON.width)
+            .height(ICON.height);
+        row![
+            // where the surface draws the handle that drags the card
+            space().width(GRAB),
+            toggle(is_open, Event::Edit(Edit::Toggle)).width(BUTTON),
+            button(icon)
+                .style(save)
+                .padding(AROUND_ICON)
+                .on_press(Event::Edit(Edit::Output(!self.is_output))),
+            text_input("id", name)
+                .on_input(Event::Name)
+                .on_submit(Event::Rename)
+                .size(TITLE)
+                .padding(FIELD),
+            cross(Event::Edit(Edit::Delete)).width(BUTTON),
+        ]
+        .spacing(GAP)
+        .align_y(Center)
+        .height(HEAD)
+    }
+
+    /// A line for each frame it reads: the name of the input, and in an open card the node read.
+    fn inputs(
+        &self,
+        names: f32,
+        is_open: bool,
+    ) -> impl Widget<Event> + use<'a> {
+        let node = self.node;
+        let inputs = self
+            .reads()
             .iter()
             .enumerate()
-            .map(move |(slot, name)| {
+            .map(|(slot, name)| {
                 let source = node
                     .inputs
                     .get(slot)
@@ -375,80 +443,41 @@ impl<'a> Component<'a, Message> for Card<'a> {
                     None => Tone::Missing,
                 };
                 let wired = is_open.then(|| {
-                    pick_list(source, others.clone(), ToString::to_string)
+                    let others: Vec<&str> = self
+                        .nodes
+                        .iter()
+                        .map(|other| other.id.as_str())
+                        .filter(|id| *id != node.id)
+                        .collect();
+                    pick_list(source, others, ToString::to_string)
                         .on_select(wire)
                         .placeholder("unwired")
-                        .text_size(13)
-                        .padding(4)
+                        .text_size(TEXT)
+                        .padding(FIELD)
                         .width(Fill)
                         .style(form::picked(tone))
                 });
-                container(form::labelled(name, names, None, wired)).id(anchor(slot))
+                container(form::labelled(name, names, None, wired))
+                    .id(anchor(slot))
+                    .boxed()
             });
+        column(inputs).spacing(5)
+    }
 
-        // what the block does, laid out as the Markdown it is written in
-        let theme = self.theme.clone();
-        let does = self
-            .doc
-            .filter(|_| is_open)
-            .map(|doc| {
-                markdown::view(doc.items(), markdown::Settings::with_text_size(12), theme)
-                    .map(|_| Event::Link)
-            });
-        // a closed card says no more of its block than its name
-        let block = (!is_open).then(|| {
-            text(&node.block)
-                .size(12)
-                .font(Font::MONOSPACE)
-                .style(text::secondary)
-        });
-
-        let form = is_open.then(|| {
-            // an expression is picked by its name, and edited in the drawer
-            let named = Expressions::Named(self.expressions);
-            form::view(&state.form, self.defs, schema, &node.args, named, names).map(Event::Form)
-        });
-        // a saved frame, or else the columns that a Check found
+    /// A saved frame, or else the columns that a Check found, to select cells in and copy them.
+    fn table(&self) -> Option<impl Widget<Event> + use<'a>> {
         let table = match (self.frame, self.found) {
-            (Some(frame), _) => Some(Table::of(frame)),
-            (None, Some(Ok(columns))) => Some(Table::listing(columns)),
-            _ => None,
+            (Some(frame), _) => Table::of(frame),
+            (None, Some(Ok(columns))) => Table::listing(columns),
+            _ => return None,
         };
-        let table = table
-            .filter(|_| is_open)
-            .map(|table| {
-                // it takes what the card has left over, and its first rows at the least
-                let height = Fill.min(table.least());
-                draw(table)
-                    .width(Fill)
-                    .height(height)
-                    .map(Event::Copy)
-            });
-        let wrong = match self.found {
-            Some(Err(e)) => Some(error(e).width(Fill)),
-            _ => None,
-        };
-
-        // the errors last: a line that comes and goes takes the state of all below it
-        let lines = column![
-            head,
-            does,
-            column(inputs.map(|input| input.boxed())).spacing(5),
-            form,
-            block,
-            table,
-            wrong,
-            self.failed
-                .map(|failed| error(failed).width(Fill)),
-        ]
-        .spacing(GAP)
-        .height(Fill);
-        // as tall as what it holds, or as the surface makes it, where the table takes the rest
-        container(lines)
-            .width(width)
-            .height(Fill)
-            .padding(PAD)
-            .style(move |theme| framed(theme, status))
+        // it takes what the card has left over, and its first rows at the least
+        let height = Fill.min(table.least());
+        let table = draw(table)
+            .width(Fill)
+            .height(height)
+            .map(Event::Copy);
+        Some(table)
     }
 }
 

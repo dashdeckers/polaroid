@@ -86,7 +86,8 @@ impl Example {
         for card in &self.cards {
             let id = card.id;
             let content = column![
-                text!("card {id}"),
+                // the port of its input is level with its title
+                container(text!("card {id}")).id("title"),
                 text_input("name", &card.name).on_input(move |name| Message::Named(id, name)),
                 pick_list(card.kind, KINDS, |kind| kind.to_string())
                     .on_select(move |kind| Message::Picked(id, kind))
@@ -103,7 +104,7 @@ impl Example {
                 .padding(12)
                 .style(container::bordered_box);
             let on_surface = polaroid_iced::card(id, card.at, content)
-                .inputs([24.0])
+                .ports([iced::advanced::widget::Id::new("title")])
                 .output(24.0);
             cards = cards
                 .push(on_surface)

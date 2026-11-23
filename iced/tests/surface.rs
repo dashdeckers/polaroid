@@ -149,16 +149,18 @@ fn ports() -> impl Widget<Wiring> {
         container(space())
             .width(100)
             .height(60)
+            .id("whole")
     };
+    let halfway = || [iced::advanced::widget::Id::new("whole")];
     surface()
         .push(
             card(1, Point::new(20.0, 20.0), blank())
-                .inputs([30.0])
+                .ports(halfway())
                 .output(30.0),
         )
         .push(
             card(2, Point::new(300.0, 20.0), blank())
-                .inputs([30.0])
+                .ports(halfway())
                 .output(30.0)
                 .resizable(true)
                 .loose(false),

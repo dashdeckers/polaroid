@@ -4,11 +4,18 @@ use std::iter::successors;
 
 use iced::widget::{PickList, column, container, mouse_area, pick_list, row, text_input};
 use iced::{Center, Element, Fill, Font, Function, Widget, padding};
+use polaroid_iced::width_of;
 use serde_json::Value;
 
 use super::{Expressions, Form, Message, Tone, small};
 use crate::methods::{self, Method};
 use crate::schema;
+
+/// What is picked the most, and so offered first.
+const FIRST: [&str; 3] = ["pl.col", "pl.lit", "alias"];
+
+/// The size of text that reads as code.
+const CODE: f32 = 16.0;
 
 /// How far a call is set in from its root, and arguments from their call.
 const INDENT: f32 = 20.0;
@@ -273,10 +280,7 @@ fn choices(namespace: Option<&str>) -> Vec<&'static Method> {
         .collect();
     choices.sort_by_cached_key(|method| {
         let label = label(method);
-        (
-            !["pl.col", "pl.lit", "alias"].contains(&label.as_str()),
-            label,
-        )
+        (!FIRST.contains(&label.as_str()), label)
     });
     choices
 }
@@ -302,16 +306,19 @@ fn pick<'a, T: Clone + PartialEq + 'a>(
     let text = selected
         .as_ref()
         .map_or_else(|| placeholder.to_owned(), &label);
-    // about nine to a letter, then the padding and the arrow
-    let width = text.chars().count() as f32 * 9.0 + 36.0;
+    // beside its text, the padding and the arrow
+    let width = width_of(&text, CODE, Font::MONOSPACE) + 36.0;
     pick_list(selected, options, label)
         .placeholder(placeholder)
         .padding([2, 6])
         .width(width)
+        .text_size(CODE)
         .font(Font::MONOSPACE)
 }
 
 /// Text that reads as code.
 fn code<'a>(text: impl Into<String>) -> iced::widget::Text<'a> {
-    iced::widget::text(text.into()).font(Font::MONOSPACE)
+    iced::widget::text(text.into())
+        .size(CODE)
+        .font(Font::MONOSPACE)
 }

@@ -4,9 +4,6 @@ mod chain;
 
 use std::collections::BTreeSet;
 
-use iced::advanced::graphics::text::Paragraph;
-use iced::advanced::text::{Paragraph as _, Text};
-use iced::alignment::Vertical;
 use iced::widget::{
     button,
     checkbox,
@@ -18,9 +15,11 @@ use iced::widget::{
     text_input,
     tooltip,
 };
-use iced::{Center, Element, Fill, Font, Function, Size, Theme, Widget};
+use iced::{Center, Element, Fill, Font, Function, Theme, Widget};
+use polaroid_iced::width_of;
 use serde_json::{Map, Value, json};
 
+use super::{NOTE, TEXT};
 use crate::methods::{self, Method};
 use crate::schema::{blank, default, json_type, number, optional, resolve, variants};
 use crate::{marked, marker};
@@ -106,10 +105,13 @@ impl State {
                 *node = method.call(node.take());
 
                 // what was here is the receiver now, if the call takes one
-                let inner = method
+                match method
                     .receiver
-                    .as_deref();
-                self.relocate(&at, inner.and(Some("")), inner.unwrap_or_default());
+                    .as_deref()
+                {
+                    Some(receiver) => self.relocate(&at, Some(""), receiver),
+                    None => self.relocate(&at, None, ""),
+                }
                 if method.inputs.len() + method.options.len() > 0 {
                     self.expanded
                         .insert(at);
@@ -121,9 +123,11 @@ impl State {
                     .pointer(&at)
                     .and_then(methods::read)
                     == Some(method);
-                return !is_same
-                    && self.update(Message::Remove(at.clone()), value)
-                    && self.update(Message::Call(at, method), value);
+                if is_same {
+                    return false;
+                }
+                self.update(Message::Remove(at.clone()), value);
+                return self.update(Message::Call(at, method), value);
             }
             Message::Remove(at) => {
                 let Some(node) = value.pointer_mut(&at) else {
@@ -214,8 +218,6 @@ struct Form<'a, 'c> {
     names: f32,
 }
 
-/// The size of the text of an argument.
-const SIZE: f32 = 13.0;
 /// The height of a line that holds a field.
 const LINE: f32 = 26.0;
 
@@ -318,29 +320,8 @@ pub fn picked(tone: Tone) -> impl Fn(&Theme, pick_list::Status) -> pick_list::St
 pub fn names<'a>(names: impl IntoIterator<Item = &'a str>) -> f32 {
     names
         .into_iter()
-        .map(|name| width_of(name, SIZE))
+        .map(|name| width_of(name, TEXT, Font::DEFAULT))
         .fold(0.0, f32::max)
-}
-
-/// The width of a line of text of this size.
-pub fn width_of(
-    content: &str,
-    size: f32,
-) -> f32 {
-    let line = Text {
-        content,
-        bounds: Size::INFINITE,
-        size: size.into(),
-        line_height: text::LineHeight::default(),
-        font: Font::DEFAULT,
-        align_x: text::Alignment::Default,
-        align_y: Vertical::Top,
-        shaping: text::Shaping::default(),
-        wrapping: text::Wrapping::None,
-        ellipsis: text::Ellipsis::None,
-        hint_factor: None,
-    };
-    Paragraph::with_text(line).min_width()
 }
 
 /// An argument on a line: its name in a column of the width `names`, then its value.
@@ -353,7 +334,7 @@ pub fn labelled<'a, Message: 'a>(
     value: impl Widget<Message> + 'a,
 ) -> Element<'a, Message> {
     let name = text(name)
-        .size(SIZE)
+        .size(TEXT)
         .wrapping(text::Wrapping::None)
         .ellipsis(text::Ellipsis::End);
     // level with the first line of a value of many, as a list is
@@ -363,7 +344,7 @@ pub fn labelled<'a, Message: 'a>(
         .align_y(Center);
     let name = match described {
         Some(described) => {
-            let described = container(text(described).size(12))
+            let described = container(text(described).size(NOTE))
                 .width(280)
                 .padding(6)
                 .style(container::bordered_box);
@@ -400,12 +381,12 @@ fn name<'a>(
         pick_list(name, names, ToString::to_string)
             .on_select(move |name: &str| Message::Put(at.clone(), marker(name)))
             .placeholder("expression…")
-            .text_size(SIZE)
+            .text_size(TEXT)
             .padding(4)
             .style(picked(tone)),
         // in what room is left, cut short
         text(written)
-            .size(12)
+            .size(NOTE)
             .width(Fill)
             .wrapping(text::Wrapping::None)
             .ellipsis(text::Ellipsis::End)
@@ -434,6 +415,7 @@ impl<'a> Form<'a, '_> {
         let tone = Tone::of(value, default, inner.is_some());
 
         let shown = inner.unwrap_or(schema);
+        // a schema that resolves to the one definition of an expression is that very value
         let is_expression = std::ptr::eq(shown, &self.defs["Expr"]);
         let form = match (is_expression, self.expressions) {
             (true, Expressions::Named(named)) => name(named, value, at, tone),
@@ -457,73 +439,21 @@ impl<'a> Form<'a, '_> {
         at: String,
         tone: Tone,
     ) -> Element<'a, Message> {
-        let defs = self.defs;
         let put = Message::Put.with(at.clone());
 
         if value.is_null() {
-            let blank = blank(defs, schema);
+            let blank = blank(self.defs, schema);
             if !blank.is_null() {
                 return small("set", put(blank)).boxed();
             }
         }
-
         let variants = variants(schema);
         if !variants.is_empty() {
-            // a variant is its name, or its name around its payload
-            let selected = variants
-                .iter()
-                .copied()
-                .find(|(name, payload)| match payload {
-                    Some(_) => value
-                        .get(name)
-                        .is_some(),
-                    None => value == name,
-                });
-            let pick = pick_list(selected, variants, |(name, _)| name.to_string())
-                .on_select(move |(name, payload)| {
-                    put(match payload {
-                        Some(payload) => json!({ name: default(defs, payload) }),
-                        None => name.into(),
-                    })
-                })
-                .placeholder("pick…")
-                .text_size(SIZE)
-                .padding(4)
-                .style(picked(tone));
-
-            return match selected {
-                Some((name, Some(payload))) => column![
-                    pick,
-                    self.value(payload, &value[name], format!("{at}/{name}"))
-                ]
-                .spacing(5)
-                .boxed(),
-                _ => pick.boxed(),
-            };
+            return self.variant(variants, value, at, tone);
         }
 
         match json_type(schema) {
-            "object" => {
-                let fields = schema["properties"]
-                    .as_object()
-                    .into_iter()
-                    .flatten();
-                // as wide as the widest of the names, and what is nested starts its own column
-                let wide = names(
-                    fields
-                        .clone()
-                        .map(|(name, _)| name.as_str()),
-                )
-                .max(self.names);
-                let nested = Form { names: 0.0, ..self };
-                column(fields.map(|(name, field)| {
-                    let described = field["description"].as_str();
-                    let field = nested.value(field, &value[name], format!("{at}/{name}"));
-                    labelled(name, wide, described, field)
-                }))
-                .spacing(5)
-                .boxed()
-            }
+            "object" => self.fields(schema, value, &at),
             "array" => match schema["prefixItems"].as_array() {
                 Some(items) => row(items
                     .iter()
@@ -531,32 +461,7 @@ impl<'a> Form<'a, '_> {
                     .map(|(i, item)| self.value(item, &value[i], format!("{at}/{i}"))))
                 .spacing(10)
                 .boxed(),
-                None => {
-                    let items = &schema["items"];
-                    let elements = value
-                        .as_array()
-                        .map(Vec::as_slice)
-                        .unwrap_or_default();
-                    let add =
-                        Message::Put(format!("{at}/{}", elements.len()), default(defs, items));
-                    column(
-                        elements
-                            .iter()
-                            .enumerate()
-                            .map(|(i, element)| {
-                                let at = format!("{at}/{i}");
-                                row![
-                                    small("×", Message::Drop(at.clone())),
-                                    self.value(items, element, at)
-                                ]
-                                .spacing(5)
-                                .boxed()
-                            }),
-                    )
-                    .push(small("+", add).boxed())
-                    .spacing(5)
-                    .boxed()
-                }
+                None => self.list(&schema["items"], value, &at),
             },
             "boolean" => {
                 // none yet is an empty box, which a press ticks
@@ -568,32 +473,7 @@ impl<'a> Form<'a, '_> {
                     .style(ticked(tone, is_ticked))
                     .boxed()
             }
-            "integer" | "number" => {
-                // as it is being typed here, or else as the number that it is
-                let typing = self
-                    .state
-                    .typing
-                    .as_ref()
-                    .filter(|(pointer, _)| *pointer == at)
-                    .map(|(_, typed)| typed.clone());
-                // text that writes no number is none, and shown as one that is missing
-                let tone = match &typing {
-                    Some(typed) if !typed.is_empty() && number(typed).is_none() => Tone::Missing,
-                    _ => tone,
-                };
-                let typed = typing.unwrap_or_else(|| match value {
-                    // none yet is an empty field, to type one in
-                    Value::Null => String::new(),
-                    number => number.to_string(),
-                });
-                text_input("", typed)
-                    .on_input(Message::Type.with(at))
-                    .width(Fill.max(100))
-                    .size(SIZE)
-                    .padding(4)
-                    .style(typed_in(tone))
-                    .boxed()
-            }
+            "integer" | "number" => self.typed(value, at, tone),
             "string" => text_input(
                 "",
                 value
@@ -601,13 +481,147 @@ impl<'a> Form<'a, '_> {
                     .unwrap_or_default(),
             )
             .on_input(move |typed| put(typed.into()))
-            .size(SIZE)
+            .size(TEXT)
             .padding(4)
             .style(typed_in(tone))
             .boxed(),
             // a shape the form does not know
             _ => text(value.to_string()).boxed(),
         }
+    }
+
+    /// A list to pick one of `variants` from, over the form for what the picked one holds.
+    fn variant(
+        self,
+        variants: Vec<(&'a str, Option<&'a Value>)>,
+        value: &'a Value,
+        at: String,
+        tone: Tone,
+    ) -> Element<'a, Message> {
+        let defs = self.defs;
+        // a variant is its name, or its name around its payload
+        let selected = variants
+            .iter()
+            .copied()
+            .find(|(name, payload)| match payload {
+                Some(_) => value
+                    .get(name)
+                    .is_some(),
+                None => value == name,
+            });
+        let put = Message::Put.with(at.clone());
+        let pick = pick_list(selected, variants, |(name, _)| name.to_string())
+            .on_select(move |(name, payload)| {
+                put(match payload {
+                    Some(payload) => json!({ name: default(defs, payload) }),
+                    None => name.into(),
+                })
+            })
+            .placeholder("pick…")
+            .text_size(TEXT)
+            .padding(4)
+            .style(picked(tone));
+
+        match selected {
+            Some((name, Some(payload))) => column![
+                pick,
+                self.value(payload, &value[name], format!("{at}/{name}"))
+            ]
+            .spacing(5)
+            .boxed(),
+            _ => pick.boxed(),
+        }
+    }
+
+    /// The fields of an object, each on a line under its name.
+    fn fields(
+        self,
+        schema: &'a Value,
+        value: &'a Value,
+        at: &str,
+    ) -> Element<'a, Message> {
+        let fields = schema["properties"]
+            .as_object()
+            .into_iter()
+            .flatten();
+        // as wide as the widest of the names, and what is nested starts its own column
+        let wide = names(
+            fields
+                .clone()
+                .map(|(name, _)| name.as_str()),
+        )
+        .max(self.names);
+        let nested = Form { names: 0.0, ..self };
+        column(fields.map(|(name, field)| {
+            let described = field["description"].as_str();
+            let field = nested.value(field, &value[name], format!("{at}/{name}"));
+            labelled(name, wide, described, field)
+        }))
+        .spacing(5)
+        .boxed()
+    }
+
+    /// The elements of an array of any length, each to take away, over a button to add one.
+    fn list(
+        self,
+        items: &'a Value,
+        value: &'a Value,
+        at: &str,
+    ) -> Element<'a, Message> {
+        let elements = value
+            .as_array()
+            .map(Vec::as_slice)
+            .unwrap_or_default();
+        let end = format!("{at}/{}", elements.len());
+        let add = Message::Put(end, default(self.defs, items));
+        let lines = elements
+            .iter()
+            .enumerate()
+            .map(|(i, element)| {
+                let at = format!("{at}/{i}");
+                row![
+                    small("×", Message::Drop(at.clone())),
+                    self.value(items, element, at)
+                ]
+                .spacing(5)
+                .boxed()
+            });
+        column(lines)
+            .push(small("+", add).boxed())
+            .spacing(5)
+            .boxed()
+    }
+
+    /// A field for a number: as it is being typed there, or else as the number that it is.
+    fn typed(
+        self,
+        value: &'a Value,
+        at: String,
+        tone: Tone,
+    ) -> Element<'a, Message> {
+        let typing = self
+            .state
+            .typing
+            .as_ref()
+            .filter(|(pointer, _)| *pointer == at)
+            .map(|(_, typed)| typed.clone());
+        // text that writes no number is none, and shown as one that is missing
+        let tone = match &typing {
+            Some(typed) if !typed.is_empty() && number(typed).is_none() => Tone::Missing,
+            _ => tone,
+        };
+        let typed = typing.unwrap_or_else(|| match value {
+            // none yet is an empty field, to type one in
+            Value::Null => String::new(),
+            number => number.to_string(),
+        });
+        text_input("", typed)
+            .on_input(Message::Type.with(at))
+            .width(Fill.max(100))
+            .size(TEXT)
+            .padding(4)
+            .style(typed_in(tone))
+            .boxed()
     }
 }
 

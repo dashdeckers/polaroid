@@ -13,6 +13,7 @@ use std::sync::Arc;
 use iced::keyboard::key::Named;
 use iced::keyboard::{self, Key};
 use iced::widget::{
+    Button,
     Text,
     button,
     column,
@@ -74,6 +75,11 @@ that name. The Expressions button hides the drawer, and its edge is dragged to r
 
 Save is lit when there is something to save. Load asks for another pipeline and New for the name \
 of an empty one; either takes the place of this pipeline, and drops what was not saved.";
+
+/// The sizes of text: of a name to type, of an argument, and of what is said beside them.
+const TITLE: f32 = 14.0;
+const TEXT: f32 = 13.0;
+const NOTE: f32 = 12.0;
 
 /// A node's columns and their types, or its error, as the `check` command prints them.
 type Columns = Result<Vec<(String, DataType)>, String>;
@@ -850,6 +856,29 @@ impl Editor {
         }
         columns
     }
+}
+
+/// The button that lays something open, or closes it if it is open.
+fn toggle<'a, Message: Clone + 'a>(
+    is_open: bool,
+    message: Message,
+) -> Button<'a, Message, &'static str> {
+    let sign = match is_open {
+        true => "−",
+        false => "+",
+    };
+    button(sign)
+        .style(button::text)
+        .padding([0, 6])
+        .on_press(message)
+}
+
+/// The button that deletes something.
+fn cross<'a, Message: Clone + 'a>(message: Message) -> Button<'a, Message, &'static str> {
+    button("×")
+        .style(button::danger)
+        .padding([0, 6])
+        .on_press(message)
 }
 
 /// An error, which can be selected to copy it.
