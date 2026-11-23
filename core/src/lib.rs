@@ -12,4 +12,4 @@ pub mod schema;
 pub use block::Block;
 pub use engine::{Node, Pipeline, is_sink, marked, marker};
 pub use polars;
-pub use registry::Registry;
+pub use registry::{Catalog, Described, Registry};

@@ -244,8 +244,8 @@ fn a_block_is_in_the_category_named_before_it() {
         "Reshape",
         "Mine",
     ];
-    assert_eq!(catalog["categories"], serde_json::json!(categories));
-    let category = |block: &str| catalog["blocks"][block]["category"].clone();
+    assert_eq!(catalog.categories, categories);
+    let category = |block: &str| catalog.blocks[block].category;
     assert_eq!(category("scan_parquet"), "Read and write");
     assert_eq!(category("sort"), "Keep rows");
     assert_eq!(category("first"), "Reshape");

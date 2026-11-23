@@ -3,7 +3,8 @@ use std::collections::BTreeMap;
 use polars::prelude::*;
 use schemars::generate::SchemaSettings;
 use schemars::{Schema, SchemaGenerator};
-use serde_json::{Value, json};
+use serde::Serialize;
+use serde_json::Value;
 
 use crate::engine::Pipeline;
 use crate::{Block, frames, io};
@@ -136,25 +137,28 @@ impl Registry {
             .get(name)
     }
 
-    /// Returns a JSON description of the registered Blocks and the Pipeline.
-    pub fn catalog(&self) -> Value {
+    /// Describes the registered Blocks and the Pipeline.
+    pub fn catalog(&self) -> Catalog {
         let mut generator = SchemaSettings::draft2020_12().into_generator();
 
-        let blocks: serde_json::Map<String, Value> = self
+        let blocks = self
             .blocks
             .iter()
             .map(|(name, entry)| {
-                let args = (entry.schema)(&mut generator);
-                (
-                    name.to_string(),
-                    json!({"inputs": entry.inputs, "category": entry.category, "args": args}),
-                )
+                let described = Described {
+                    inputs: entry.inputs,
+                    category: entry.category,
+                    args: (entry.schema)(&mut generator).to_value(),
+                };
+                (*name, described)
             })
             .collect();
 
-        let pipeline = generator.subschema_for::<Pipeline>();
+        let pipeline = generator
+            .subschema_for::<Pipeline>()
+            .to_value();
         // the categories that hold a Block, in the order they were named
-        let categories: Vec<&str> = self
+        let categories = self
             .categories
             .iter()
             .copied()
@@ -164,12 +168,40 @@ impl Registry {
                     .any(|entry| entry.category == *category)
             })
             .collect();
-        json!({
-            "polars": polars::VERSION,
-            "categories": categories,
-            "blocks": blocks,
-            "pipeline": pipeline,
-            "$defs": generator.definitions(),
-        })
+        Catalog {
+            polars: polars::VERSION,
+            categories,
+            blocks,
+            pipeline,
+            defs: Value::Object(
+                generator
+                    .definitions()
+                    .clone(),
+            ),
+        }
     }
+}
+
+/// What a Registry holds and what a Pipeline is, as the `catalog` command prints it in JSON.
+#[derive(Serialize)]
+pub struct Catalog {
+    pub polars: &'static str,
+    /// The categories that hold a Block, in the order they were named.
+    pub categories: Vec<&'static str>,
+    pub blocks: BTreeMap<&'static str, Described>,
+    /// The JSON Schema of a Pipeline.
+    pub pipeline: Value,
+    /// The definitions that the schemas refer to by `$ref`.
+    #[serde(rename = "$defs")]
+    pub defs: Value,
+}
+
+/// A Block as a [`Catalog`] describes it.
+#[derive(Serialize)]
+pub struct Described {
+    /// The names of the frames it reads, in order.
+    pub inputs: &'static [&'static str],
+    pub category: &'static str,
+    /// The JSON Schema of its args.
+    pub args: Value,
 }

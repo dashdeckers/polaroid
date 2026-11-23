@@ -131,7 +131,10 @@ fn command(
             );
         }
 
-        ["catalog"] => println!("{:#}", registry.catalog()),
+        ["catalog"] => println!(
+            "{}",
+            serde_json::to_string_pretty(&registry.catalog()).expect("a catalog serializes")
+        ),
 
         _ => polars_bail!(ComputeError: "{USAGE}"),
     }
