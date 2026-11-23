@@ -19,11 +19,8 @@ use iced::widget::{
     component,
     container,
     markdown,
-    mouse_area,
-    pin,
     row,
     rule,
-    scrollable,
     space,
     stack,
     text,
@@ -43,7 +40,7 @@ use iced::{
     task,
     theme,
 };
-use polaroid_iced::{split, surface};
+use polaroid_iced::{menu, split, surface};
 use serde_json::Value;
 
 use self::card::{Edit, Status};
@@ -667,11 +664,6 @@ impl Editor {
     }
 
     fn view(&self) -> impl Widget<Message> {
-        let blocks: Vec<&String> = self.catalog["blocks"]
-            .as_object()
-            .into_iter()
-            .flat_map(|blocks| blocks.keys())
-            .collect();
         let save = self
             .is_dirty
             .then_some(Message::Save);
@@ -781,22 +773,25 @@ impl Editor {
         let menu = self
             .menu
             .map(|(at, point)| {
-                let blocks = blocks
-                    .iter()
-                    .map(|block| {
-                        button(text(block.as_str()))
-                            .style(button::text)
-                            .width(Fill)
-                            .on_press(Message::Add((*block).clone(), point))
-                    });
-                let list = container(scrollable(column(blocks)))
-                    .width(200)
-                    .height(320)
-                    .style(container::bordered_box);
-                // a pin fills the graph, so that a press beside the menu closes it
-                mouse_area(pin(list).position(at))
-                    .on_press(Message::CloseMenu)
-                    .on_right_press(Message::CloseMenu)
+                // the blocks under their categories, each to add a node of it where was pressed
+                let blocks = &self.catalog["blocks"];
+                let groups = self.catalog["categories"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(Value::as_str)
+                    .map(|category| {
+                        let blocks = blocks
+                            .as_object()
+                            .into_iter()
+                            .flatten()
+                            .filter(|(_, block)| block["category"] == category)
+                            .map(|(block, _)| (block.clone(), Message::Add(block.clone(), point)))
+                            .collect();
+                        (category.to_owned(), blocks)
+                    })
+                    .collect();
+                menu(at, groups).on_close(Message::CloseMenu)
             });
 
         // every column that a Check found, once each, for the expressions to name
