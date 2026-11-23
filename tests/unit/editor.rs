@@ -25,10 +25,8 @@ fn chain(len: usize) -> Editor {
         })
         .collect();
     let mut pipeline = Pipeline {
-        polars: polars::VERSION.to_owned(),
         nodes,
-        outputs: vec![],
-        expressions: Default::default(),
+        ..Pipeline::default()
     };
     layout::layout(&mut pipeline);
     Editor::new(registry, "p.json".to_owned(), pipeline)
@@ -485,7 +483,7 @@ fn an_expression_is_renamed_edited_and_deleted_for_the_nodes_that_use_it() {
     drawer(&mut editor, drawer::Message::Name(0, "few".to_owned()));
     drawer(&mut editor, drawer::Message::Rename(0));
     assert!(editor.is_dirty);
-    let args = Edit::Args(serde_json::json!({ "n": drawer::marker("few") }));
+    let args = Edit::Args(serde_json::json!({ "n": crate::marker("few") }));
     let _ = editor.update(Message::Edit("n1".to_owned(), args));
 
     // an edit to it forgets the nodes that use it, and no others
@@ -514,7 +512,7 @@ fn an_expression_is_renamed_edited_and_deleted_for_the_nodes_that_use_it() {
         .pipeline
         .nodes[1]
         .args;
-    assert_eq!(args["n"], drawer::marker("some"));
+    assert_eq!(args["n"], crate::marker("some"));
     assert_eq!(
         status(&editor),
         [
@@ -551,7 +549,7 @@ fn a_card_picks_an_expression_by_its_name() {
         .expressions
         .insert("large".to_owned(), large);
     let _ = editor.update(Message::Add("filter".to_owned(), Point::new(300.0, 20.0)));
-    let args = Edit::Args(serde_json::json!({ "predicates": [drawer::marker("large")] }));
+    let args = Edit::Args(serde_json::json!({ "predicates": [crate::marker("large")] }));
     let _ = editor.update(Message::Edit("filter_1".to_owned(), args));
     let _ = editor.update(Message::Edit("filter_1".to_owned(), Edit::Toggle));
 

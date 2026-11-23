@@ -2,7 +2,7 @@
 
 use iced::widget::{button, column, container, row, scrollable, space, text, text_input};
 use iced::{Center, Fill, Widget};
-use serde_json::{Map, Value, json};
+use serde_json::{Map, Value};
 
 use super::form;
 use crate::{Pipeline, methods};
@@ -108,22 +108,11 @@ impl Drawer {
                 let (Some(old), Some(new)) = (name_of(expressions, index), typed) else {
                     return Change::Nothing;
                 };
-                // an empty or taken name would have its users take another expression
-                if new.is_empty() || expressions.contains_key(&new) {
-                    return Change::Nothing;
+                // it keeps its place, as the sections are in the order of the expressions
+                match pipeline.rename_expression(&old, &new) {
+                    true => Change::Pipeline,
+                    false => Change::Nothing,
                 }
-                // in its place, as the sections are in the order of the expressions
-                *expressions = std::mem::take(expressions)
-                    .into_iter()
-                    .map(|(name, expression)| match name == old {
-                        true => (new.clone(), expression),
-                        false => (name, expression),
-                    })
-                    .collect();
-                for node in &mut pipeline.nodes {
-                    rename(&mut node.args, &old, &new);
-                }
-                Change::Pipeline
             }
             Message::Form(index, message) => {
                 let (Some(section), Some((name, expression))) = (
@@ -232,54 +221,5 @@ impl Drawer {
         .padding(10)
         .width(Fill)
         .height(Fill)
-    }
-}
-
-/// The marker that stands for the expression of a name in the args of a node.
-pub fn marker(name: &str) -> Value {
-    json!({ "$expr": name })
-}
-
-/// The name of the expression that `value` stands for, if it is a marker.
-pub fn marked(value: &Value) -> Option<&str> {
-    value
-        .as_object()
-        .filter(|marker| marker.len() == 1)?
-        .get("$expr")?
-        .as_str()
-}
-
-/// Whether `args` use the expression of a name.
-pub fn uses(
-    args: &Value,
-    name: &str,
-) -> bool {
-    match args {
-        _ if marked(args) == Some(name) => true,
-        Value::Array(items) => items
-            .iter()
-            .any(|item| uses(item, name)),
-        Value::Object(fields) => fields
-            .values()
-            .any(|field| uses(field, name)),
-        _ => false,
-    }
-}
-
-/// Has `args` use the expression called `new` wherever they used the one called `old`.
-fn rename(
-    args: &mut Value,
-    old: &str,
-    new: &str,
-) {
-    match args {
-        _ if marked(args) == Some(old) => *args = marker(new),
-        Value::Array(items) => items
-            .iter_mut()
-            .for_each(|item| rename(item, old, new)),
-        Value::Object(fields) => fields
-            .values_mut()
-            .for_each(|field| rename(field, old, new)),
-        _ => {}
     }
 }

@@ -4,9 +4,9 @@ use std::iter::successors;
 
 use iced::widget::{PickList, column, container, mouse_area, pick_list, row, text_input};
 use iced::{Center, Element, Fill, Font, Function, Widget, padding};
-use serde_json::{Value, json};
+use serde_json::Value;
 
-use super::{Form, Message, Tone, number, small};
+use super::{Form, Message, Tone, small};
 use crate::methods::{self, Method};
 use crate::schema;
 
@@ -199,8 +199,8 @@ impl<'a> Form<'a, '_> {
                 )
             }
             "/Literal" => Some(
-                text_input("value", typed(node)?)
-                    .on_input(move |typed| put(literal(&typed)))
+                text_input("value", methods::typed(node)?)
+                    .on_input(move |typed| put(methods::literal_of(&typed)))
                     .width(Fill.max(150))
                     .boxed(),
             ),
@@ -320,36 +320,3 @@ fn pick<'a, T: Clone + PartialEq + 'a>(
 fn code<'a>(text: impl Into<String>) -> iced::widget::Text<'a> {
     iced::widget::text(text.into()).font(Font::MONOSPACE)
 }
-
-/// A plain literal node as it is typed; a string in quotes only if it would read as something else.
-fn typed(node: &Value) -> Option<String> {
-    let value = &node["Literal"];
-    let string = value["Dyn"]["Str"]
-        .as_str()
-        .or(value["Scalar"]["String"].as_str());
-    match string {
-        Some(string) if literal(string)["Scalar"]["String"] == *string => Some(string.to_owned()),
-        Some(string) => Some(format!("\"{string}\"")),
-        None => methods::literal(node),
-    }
-}
-
-/// The literal that `typed` stands for: a number, `True`, `False`, `None`, or else a string.
-fn literal(typed: &str) -> Value {
-    let quoted = typed
-        .strip_prefix('"')
-        .and_then(|rest| rest.strip_suffix('"'));
-
-    match (number(typed), typed) {
-        (Some(number), _) if number.is_f64() => json!({ "Dyn": { "Float": number } }),
-        (Some(number), _) => json!({ "Dyn": { "Int": number } }),
-        (None, "True") => json!({ "Scalar": { "Boolean": true } }),
-        (None, "False") => json!({ "Scalar": { "Boolean": false } }),
-        (None, "None") => json!({ "Scalar": { "Null": "Null" } }),
-        (None, _) => json!({ "Scalar": { "String": quoted.unwrap_or(typed) } }),
-    }
-}
-
-#[cfg(test)]
-#[path = "../../../tests/unit/chain.rs"]
-mod tests;

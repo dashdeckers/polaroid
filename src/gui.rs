@@ -7,7 +7,7 @@ mod form;
 mod layout;
 mod table;
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use iced::keyboard::key::Named;
@@ -46,7 +46,7 @@ use serde_json::Value;
 use self::card::{Edit, Status};
 use self::drawer::Drawer;
 use crate::polars::prelude::{DataFrame, DataType, PolarsResult, polars_err};
-use crate::{Node, Pipeline, Registry, is_sink, polars, schema};
+use crate::{Node, Pipeline, Registry, is_sink, schema};
 
 const HELP: &str = "\
 Drag a closed card to move it, or any card by the dots in its corner. Drag the background to pan, \
@@ -78,16 +78,6 @@ of an empty one; either takes the place of this pipeline, and drops what was not
 /// A node's columns and their types, or its error, as the `check` command prints them.
 type Columns = Result<Vec<(String, DataType)>, String>;
 
-/// A pipeline of no nodes.
-fn empty() -> Pipeline {
-    Pipeline {
-        polars: polars::VERSION.to_owned(),
-        nodes: vec![],
-        outputs: vec![],
-        expressions: Default::default(),
-    }
-}
-
 /// A dialog that asks for the file of a pipeline.
 fn dialog() -> rfd::AsyncFileDialog {
     rfd::AsyncFileDialog::new().add_filter("pipeline", &["json"])
@@ -106,7 +96,7 @@ pub fn open(
 ) -> PolarsResult<()> {
     let mut pipeline = match std::fs::exists(path)? {
         true => Pipeline::load(path)?,
-        false => empty(),
+        false => Pipeline::default(),
     };
     layout::layout(&mut pipeline);
     // the window's own chatter would drown the log
@@ -330,7 +320,7 @@ impl Editor {
                 Err(e) => self.problem = Some(e.to_string()),
             },
             // its file is made by the first Save
-            Message::Named(Some(path)) => self.replace(path, empty(), true),
+            Message::Named(Some(path)) => self.replace(path, Pipeline::default(), true),
             Message::Loaded(None) | Message::Named(None) => {}
             Message::Save => {
                 let pipeline =
@@ -416,7 +406,17 @@ impl Editor {
             }
             Message::Ran(targets, Ok(frames)) => {
                 self.job = None;
-                for id in self.reached(targets) {
+                // these and all they read are what the Run computed
+                let targets = targets
+                    .iter()
+                    .map(String::as_str);
+                let computed: Vec<String> = self
+                    .pipeline
+                    .upstream(targets)
+                    .into_iter()
+                    .map(str::to_owned)
+                    .collect();
+                for id in computed {
                     self.known_mut(id)
                         .is_run = true;
                 }
@@ -448,25 +448,11 @@ impl Editor {
                 let change = self
                     .drawer
                     .update(message, &mut self.pipeline);
-                let name = match change {
+                match change {
                     drawer::Change::Nothing => return Task::none(),
-                    drawer::Change::Pipeline => None,
-                    drawer::Change::Expression(name) => Some(name),
-                };
-                // what is known of a node holds for the expressions it was computed with
-                let users: Vec<usize> = self
-                    .pipeline
-                    .nodes
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, node)| {
-                        name.as_deref()
-                            .is_some_and(|name| drawer::uses(&node.args, name))
-                    })
-                    .map(|(index, _)| index)
-                    .collect();
-                for index in users {
-                    self.forget(index);
+                    drawer::Change::Pipeline => {}
+                    // what is known of a node holds for the expressions it was computed with
+                    drawer::Change::Expression(name) => self.forget(|node| node.uses(&name)),
                 }
                 self.is_dirty = true;
                 self.check_wiring();
@@ -561,51 +547,20 @@ impl Editor {
         }
     }
 
-    /// These nodes and all they read, which is what a Run of them computes.
-    fn reached(
-        &self,
-        targets: impl IntoIterator<Item = String>,
-    ) -> HashSet<String> {
-        let mut reached: HashSet<String> = targets
-            .into_iter()
-            .collect();
-        // as many passes as there are nodes reach every one that is read
-        for _ in &self.pipeline.nodes {
-            for node in &self.pipeline.nodes {
-                if reached.contains(&node.id) {
-                    reached.extend(
-                        node.inputs
-                            .iter()
-                            .cloned(),
-                    );
-                }
-            }
-        }
-        reached
-    }
-
-    /// Forgets what is known of node `index` and of every node that reads it, and stops a job.
+    /// Forgets what is known of the nodes that were edited and of all that read them; stops a job.
     fn forget(
         &mut self,
-        index: usize,
+        is_edited: impl Fn(&Node) -> bool,
     ) {
-        let nodes = &self.pipeline.nodes;
-        let mut stale = HashSet::from([nodes[index]
-            .id
-            .as_str()]);
-        // as many passes as there are nodes reach every reader
-        for _ in nodes {
-            for node in nodes {
-                let is_reader = node
-                    .inputs
-                    .iter()
-                    .any(|input| stale.contains(input.as_str()));
-                if is_reader {
-                    stale.insert(&node.id);
-                }
-            }
-        }
-
+        let edited = self
+            .pipeline
+            .nodes
+            .iter()
+            .filter(|node| is_edited(node))
+            .map(|node| node.id.as_str());
+        let stale = self
+            .pipeline
+            .downstream(edited);
         self.known
             .retain(|id, _| !stale.contains(id.as_str()));
         self.job = None;
@@ -679,8 +634,10 @@ impl Editor {
             .outputs
             .iter()
             .chain(&self.writes)
-            .cloned();
-        let reached = self.reached(targets);
+            .map(String::as_str);
+        let reached = self
+            .pipeline
+            .upstream(targets);
         let is_checked = self
             .pipeline
             .nodes
@@ -691,7 +648,7 @@ impl Editor {
                 let is_aside = self
                     .wiring
                     .contains_key(&node.id)
-                    && !reached.contains(&node.id);
+                    && !reached.contains(node.id.as_str());
                 is_sound || is_aside
             });
         let over = match (&self.job, is_checked) {

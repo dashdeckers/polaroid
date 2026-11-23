@@ -19,11 +19,11 @@ use iced::widget::{
     tooltip,
 };
 use iced::{Center, Element, Fill, Font, Function, Size, Theme, Widget};
-use serde_json::{Map, Number, Value, json};
+use serde_json::{Map, Value, json};
 
-use super::drawer::{marked, marker};
 use crate::methods::{self, Method};
-use crate::schema::{blank, default, json_type, optional, resolve, variants};
+use crate::schema::{blank, default, json_type, number, optional, resolve, variants};
+use crate::{marked, marker};
 
 /// What a form shows that its value does not hold.
 #[derive(Debug, Default)]
@@ -608,14 +608,6 @@ fn put(
         }
         _ => {}
     }
-}
-
-/// The number that `typed` writes exactly; `1.` or `-` is none yet.
-fn number(typed: &str) -> Option<Number> {
-    typed
-        .parse::<Number>()
-        .ok()
-        .filter(|number| number.to_string() == typed)
 }
 
 fn small(

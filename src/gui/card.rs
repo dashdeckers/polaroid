@@ -97,34 +97,19 @@ impl Editor {
         };
         match edit {
             Edit::Rename(new) => {
-                // an empty or taken id would have its readers taken for another node's
-                let is_taken = nodes
-                    .iter()
-                    .any(|node| node.id == new);
-                if new.is_empty() || is_taken {
+                let is_renamed = self
+                    .pipeline
+                    .rename(id, &new);
+                if !is_renamed {
                     return;
                 }
-                self.forget(index);
-                let nodes = &mut self.pipeline.nodes;
-                nodes[index]
-                    .id
-                    .clone_from(&new);
-                let readers = nodes
-                    .iter_mut()
-                    .flat_map(|node| &mut node.inputs)
-                    .chain(
-                        &mut self
-                            .pipeline
-                            .outputs,
-                    );
-                for reader in readers {
-                    if *reader == id {
-                        reader.clone_from(&new);
-                    }
-                }
+                // what was known of it was known by its old id
+                self.known
+                    .remove(id);
+                self.forget(|node| node.id == new);
             }
             Edit::Wire(slot, source) => {
-                self.forget(index);
+                self.forget(|node| node.id == id);
                 let inputs = &mut self.pipeline.nodes[index].inputs;
                 let len = inputs
                     .len()
@@ -151,26 +136,14 @@ impl Editor {
                 }
             }
             Edit::Args(args) => {
-                self.forget(index);
+                self.forget(|node| node.id == id);
                 self.pipeline.nodes[index].args = args;
             }
             Edit::Toggle => layout::toggle(&mut nodes[index]),
             Edit::Delete => {
-                self.forget(index);
-                let nodes = &mut self.pipeline.nodes;
-                nodes.remove(index);
+                self.forget(|node| node.id == id);
                 self.pipeline
-                    .outputs
-                    .retain(|output| output != id);
-                // its readers are unwired, lest a later node of its id be wired to them
-                let inputs = nodes
-                    .iter_mut()
-                    .flat_map(|reader| &mut reader.inputs);
-                for input in inputs {
-                    if input == id {
-                        input.clear();
-                    }
-                }
+                    .remove(id);
             }
         }
         self.is_dirty = true;
