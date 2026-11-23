@@ -19,18 +19,41 @@ keywords = [
 [dependencies]
 # workspace crates
 polaroid_core = { path = "core" }
+polaroid_iced = { optional = true, path = "iced" }
 # telemetry
 fern = "0.7.1"
 log = "0.4"
 # serialization
 serde_json = "1"
+# gui (iced)
+iced = { optional = true, workspace = true, features = [
+    "advanced",
+    "canvas",
+    "markdown",
+    "tokio",
+] }
+tokio = { optional = true, version = "1", features = [
+    "io-util",
+    "process",
+] }
+rfd = { optional = true, version = "0.18.0" }
+
+[features]
+gui = [
+    "dep:iced",
+    "dep:polaroid_iced",
+    "dep:rfd",
+    "dep:tokio",
+]
 
 [dev-dependencies]
+iced_test = { workspace = true }
 schemars = "1.2"
 
 [workspace]
 members = [
     "core",
+    "iced",
 ]
 
 [workspace.dependencies]

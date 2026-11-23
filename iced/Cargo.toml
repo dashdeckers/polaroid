@@ -1,0 +1,13 @@
+[package]
+name = "polaroid_iced"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+iced = { workspace = true, features = [
+    "advanced",
+    "canvas",
+] }
+
+[dev-dependencies]
+iced_test = { workspace = true }
