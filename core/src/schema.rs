@@ -1,6 +1,14 @@
 //! Reading a JSON Schema: its `$ref`s, types, variants and defaults.
 
-use serde_json::Value;
+use serde_json::{Number, Value};
+
+/// The number that `typed` writes exactly; `1.` or `-` is none yet.
+pub fn number(typed: &str) -> Option<Number> {
+    typed
+        .parse::<Number>()
+        .ok()
+        .filter(|number| number.to_string() == typed)
+}
 
 /// A value to start from: the default, else null if nullable, else [`blank`].
 pub fn default(

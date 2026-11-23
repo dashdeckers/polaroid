@@ -10,7 +10,7 @@ use std::sync::LazyLock;
 use serde_json::Value;
 
 use self::namespaces::rows;
-pub use self::render::{arguments, literal, text};
+pub use self::render::{arguments, literal, literal_of, text, typed};
 
 /// How one kind of expression node reads as a method call.
 #[derive(Debug, Clone, PartialEq)]

@@ -1,8 +1,9 @@
 //! Expressions written out as text: a chain of calls, each in short.
 
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use super::{Arg, Method, read};
+use crate::schema::number;
 
 /// `node` as a chain of calls: `pl.col("a").str.contains("x", …)`.
 pub fn text(node: &Value) -> String {
@@ -125,6 +126,37 @@ pub fn literal(node: &Value) -> Option<String> {
     .find(|found| !found.is_null())
     .map(plain)
     .or_else(|| is_null.then(|| "None".to_owned()))
+}
+
+/// A plain literal as it is typed: a string in quotes only if it would read as something else.
+pub fn typed(node: &Value) -> Option<String> {
+    let value = &node["Literal"];
+    let string = value["Dyn"]["Str"]
+        .as_str()
+        .or(value["Scalar"]["String"].as_str());
+    match string {
+        Some(string) if literal_of(string)["Scalar"]["String"] == *string => {
+            Some(string.to_owned())
+        }
+        Some(string) => Some(format!("\"{string}\"")),
+        None => literal(node),
+    }
+}
+
+/// The literal that `typed` stands for: a number, `True`, `False`, `None`, or else a string.
+pub fn literal_of(typed: &str) -> Value {
+    let quoted = typed
+        .strip_prefix('"')
+        .and_then(|rest| rest.strip_suffix('"'));
+
+    match (number(typed), typed) {
+        (Some(number), _) if number.is_f64() => json!({ "Dyn": { "Float": number } }),
+        (Some(number), _) => json!({ "Dyn": { "Int": number } }),
+        (None, "True") => json!({ "Scalar": { "Boolean": true } }),
+        (None, "False") => json!({ "Scalar": { "Boolean": false } }),
+        (None, "None") => json!({ "Scalar": { "Null": "Null" } }),
+        (None, _) => json!({ "Scalar": { "String": quoted.unwrap_or(typed) } }),
+    }
 }
 
 /// A value that is no expression, as Python writes it; a named data type is `pl.Name`.

@@ -45,6 +45,28 @@ fn no_args() -> Value {
     Value::Object(Default::default())
 }
 
+impl Default for Pipeline {
+    /// No Nodes, for the Polars of this build.
+    fn default() -> Self {
+        Self {
+            polars: polars::VERSION.to_owned(),
+            nodes: Vec::new(),
+            outputs: Vec::new(),
+            expressions: Map::new(),
+        }
+    }
+}
+
+impl Node {
+    /// Whether its args use the expression of a name.
+    pub fn uses(
+        &self,
+        name: &str,
+    ) -> bool {
+        uses(&self.args, name)
+    }
+}
+
 impl Pipeline {
     /// Reads a Pipeline from the file at `path`, or from stdin if that is `-`.
     pub fn load(path: &str) -> PolarsResult<Self> {
@@ -167,22 +189,15 @@ impl Pipeline {
         let frames = self.frames_from(registry, known)?;
 
         // a node that reads no source is under construction, and is left out
-        let mut attached = HashSet::new();
-        for _ in &self.nodes {
-            for node in &self.nodes {
-                let reads_source = node
-                    .inputs
-                    .iter()
-                    .any(|input| attached.contains(input.as_str()));
-                if node
-                    .inputs
+        let sources = self
+            .nodes
+            .iter()
+            .filter(|node| {
+                node.inputs
                     .is_empty()
-                    || reads_source
-                {
-                    attached.insert(node.id.as_str());
-                }
-            }
-        }
+            })
+            .map(|node| node.id.as_str());
+        let attached = self.downstream(sources);
         // the others may be writes, so none of them may fail, nor may an output
         let failed: Vec<String> = self
             .nodes
@@ -249,6 +264,179 @@ impl Pipeline {
         log::info!("collected in {:.2?}", started.elapsed());
         Ok(frames)
     }
+
+    /// These Nodes, and every Node that reads one of them, however far down.
+    pub fn downstream<'a>(
+        &'a self,
+        ids: impl IntoIterator<Item = &'a str>,
+    ) -> HashSet<&'a str> {
+        let mut found: HashSet<&str> = ids
+            .into_iter()
+            .collect();
+        // as many passes as there are Nodes reach every reader
+        for _ in &self.nodes {
+            for node in &self.nodes {
+                let is_reader = node
+                    .inputs
+                    .iter()
+                    .any(|input| found.contains(input.as_str()));
+                if is_reader {
+                    found.insert(&node.id);
+                }
+            }
+        }
+        found
+    }
+
+    /// These Nodes, and every Node that one of them reads, however far up.
+    pub fn upstream<'a>(
+        &'a self,
+        ids: impl IntoIterator<Item = &'a str>,
+    ) -> HashSet<&'a str> {
+        let mut found: HashSet<&str> = ids
+            .into_iter()
+            .collect();
+        // as many passes as there are Nodes reach every one that is read
+        for _ in &self.nodes {
+            for node in &self.nodes {
+                if found.contains(node.id.as_str()) {
+                    let inputs = node
+                        .inputs
+                        .iter()
+                        .map(String::as_str);
+                    found.extend(inputs);
+                }
+            }
+        }
+        found
+    }
+
+    /// Calls the Node `id` `new`, in the inputs and outputs that name it too; false if it cannot.
+    pub fn rename(
+        &mut self,
+        id: &str,
+        new: &str,
+    ) -> bool {
+        let has = |id: &str| {
+            self.nodes
+                .iter()
+                .any(|node| node.id == id)
+        };
+        // an empty or taken id would have its readers taken for another Node's
+        if !has(id) || new.is_empty() || has(new) {
+            return false;
+        }
+        let names = self
+            .nodes
+            .iter_mut()
+            .flat_map(|node| std::iter::once(&mut node.id).chain(&mut node.inputs))
+            .chain(&mut self.outputs);
+        for name in names {
+            if name == id {
+                new.clone_into(name);
+            }
+        }
+        true
+    }
+
+    /// Takes the Node `id` away: it is no output, and its readers are left unwired.
+    pub fn remove(
+        &mut self,
+        id: &str,
+    ) {
+        self.nodes
+            .retain(|node| node.id != id);
+        self.outputs
+            .retain(|output| output != id);
+        // unwired, lest a later Node of its id be wired to them
+        let inputs = self
+            .nodes
+            .iter_mut()
+            .flat_map(|node| &mut node.inputs);
+        for input in inputs {
+            if input == id {
+                input.clear();
+            }
+        }
+    }
+
+    /// Calls the expression `old` `new`, in its place and where it is used; false if it cannot.
+    pub fn rename_expression(
+        &mut self,
+        old: &str,
+        new: &str,
+    ) -> bool {
+        let expressions = &mut self.expressions;
+        // an empty or taken name would have its users take another expression
+        if !expressions.contains_key(old) || new.is_empty() || expressions.contains_key(new) {
+            return false;
+        }
+        *expressions = std::mem::take(expressions)
+            .into_iter()
+            .map(|(name, expression)| match name == old {
+                true => (new.to_owned(), expression),
+                false => (name, expression),
+            })
+            .collect();
+        for node in &mut self.nodes {
+            swap(&mut node.args, &mut |name| {
+                (name == old).then(|| marker(new))
+            });
+        }
+        true
+    }
+}
+
+/// What stands for the expression of a name in the args of a Node.
+pub fn marker(name: &str) -> Value {
+    serde_json::json!({ "$expr": name })
+}
+
+/// The name of the expression that `value` stands for, if it is a marker.
+pub fn marked(value: &Value) -> Option<&str> {
+    value
+        .as_object()
+        .filter(|marker| marker.len() == 1)?
+        .get("$expr")?
+        .as_str()
+}
+
+/// Whether `args` hold the marker of a name.
+fn uses(
+    args: &Value,
+    name: &str,
+) -> bool {
+    match args {
+        _ if marked(args) == Some(name) => true,
+        Value::Array(items) => items
+            .iter()
+            .any(|item| uses(item, name)),
+        Value::Object(fields) => fields
+            .values()
+            .any(|field| uses(field, name)),
+        _ => false,
+    }
+}
+
+/// Puts what `with` makes of its name in the place of each marker in `args`, if it makes anything.
+fn swap(
+    args: &mut Value,
+    with: &mut impl FnMut(&str) -> Option<Value>,
+) {
+    if let Some(name) = marked(args) {
+        if let Some(new) = with(name) {
+            *args = new;
+        }
+        return;
+    }
+    let parts: Box<dyn Iterator<Item = &mut Value>> = match args {
+        Value::Array(items) => Box::new(items.iter_mut()),
+        Value::Object(fields) => Box::new(fields.values_mut()),
+        _ => Box::new(std::iter::empty()),
+    };
+    for part in parts {
+        swap(part, with);
+    }
 }
 
 /// The plan of one Node, from its Block, args and input plans.
@@ -282,33 +470,25 @@ fn build(
     guard(|| entry.build(args, inputs))
 }
 
-/// `args` with each `{"$expr": name}` in them replaced by the expression of that name.
+/// `args` with each marker in them replaced by the expression of its name.
 fn named(
     mut args: Value,
     expressions: &Map<String, Value>,
 ) -> PolarsResult<Value> {
-    let name = match &args {
-        Value::Object(marker) if marker.len() == 1 => marker
-            .get("$expr")
-            .and_then(Value::as_str),
-        _ => None,
-    };
-    if let Some(name) = name {
-        return expressions
+    let mut unnamed = None;
+    swap(&mut args, &mut |name| {
+        let expression = expressions
             .get(name)
-            .cloned()
-            .ok_or_else(|| polars_err!(ComputeError: "no expression is called '{name}'"));
+            .cloned();
+        if expression.is_none() {
+            unnamed.get_or_insert_with(|| name.to_owned());
+        }
+        expression
+    });
+    match unnamed {
+        Some(name) => polars_bail!(ComputeError: "no expression is called '{name}'"),
+        None => Ok(args),
     }
-
-    let parts: Box<dyn Iterator<Item = &mut Value>> = match &mut args {
-        Value::Array(items) => Box::new(items.iter_mut()),
-        Value::Object(fields) => Box::new(fields.values_mut()),
-        _ => Box::new(std::iter::empty()),
-    };
-    for part in parts {
-        *part = named(part.take(), expressions)?;
-    }
-    Ok(args)
 }
 
 /// Whether a Node's plan writes its frame, as to a file.

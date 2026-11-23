@@ -252,3 +252,153 @@ fn a_block_is_in_the_category_named_before_it() {
     assert_eq!(category("second"), "Mine");
     assert_eq!(category("third"), "Reshape");
 }
+
+/// A scan `a` read by `b` and `c`, `d` that reads `b`, and `e` that reads nothing yet.
+fn graph() -> Pipeline {
+    let node = |id: &str, inputs: &[&str]| {
+        let args = serde_json::json!({ "n": 1 });
+        serde_json::json!({ "id": id, "block": "limit", "inputs": inputs, "args": args })
+    };
+    let nodes = [
+        node("a", &[]),
+        node("b", &["a"]),
+        node("c", &["a"]),
+        node("d", &["b"]),
+        node("e", &[""]),
+    ];
+    let pipeline = serde_json::json!({
+        "polars": polars::VERSION,
+        "nodes": nodes,
+        "outputs": ["d", "c"],
+    });
+    serde_json::from_value(pipeline).unwrap()
+}
+
+/// What each Node reads, in the order of the Nodes.
+fn wiring(pipeline: &Pipeline) -> Vec<(&str, Vec<&str>)> {
+    pipeline
+        .nodes
+        .iter()
+        .map(|node| {
+            let inputs = node
+                .inputs
+                .iter()
+                .map(String::as_str)
+                .collect();
+            (node.id.as_str(), inputs)
+        })
+        .collect()
+}
+
+#[test]
+fn a_pipeline_starts_with_no_nodes_and_builds() {
+    let pipeline = Pipeline::default();
+    let frames = pipeline
+        .frames(&Registry::with_polars())
+        .unwrap();
+    assert!(frames.is_empty());
+}
+
+#[test]
+fn nodes_are_found_down_and_up_the_wires() {
+    let pipeline = graph();
+    fn sorted(found: std::collections::HashSet<&str>) -> Vec<&str> {
+        let mut found: Vec<_> = found
+            .into_iter()
+            .collect();
+        found.sort_unstable();
+        found
+    }
+    assert_eq!(sorted(pipeline.downstream(["b"])), ["b", "d"]);
+    assert_eq!(sorted(pipeline.downstream(["a"])), ["a", "b", "c", "d"]);
+    assert_eq!(sorted(pipeline.upstream(["d"])), ["a", "b", "d"]);
+    assert_eq!(sorted(pipeline.upstream(["c", "b"])), ["a", "b", "c"]);
+    // what is not wired reads nothing, which is no Node
+    assert_eq!(sorted(pipeline.upstream(["e"])), ["", "e"]);
+}
+
+#[test]
+fn a_node_is_renamed_wherever_it_is_named() {
+    let mut pipeline = graph();
+    assert!(pipeline.rename("b", "x"));
+    let wired = [
+        ("a", vec![]),
+        ("x", vec!["a"]),
+        ("c", vec!["a"]),
+        ("d", vec!["x"]),
+        ("e", vec![""]),
+    ];
+    assert_eq!(wiring(&pipeline), wired);
+
+    assert!(pipeline.rename("d", "y"));
+    assert_eq!(pipeline.outputs, ["y", "c"]);
+
+    // not to nothing, nor to the id of another, nor of itself, nor if there is no such Node
+    assert!(!pipeline.rename("x", ""));
+    assert!(!pipeline.rename("x", "c"));
+    assert!(!pipeline.rename("x", "x"));
+    assert!(!pipeline.rename("b", "z"));
+    assert_eq!(wiring(&pipeline)[1], ("x", vec!["a"]));
+}
+
+#[test]
+fn a_removed_node_is_no_output_and_leaves_its_readers_unwired() {
+    let mut pipeline = graph();
+    pipeline.remove("a");
+    let wired = [
+        ("b", vec![""]),
+        ("c", vec![""]),
+        ("d", vec!["b"]),
+        ("e", vec![""]),
+    ];
+    assert_eq!(wiring(&pipeline), wired);
+
+    pipeline.remove("d");
+    assert_eq!(pipeline.outputs, ["c"]);
+}
+
+#[test]
+fn an_expression_is_renamed_in_its_place_and_where_it_is_used() {
+    use polaroid::{marked, marker};
+
+    let pipeline = serde_json::json!({
+        "polars": polars::VERSION,
+        "nodes": [
+            {
+                "id": "some",
+                "block": "filter",
+                "inputs": [""],
+                "args": { "predicates": [{ "$expr": "large" }, { "$expr": "odd" }] },
+            },
+            { "id": "few", "block": "limit", "inputs": ["some"], "args": { "n": 1 } },
+        ],
+        "outputs": [],
+        "expressions": { "first": null, "large": null, "odd": null },
+    });
+    let mut pipeline: Pipeline = serde_json::from_value(pipeline).unwrap();
+    assert!(pipeline.nodes[0].uses("large"));
+    assert!(!pipeline.nodes[1].uses("large"));
+
+    assert!(pipeline.rename_expression("large", "big"));
+    let names: Vec<_> = pipeline
+        .expressions
+        .keys()
+        .collect();
+    assert_eq!(names, ["first", "big", "odd"]);
+    let predicates = &pipeline.nodes[0].args["predicates"];
+    assert_eq!(predicates[0], marker("big"));
+    assert_eq!(marked(&predicates[1]), Some("odd"));
+    assert!(pipeline.nodes[0].uses("big"));
+    assert!(!pipeline.nodes[0].uses("large"));
+
+    // not to nothing, nor to the name of another, nor if there is no such expression
+    assert!(!pipeline.rename_expression("big", ""));
+    assert!(!pipeline.rename_expression("big", "odd"));
+    assert!(!pipeline.rename_expression("large", "huge"));
+
+    // a marker is that alone: with anything beside its name it is a value like any other
+    assert_eq!(
+        marked(&serde_json::json!({ "$expr": "big", "more": 1 })),
+        None
+    );
+}
