@@ -35,7 +35,7 @@ use super::form::Tone;
 use super::table::Table;
 use super::{Editor, Message, error, form, layout};
 use crate::polars::prelude::{DataFrame, DataType};
-use crate::{Node, schema};
+use crate::{Described, Node, schema};
 
 /// The space around what a card holds, and between its lines.
 const PAD: f32 = 10.0;
@@ -157,8 +157,8 @@ impl Editor {
     ) -> Card<'a> {
         Card {
             node,
-            defs: &self.catalog["$defs"],
-            block: &self.catalog["blocks"][&node.block],
+            defs: &self.catalog.defs,
+            block: self.block(&node.block),
             others: self
                 .pipeline
                 .nodes
@@ -211,8 +211,8 @@ pub fn output() -> f32 {
 pub struct Card<'a> {
     node: &'a Node,
     defs: &'a Value,
-    /// The entry of its block in the catalog.
-    block: &'a Value,
+    /// What the catalog says of its block, if there is such a block.
+    block: Option<&'a Described>,
     /// The ids of the other nodes, which it may read.
     others: Vec<&'a str>,
     /// The expressions by name, which its args pick from.
@@ -291,7 +291,13 @@ impl<'a> Component<'a, Message> for Card<'a> {
         let node = self.node;
         let status = self.status;
         let is_open = layout::is_open(node);
-        let schema = schema::resolve(self.defs, &self.block["args"]);
+        let args = self
+            .block
+            .map_or(&Value::Null, |block| &block.args);
+        let schema = schema::resolve(self.defs, args);
+        let reads = self
+            .block
+            .map_or(&[][..], |block| block.inputs);
 
         let name = state
             .name
@@ -343,11 +349,9 @@ impl<'a> Component<'a, Message> for Card<'a> {
         .height(HEAD);
 
         // the names of all it is given in one column: the nodes it reads, then its args
-        let read = self.block["inputs"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter_map(Value::as_str);
+        let read = reads
+            .iter()
+            .copied();
         let args = schema["properties"]
             .as_object()
             .into_iter()
@@ -355,10 +359,8 @@ impl<'a> Component<'a, Message> for Card<'a> {
             .map(String::as_str);
         let names = form::names(read.chain(args));
         let others = self.others.clone();
-        let inputs = self.block["inputs"]
-            .as_array()
-            .into_iter()
-            .flatten()
+        let inputs = reads
+            .iter()
             .enumerate()
             .map(move |(slot, name)| {
                 let source = node
@@ -381,9 +383,6 @@ impl<'a> Component<'a, Message> for Card<'a> {
                         .width(Fill)
                         .style(form::picked(tone))
                 });
-                let name = name
-                    .as_str()
-                    .unwrap_or_default();
                 container(form::labelled(name, names, None, wired)).id(anchor(slot))
             });
 

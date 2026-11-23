@@ -6,7 +6,7 @@ use crate::polars::prelude::*;
 
 /// The form for the args of a `select`, with what it is laid out with.
 struct Form {
-    catalog: Value,
+    catalog: crate::Catalog,
     state: State,
     args: Value,
 }
@@ -55,8 +55,8 @@ impl Form {
     }
 
     fn view(&self) -> impl Widget<Message> {
-        let defs = &self.catalog["$defs"];
-        let schema = resolve(defs, &self.catalog["blocks"]["select"]["args"]);
+        let defs = &self.catalog.defs;
+        let schema = resolve(defs, &self.catalog.blocks["select"].args);
         view(&self.state, defs, schema, &self.args, vec![], None, 0.0)
     }
 }
@@ -196,8 +196,8 @@ fn a_value_is_given_the_default_or_missing() {
 #[test]
 fn a_number_that_is_being_typed_is_shown_but_not_put_in_the_value() -> Result<(), Error> {
     let catalog = Registry::with_polars().catalog();
-    let defs = &catalog["$defs"];
-    let schema = resolve(defs, &catalog["blocks"]["limit"]["args"]);
+    let defs = &catalog.defs;
+    let schema = resolve(defs, &catalog.blocks["limit"].args);
     let mut state = State::default();
     let mut args = json!({ "n": 1 });
     let typed = |text: &str| Message::Type("/n".to_owned(), text.to_owned());

@@ -46,7 +46,7 @@ use serde_json::Value;
 use self::card::{Edit, Status};
 use self::drawer::Drawer;
 use crate::polars::prelude::{DataFrame, DataType, PolarsResult, polars_err};
-use crate::{Node, Pipeline, Registry, is_sink, schema};
+use crate::{Catalog, Described, Node, Pipeline, Registry, is_sink, schema};
 
 const HELP: &str = "\
 Drag a closed card to move it, or any card by the dots in its corner. Drag the background to pan, \
@@ -128,7 +128,7 @@ pub fn open(
 
 struct Editor {
     registry: Arc<Registry>,
-    catalog: Value,
+    catalog: Catalog,
     path: String,
     pipeline: Pipeline,
     is_dirty: bool,
@@ -207,24 +207,23 @@ impl Editor {
     ) -> Self {
         let catalog = registry.catalog();
         // each block by its name as code, then what its description says
-        let docs = catalog["blocks"]
-            .as_object()
-            .into_iter()
-            .flatten()
+        let docs = catalog
+            .blocks
+            .iter()
             .map(|(block, entry)| {
-                let schema = schema::resolve(&catalog["$defs"], &entry["args"]);
+                let schema = schema::resolve(&catalog.defs, &entry.args);
                 let doc = match schema["description"].as_str() {
                     Some(described) => format!("`{block}`: {described}"),
                     None => format!("`{block}`"),
                 };
-                (block.clone(), markdown::Content::parse(&doc))
+                ((*block).to_owned(), markdown::Content::parse(&doc))
             })
             .collect();
         let mut editor = Self {
             catalog,
             registry,
             path,
-            drawer: Drawer::new(&pipeline),
+            drawer: Drawer::default(),
             pipeline,
             is_dirty: false,
             menu: None,
@@ -281,8 +280,14 @@ impl Editor {
             Message::CloseMenu => self.menu = None,
             Message::Add(block, point) => {
                 self.menu = None;
+                let described = self
+                    .catalog
+                    .blocks
+                    .get(block.as_str());
+                let Some(entry) = described else {
+                    return Task::none();
+                };
                 let nodes = &mut self.pipeline.nodes;
-                let entry = &self.catalog["blocks"][&block];
                 let id = (1..)
                     .map(|n| format!("{block}_{n}"))
                     .find(|id| {
@@ -291,14 +296,11 @@ impl Editor {
                             .all(|node| node.id != *id)
                     })
                     .expect("some number is free");
-                let inputs = entry["inputs"]
-                    .as_array()
-                    .map_or(0, Vec::len);
                 let mut node = Node {
                     id,
                     block,
-                    inputs: vec![String::new(); inputs],
-                    args: schema::default(&self.catalog["$defs"], &entry["args"]),
+                    inputs: vec![String::new(); entry.inputs.len()],
+                    args: schema::default(&self.catalog.defs, &entry.args),
                     ui: Value::Null,
                 };
                 layout::place(&mut node, point);
@@ -493,8 +495,18 @@ impl Editor {
         self.job = None;
         self.menu = None;
         self.is_dirty = is_dirty;
-        self.drawer = Drawer::new(&self.pipeline);
+        self.drawer = Drawer::default();
         self.check_wiring();
+    }
+
+    /// What the catalog says of the block of a name, if there is such a block.
+    fn block(
+        &self,
+        name: &str,
+    ) -> Option<&Described> {
+        self.catalog
+            .blocks
+            .get(name)
     }
 
     /// The node of this id, whose card was moved or resized.
@@ -520,9 +532,12 @@ impl Editor {
             .nodes
             .iter()
             .filter(|node| {
-                self.catalog["blocks"][&node.block]["inputs"]
-                    .as_array()
-                    .is_some_and(Vec::is_empty)
+                self.block(&node.block)
+                    .is_some_and(|block| {
+                        block
+                            .inputs
+                            .is_empty()
+                    })
             })
             .map(|node| (node.id.clone(), DataFrame::empty()))
             .collect();
@@ -705,9 +720,9 @@ impl Editor {
             .on_open(|id| Message::Edit(id, Edit::Toggle))
             .on_menu(Message::Menu);
         for node in &self.pipeline.nodes {
-            let inputs = self.catalog["blocks"][&node.block]["inputs"]
-                .as_array()
-                .map_or(0, Vec::len);
+            let inputs = self
+                .block(&node.block)
+                .map_or(0, |block| block.inputs.len());
             let ports = (0..inputs).map(card::anchor);
             let is_open = layout::is_open(node);
             let tall = match is_open {
@@ -737,21 +752,19 @@ impl Editor {
             .menu
             .map(|(at, point)| {
                 // the blocks under their categories, each to add a node of it where was pressed
-                let blocks = &self.catalog["blocks"];
-                let groups = self.catalog["categories"]
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .filter_map(Value::as_str)
+                let catalog = &self.catalog;
+                let groups = catalog
+                    .categories
+                    .iter()
                     .map(|category| {
-                        let blocks = blocks
-                            .as_object()
-                            .into_iter()
-                            .flatten()
-                            .filter(|(_, block)| block["category"] == category)
-                            .map(|(block, _)| (block.clone(), Message::Add(block.clone(), point)))
+                        let blocks = catalog
+                            .blocks
+                            .iter()
+                            .filter(|(_, block)| block.category == *category)
+                            .map(|(block, _)| (*block).to_owned())
+                            .map(|block| (block.clone(), Message::Add(block, point)))
                             .collect();
-                        (category.to_owned(), blocks)
+                        ((*category).to_owned(), blocks)
                     })
                     .collect();
                 menu(at, groups).on_close(Message::CloseMenu)
@@ -778,7 +791,7 @@ impl Editor {
             .expressions;
         let drawer = self
             .drawer
-            .view(&self.catalog["$defs"], expressions, &columns)
+            .view(&self.catalog.defs, expressions, &columns)
             .map(Message::Drawer);
         let panes = split(drawer, stack![graph, menu]).shown(self.is_drawer_shown);
 

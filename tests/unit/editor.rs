@@ -480,8 +480,14 @@ fn an_expression_is_renamed_edited_and_deleted_for_the_nodes_that_use_it() {
     };
 
     drawer(&mut editor, drawer::Message::New);
-    drawer(&mut editor, drawer::Message::Name(0, "few".to_owned()));
-    drawer(&mut editor, drawer::Message::Rename(0));
+    drawer(
+        &mut editor,
+        drawer::Message::Name("expression_1".to_owned(), "few".to_owned()),
+    );
+    drawer(
+        &mut editor,
+        drawer::Message::Rename("expression_1".to_owned()),
+    );
     assert!(editor.is_dirty);
     let args = Edit::Args(serde_json::json!({ "n": crate::marker("few") }));
     let _ = editor.update(Message::Edit("n1".to_owned(), args));
@@ -489,7 +495,7 @@ fn an_expression_is_renamed_edited_and_deleted_for_the_nodes_that_use_it() {
     // an edit to it forgets the nodes that use it, and no others
     checked(&mut editor);
     let five = form::Message::Put(String::new(), serde_json::json!(5));
-    drawer(&mut editor, drawer::Message::Form(0, five));
+    drawer(&mut editor, drawer::Message::Form("few".to_owned(), five));
     assert_eq!(
         editor
             .pipeline
@@ -506,8 +512,11 @@ fn an_expression_is_renamed_edited_and_deleted_for_the_nodes_that_use_it() {
 
     // under another name it is the same to them
     checked(&mut editor);
-    drawer(&mut editor, drawer::Message::Name(0, "some".to_owned()));
-    drawer(&mut editor, drawer::Message::Rename(0));
+    drawer(
+        &mut editor,
+        drawer::Message::Name("few".to_owned(), "some".to_owned()),
+    );
+    drawer(&mut editor, drawer::Message::Rename("few".to_owned()));
     let args = &editor
         .pipeline
         .nodes[1]
@@ -522,7 +531,7 @@ fn an_expression_is_renamed_edited_and_deleted_for_the_nodes_that_use_it() {
     );
 
     // and gone, they are wired badly
-    drawer(&mut editor, drawer::Message::Delete(0));
+    drawer(&mut editor, drawer::Message::Delete("some".to_owned()));
     assert!(
         editor
             .pipeline
