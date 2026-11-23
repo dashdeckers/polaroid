@@ -227,6 +227,15 @@ pub fn names<'a>(names: impl IntoIterator<Item = &'a str>) -> f32 {
         .fold(0.0, f32::max)
 }
 
+/// A description as its paragraphs, each on one line for the text to wrap as it fits.
+fn flowed(described: &str) -> String {
+    described
+        .split("\n\n")
+        .map(|paragraph| paragraph.replace('\n', " "))
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
 /// An argument on a line: its name in a column of the width `names`, then its value.
 ///
 /// Its name tells what it is for when hovered.
@@ -247,7 +256,7 @@ pub fn labelled<'a, Message: 'a>(
         .align_y(Center);
     let name = match described {
         Some(described) => {
-            let described = container(text(described).size(NOTE))
+            let described = container(text(flowed(described)).size(NOTE))
                 .width(280)
                 .padding(6)
                 .style(container::bordered_box);

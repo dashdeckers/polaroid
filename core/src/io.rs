@@ -5,10 +5,14 @@ use serde::Deserialize;
 
 use crate::Block;
 
-/// Reads a Parquet file, every file under a directory recursively, or a glob.
+/// Reads a Parquet file, or several as one frame.
+///
+/// Only the columns and rows that the pipeline needs are read.
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ScanParquet {
+    /// Path to a file, to a directory, of which every file under it is read, or a glob pattern
+    /// such as data/*.parquet. A column that one of the files lacks is null in its rows.
     pub path: String,
 }
 
@@ -47,10 +51,13 @@ impl Block<0> for ScanParquet {
     }
 }
 
-/// Writes the frame to a Parquet file, replacing any there, and gives it on.
+/// Writes the frame to a Parquet file on every Run, replacing a file that is there.
+///
+/// The nodes that read this one get the frame it writes.
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct WriteParquet {
+    /// Path of the Parquet file to write.
     pub path: String,
 }
 

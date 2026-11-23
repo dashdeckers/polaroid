@@ -258,3 +258,8 @@ fn a_number_that_is_being_typed_is_shown_but_not_put_in_the_value() -> Result<()
     );
     Ok(())
 }
+
+#[test]
+fn a_description_flows_within_its_paragraphs() {
+    assert_eq!(flowed("one\ntwo\n\nthree\nfour"), "one two\n\nthree four");
+}

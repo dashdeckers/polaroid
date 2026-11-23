@@ -19,10 +19,12 @@ fn names(columns: &[String]) -> Selector {
     )
 }
 
-/// Just these expressions' columns.
+/// Selects columns from the frame: only the columns of `exprs` are left, in their order.
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Select {
+    /// Columns to select. Each expression gives a column named after the first column it
+    /// reads, or as alias names it.
     pub exprs: Vec<Expr>,
 }
 
@@ -35,10 +37,12 @@ impl Block for Select {
     }
 }
 
-/// Every column, and these expressions' beside or in place of them.
+/// Adds columns to the frame. An added column replaces an existing column of the same name.
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct WithColumns {
+    /// Columns to add. Each expression gives a column named after the first column it
+    /// reads, or as alias names it.
     pub exprs: Vec<Expr>,
 }
 
@@ -51,10 +55,13 @@ impl Block for WithColumns {
     }
 }
 
-/// The rows meeting every one of `predicates`, applied one filter at a time.
+/// Filters rows: keeps those where every one of `predicates` is true, in their order.
+///
+/// A row where one of them is false or null is discarded.
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Filter {
+    /// Expressions that evaluate to a boolean for each row. A row is kept if all of them are true.
     pub predicates: Vec<Expr>,
 }
 
@@ -70,13 +77,18 @@ impl Block for Filter {
     }
 }
 
-/// One row per group of `by`, its `aggs` beside.
+/// Groups the rows by `by` and computes `aggs` for each group: one row per group.
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct GroupBy {
+    /// Columns to group by. Rows with the same values in all of them form a group.
+    /// With none, all rows are one group.
     pub by: Vec<Expr>,
+    /// Aggregations to compute for each group, such as a sum or a mean, each giving a column.
+    /// An expression that does not aggregate gives the values of the group as a list.
     pub aggs: Vec<Expr>,
-    /// Keep the groups in the order they first appear.
+    /// Keep the groups in the order they first appear in the frame, which is slower.
+    /// Otherwise their order is not guaranteed.
     #[serde(default)]
     pub maintain_order: bool,
 }
@@ -94,12 +106,22 @@ impl Block for GroupBy {
     }
 }
 
-/// The `left` frame joined to the `right` where `left_on` matches `right_on`.
+/// Joins the `left` frame to the `right` frame on the rows where `left_on` equals `right_on`.
+///
+/// A column of `right` whose name `left` has too is suffixed `_right`. The order of the rows is
+/// not guaranteed.
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Join {
+    /// Join columns of the left frame. Leave these and right_on empty for a Cross join.
     pub left_on: Vec<Expr>,
+    /// Join columns of the right frame, each matched to the one at its position in left_on.
     pub right_on: Vec<Expr>,
+    /// Join strategy. Inner: the rows that match in both frames. Left: all rows of the left
+    /// frame, with nulls where the right has no match. Right: all rows of the right frame, with
+    /// nulls where the left has no match. Full: all rows of both, each keeping its join columns.
+    /// Semi: the left rows that have a match, without the columns of the right frame. Anti: the
+    /// left rows that have no match. Cross: every left row beside every right row.
     pub how: JoinType,
 }
 
@@ -114,7 +136,9 @@ impl Block<2> for Join {
     }
 }
 
-/// The `top` frame's rows, then the `bottom` frame's.
+/// Stacks the rows of the `top` frame over those of the `bottom` frame.
+///
+/// Both must have the same columns, in the same order and of the same types.
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Concat {}
@@ -130,11 +154,13 @@ impl Block<2> for Concat {
     }
 }
 
-/// Ascending by `by`, the first deciding, or descending.
+/// Sorts the frame by `by`. Nulls come first.
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Sort {
+    /// Columns to sort by: by the first, then by the next among the rows equal in it.
     pub by: Vec<Expr>,
+    /// Sort in descending order. Nulls still come first.
     #[serde(default)]
     pub descending: bool,
 }
@@ -149,10 +175,13 @@ impl Block for Sort {
     }
 }
 
-/// One row per distinct combination of `subset`, or of every column.
+/// Drops duplicate rows: one row is left of those that are equal in `subset`.
+///
+/// Which of them is kept, and the order of the rows, is not guaranteed.
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Unique {
+    /// Columns to consider when identifying duplicate rows. With none, all columns are used.
     #[serde(default)]
     pub subset: Option<Vec<String>>,
 }
@@ -172,14 +201,21 @@ impl Block for Unique {
     }
 }
 
-/// Each of `on` becomes a row: its name in `variable_name`, its value in `value_name`.
+/// Unpivots the frame from wide to long format.
+///
+/// The columns of `on` are stacked into rows, their names in one column and their values in
+/// another, beside the `index` columns.
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Unpivot {
+    /// Columns to stack into rows. With none, all columns that are not in index are used.
     pub on: Vec<String>,
+    /// Columns to keep as identifiers, repeated beside each stacked value.
     pub index: Vec<String>,
+    /// Name of the column that holds the names of the stacked columns. Defaults to "variable".
     #[serde(default)]
     pub variable_name: Option<String>,
+    /// Name of the column that holds their values. Defaults to "value".
     #[serde(default)]
     pub value_name: Option<String>,
 }
@@ -203,10 +239,14 @@ impl Block for Unpivot {
     }
 }
 
-/// One row per element of the list `columns`, which explode together.
+/// Explodes the frame to long format: one row per element of the lists in `columns`.
+///
+/// The other columns are repeated. An empty list or a null gives one row with a null.
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Explode {
+    /// Columns to explode, at least one, of the List or Array data type. Several explode
+    /// together, so their lists must be equally long in each row.
     pub columns: Vec<String>,
 }
 
@@ -219,10 +259,11 @@ impl Block for Explode {
     }
 }
 
-/// Everything but `columns`.
+/// Removes `columns` from the frame.
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Drop {
+    /// Names of the columns to remove. A name that the frame does not have is an error.
     pub columns: Vec<String>,
 }
 
@@ -235,10 +276,13 @@ impl Block for Drop {
     }
 }
 
-/// The rows where none of `columns` is null.
+/// Drops the rows that have a null in one or more of `columns`.
+///
+/// The order of the remaining rows is kept.
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DropNulls {
+    /// Columns in which nulls are looked for. With none, no row is dropped.
     pub columns: Vec<String>,
 }
 
@@ -251,11 +295,13 @@ impl Block for DropNulls {
     }
 }
 
-/// Each of `existing` renamed to its counterpart in `new`.
+/// Renames columns: each of `existing` to the name at its position in `new`.
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Rename {
+    /// Names of the columns to rename. A name that the frame does not have is an error.
     pub existing: Vec<String>,
+    /// Their new names, as many and in the same order.
     pub new: Vec<String>,
 }
 
@@ -272,10 +318,11 @@ impl Block for Rename {
     }
 }
 
-/// The first `n` rows.
+/// Gets the first `n` rows.
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Limit {
+    /// Number of rows to return. A frame of fewer rows is returned whole.
     pub n: IdxSize,
 }
 
