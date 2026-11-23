@@ -224,3 +224,31 @@ fn an_expression_is_used_by_its_name() {
             .contains("no expression is called 'small'")
     );
 }
+
+#[test]
+fn a_block_is_in_the_category_named_before_it() {
+    use polaroid::frames::Limit;
+
+    let catalog = Registry::with_polars()
+        .register::<Limit, _>("first")
+        .category("Mine")
+        .register::<Limit, _>("second")
+        // a category named again is where it was
+        .category("Reshape")
+        .register::<Limit, _>("third")
+        .catalog();
+
+    let categories = [
+        "Read and write",
+        "Keep rows",
+        "Reshape",
+        "Mine",
+    ];
+    assert_eq!(catalog["categories"], serde_json::json!(categories));
+    let category = |block: &str| catalog["blocks"][block]["category"].clone();
+    assert_eq!(category("scan_parquet"), "Read and write");
+    assert_eq!(category("sort"), "Keep rows");
+    assert_eq!(category("first"), "Reshape");
+    assert_eq!(category("second"), "Mine");
+    assert_eq!(category("third"), "Reshape");
+}
