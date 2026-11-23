@@ -4,8 +4,8 @@ mod card;
 mod child;
 mod drawer;
 mod form;
+mod known;
 mod layout;
-mod table;
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -44,10 +44,11 @@ use iced::{
 use polaroid_iced::{Menu, Surface, menu, split, surface};
 use serde_json::Value;
 
-use self::card::{Edit, Status};
+use self::card::Edit;
 use self::drawer::Drawer;
+use self::known::Known;
 use crate::polars::prelude::{DataFrame, DataType, PolarsResult, polars_err};
-use crate::{Catalog, Described, Node, Pipeline, Registry, is_sink, schema};
+use crate::{Catalog, Described, Node, Pipeline, Registry, schema};
 
 const HELP: &str = "\
 Drag a closed card to move it, or any card by the dots in its corner. Drag the background to pan, \
@@ -140,11 +141,8 @@ struct Editor {
     is_dirty: bool,
     /// Where the menu of blocks is open: on the surface, and among the cards.
     menu: Option<(Point, Point)>,
-    /// What is wrong with the wiring of each node, as of the latest edit.
-    wiring: BTreeMap<String, String>,
-    /// The nodes that write their frame, as to a file, which every Run does.
-    writes: Vec<String>,
-    known: BTreeMap<String, Known>,
+    /// How each node is wired, and what a Check and the Runs found of it.
+    known: Known,
     /// What is wrong with the pipeline as a whole, or with the latest Save.
     problem: Option<String>,
     /// The Check or Run under way, whose child is killed when this is dropped.
@@ -154,18 +152,6 @@ struct Editor {
     /// What each block does, as the Markdown its description is written in.
     docs: BTreeMap<String, markdown::Content>,
     theme: Theme,
-}
-
-/// What a Check and the Runs found of a node, until it or one it reads is edited.
-#[derive(Default)]
-struct Known {
-    columns: Option<Columns>,
-    /// Its frame, if a Run saved it.
-    frame: Option<DataFrame>,
-    /// Why the latest Run failed, if it was to save this node or have it write.
-    failed: Option<String>,
-    /// Whether a Run computed it.
-    is_run: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -233,9 +219,7 @@ impl Editor {
             pipeline,
             is_dirty: false,
             menu: None,
-            wiring: BTreeMap::new(),
-            writes: Vec::new(),
-            known: BTreeMap::new(),
+            known: Known::default(),
             problem: None,
             job: None,
             is_drawer_shown: true,
@@ -304,14 +288,9 @@ impl Editor {
             Message::Checked(checks) => {
                 self.job = None;
                 match checks {
-                    Ok(checks) => {
-                        for (id, columns) in checks {
-                            let known = self.known_mut(id);
-                            known.columns = Some(columns);
-                            // why a Run failed before may no longer hold
-                            known.failed = None;
-                        }
-                    }
+                    Ok(checks) => self
+                        .known
+                        .checked(checks),
                     Err(problem) => self.problem = Some(problem),
                 }
             }
@@ -319,15 +298,13 @@ impl Editor {
             Message::Rerun => return self.run(true),
             Message::Ran(targets, Ok(frames)) => {
                 self.job = None;
-                self.ran(&targets, frames);
+                self.known
+                    .ran(&self.pipeline, &targets, frames);
             }
             Message::Ran(targets, Err(e)) => {
                 self.job = None;
-                // Polars does not say which node failed
-                for id in targets {
-                    self.known_mut(id)
-                        .failed = Some(e.clone());
-                }
+                self.known
+                    .failed(targets, &e);
             }
             Message::Stop => self.job = None,
             Message::Drawer(message) => {
@@ -430,113 +407,11 @@ impl Editor {
         &mut self,
         is_rerun: bool,
     ) -> Task<Message> {
-        for known in self
+        let (pipeline, targets, read) = self
             .known
-            .values_mut()
-        {
-            known.failed = None;
-            if is_rerun {
-                known.frame = None;
-                known.is_run = false;
-            }
-        }
-        let mut pipeline = self
-            .pipeline
-            .clone();
-        // a frame that is saved is not collected again
-        pipeline
-            .outputs
-            .retain(|id| {
-                self.frame(id)
-                    .is_none()
-            });
-        // but every write is done again, as its file may be gone
-        let targets: Vec<String> = pipeline
-            .outputs
-            .iter()
-            .chain(&self.writes)
-            .cloned()
-            .collect();
-        // a read frame goes along, but not a write's, which it would stand in for
-        let known = pipeline
-            .nodes
-            .iter()
-            .flat_map(|node| &node.inputs)
-            .filter(|id| {
-                !self
-                    .writes
-                    .contains(id)
-            })
-            .filter_map(|id| {
-                Some((
-                    id.clone(),
-                    self.frame(id)?
-                        .clone(),
-                ))
-            })
-            .collect();
-        let run = child::run(pipeline, known);
+            .plan(&self.pipeline, is_rerun);
+        let run = child::run(pipeline, read);
         self.start(Task::perform(run, Message::Ran.with(targets)))
-    }
-
-    /// Notes that a Run computed `targets` and all they read, and keeps the frames it saved.
-    fn ran(
-        &mut self,
-        targets: &[String],
-        frames: Vec<(String, DataFrame)>,
-    ) {
-        let targets = targets
-            .iter()
-            .map(String::as_str);
-        let computed: Vec<String> = self
-            .pipeline
-            .upstream(targets)
-            .into_iter()
-            .map(str::to_owned)
-            .collect();
-        for id in computed {
-            self.known_mut(id)
-                .is_run = true;
-        }
-        for (id, mut frame) in frames {
-            // one unticked while the Run was under way is not saved
-            let is_saved = self
-                .pipeline
-                .outputs
-                .contains(&id);
-            if !is_saved {
-                continue;
-            }
-            // in one chunk, a cell is found in constant time
-            frame.rechunk_mut();
-            self.known_mut(id)
-                .frame = Some(frame);
-        }
-    }
-
-    /// Whether a Check is behind every node that a Run computes: until then it goes before a Run.
-    fn is_checked(&self) -> bool {
-        let targets = self
-            .pipeline
-            .outputs
-            .iter()
-            .chain(&self.writes)
-            .map(String::as_str);
-        let reached = self
-            .pipeline
-            .upstream(targets);
-        self.pipeline
-            .nodes
-            .iter()
-            .all(|node| {
-                let is_sound = matches!(self.status(&node.id), Status::Checked | Status::Ran);
-                // no Check mends bad wiring, which is no matter in a node that no Run computes
-                let is_aside = self
-                    .wiring
-                    .contains_key(&node.id)
-                    && !reached.contains(node.id.as_str());
-                is_sound || is_aside
-            })
     }
 
     /// Has `job` run as the Check or Run under way, which Stop ends.
@@ -559,7 +434,7 @@ impl Editor {
         layout::layout(&mut pipeline);
         self.path = path;
         self.pipeline = pipeline;
-        self.known.clear();
+        self.known = Known::default();
         self.job = None;
         self.menu = None;
         self.is_dirty = is_dirty;
@@ -577,48 +452,11 @@ impl Editor {
             .get(name)
     }
 
-    /// Notes what is wrong with the wiring of each node, and which nodes write.
+    /// Notes how the nodes are wired as of the latest edit, and what is wrong with the pipeline.
     fn check_wiring(&mut self) {
-        self.wiring.clear();
-        self.writes.clear();
-        self.problem = None;
-        // a node that reads no other reads the disk, which is left to a Check: it is not built
-        let sources = self
-            .pipeline
-            .nodes
-            .iter()
-            .filter(|node| {
-                self.block(&node.block)
-                    .is_some_and(|block| {
-                        block
-                            .inputs
-                            .is_empty()
-                    })
-            })
-            .map(|node| (node.id.clone(), DataFrame::empty()))
-            .collect();
-        let frames = match self
-            .pipeline
-            .frames_from(&self.registry, &sources)
-        {
-            Ok(frames) => frames,
-            Err(e) => {
-                self.problem = Some(e.to_string());
-                return;
-            }
-        };
-        for (id, frame) in frames {
-            match frame {
-                Ok(frame) if is_sink(&frame) => self
-                    .writes
-                    .push(id.to_owned()),
-                Ok(_) => {}
-                Err(e) => {
-                    self.wiring
-                        .insert(id.to_owned(), e.to_string());
-                }
-            }
-        }
+        self.problem = self
+            .known
+            .wire(&self.pipeline, &self.registry, &self.catalog);
     }
 
     /// Forgets what is known of the nodes that were edited and of all that read them; stops a job.
@@ -626,85 +464,22 @@ impl Editor {
         &mut self,
         is_edited: impl Fn(&Node) -> bool,
     ) {
-        let edited = self
-            .pipeline
-            .nodes
-            .iter()
-            .filter(|node| is_edited(node))
-            .map(|node| node.id.as_str());
-        let stale = self
-            .pipeline
-            .downstream(edited);
         self.known
-            .retain(|id, _| !stale.contains(id.as_str()));
+            .forget(&self.pipeline, is_edited);
         self.job = None;
-    }
-
-    /// What is known of node `id`, to add to.
-    fn known_mut(
-        &mut self,
-        id: String,
-    ) -> &mut Known {
-        self.known
-            .entry(id)
-            .or_default()
-    }
-
-    /// The frame of node `id`, if a Run saved it.
-    fn frame(
-        &self,
-        id: &str,
-    ) -> Option<&DataFrame> {
-        self.known
-            .get(id)?
-            .frame
-            .as_ref()
-    }
-
-    /// The columns of node `id`, or what is wrong with its wiring or its columns.
-    fn found(
-        &self,
-        id: &str,
-    ) -> Option<Result<&Vec<(String, DataType)>, &String>> {
-        match self.wiring.get(id) {
-            Some(e) => Some(Err(e)),
-            None => self
-                .known
-                .get(id)?
-                .columns
-                .as_ref()
-                .map(Result::as_ref),
-        }
-    }
-
-    /// What colours the card of node `id`: a Run before a Check.
-    fn status(
-        &self,
-        id: &str,
-    ) -> Status {
-        let known = self.known.get(id);
-        let has_failed = known.is_some_and(|known| {
-            known
-                .failed
-                .is_some()
-        });
-        let is_run = known.is_some_and(|known| known.is_run);
-        match self.found(id) {
-            _ if has_failed => Status::Failed,
-            Some(Err(_)) => Status::Rejected,
-            _ if is_run => Status::Ran,
-            Some(Ok(_)) => Status::Checked,
-            None => Status::Unknown,
-        }
     }
 
     fn view(&self) -> impl Widget<Message> {
         let expressions = &self
             .pipeline
             .expressions;
+        // every column that a Check found, for the expressions to name
+        let columns = self
+            .known
+            .names(&self.pipeline);
         let drawer = self
             .drawer
-            .view(&self.catalog.defs, expressions, &self.columns())
+            .view(&self.catalog.defs, expressions, &columns)
             .map(Message::Drawer);
         let graph = stack![self.graph(), self.menu()];
         let problem = self
@@ -726,7 +501,10 @@ impl Editor {
             .is_dirty
             .then_some(Message::Save);
         // a Check goes before a Run: its button covers theirs until every node is sound
-        let over = match (&self.job, self.is_checked()) {
+        let is_checked = self
+            .known
+            .is_checked(&self.pipeline);
+        let over = match (&self.job, is_checked) {
             (Some(_), _) => Some(("Stop", Message::Stop)),
             (None, false) => Some(("Check", Message::Check)),
             (None, true) => None,
@@ -835,26 +613,6 @@ impl Editor {
                     .collect();
                 menu(at, groups).on_close(Message::CloseMenu)
             })
-    }
-
-    /// Every column that a Check found, once each, for the expressions to name.
-    fn columns(&self) -> Vec<String> {
-        let mut columns = Vec::new();
-        let found = self
-            .pipeline
-            .nodes
-            .iter()
-            .filter_map(|node| {
-                self.found(&node.id)?
-                    .ok()
-            })
-            .flatten();
-        for (name, _) in found {
-            if !columns.contains(name) {
-                columns.push(name.clone());
-            }
-        }
-        columns
     }
 }
 

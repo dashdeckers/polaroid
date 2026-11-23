@@ -4,6 +4,13 @@ use super::*;
 use crate::Registry;
 use crate::polars::prelude::*;
 
+// what a chain asks for is passed on by its form
+impl From<chain::Message> for Message {
+    fn from(message: chain::Message) -> Self {
+        Self::Chain(message)
+    }
+}
+
 /// The form for the args of a `select`, with what it is laid out with.
 struct Form {
     catalog: crate::Catalog,
@@ -22,10 +29,10 @@ impl Form {
 
     fn send(
         &mut self,
-        message: Message,
+        message: impl Into<Message>,
     ) -> bool {
         self.state
-            .update(message, &mut self.args)
+            .update(message.into(), &mut self.args)
     }
 
     /// A method, or a function if `namespace` is `pl`.
@@ -33,7 +40,7 @@ impl Form {
         &self,
         namespace: &str,
         name: &str,
-    ) -> &'static Method {
+    ) -> &'static methods::Method {
         methods::methods()
             .iter()
             .find(|method| match namespace {
@@ -78,10 +85,13 @@ fn a_chain_is_built_call_by_call() {
     let at = || "/exprs/0".to_owned();
     let put = |pointer: &str, value: &str| Message::Put(pointer.to_owned(), value.into());
 
-    assert!(form.send(Message::Replace(at(), form.method("pl", "col"))));
+    assert!(form.send(chain::Message::Replace(at(), form.method("pl", "col"))));
     assert!(form.send(put("/exprs/0/Column", "name")));
-    assert!(form.send(Message::Call(at(), form.method("str", "to_lowercase"))));
-    assert!(form.send(Message::Call(at(), form.method("", "alias"))));
+    assert!(form.send(chain::Message::Call(
+        at(),
+        form.method("str", "to_lowercase")
+    )));
+    assert!(form.send(chain::Message::Call(at(), form.method("", "alias"))));
     assert!(form.send(put("/exprs/0/Alias/1", "lower")));
 
     let built = col("name")
@@ -100,7 +110,7 @@ fn a_call_is_replaced_and_removed() {
     let mut form = Form::of(json_of(lower));
 
     // `to_lowercase` is the receiver of `sum`, and keeps its own
-    let replaced = Message::Replace(
+    let replaced = chain::Message::Replace(
         "/exprs/0/Agg/Sum".to_owned(),
         form.method("str", "to_uppercase"),
     );
@@ -110,11 +120,13 @@ fn a_call_is_replaced_and_removed() {
         .to_uppercase();
     assert_eq!(form.args["exprs"][0], json_of(upper.clone().sum()));
 
-    assert!(form.send(Message::Remove("/exprs/0".to_owned())));
+    assert!(form.send(chain::Message::Remove("/exprs/0".to_owned())));
     assert_eq!(form.args["exprs"][0], json_of(upper));
 
     // a root leaves a hole
-    assert!(form.send(Message::Remove("/exprs/0/Function/input/0".to_owned())));
+    assert!(form.send(chain::Message::Remove(
+        "/exprs/0/Function/input/0".to_owned()
+    )));
     assert_eq!(form.args["exprs"][0]["Function"]["input"], json!([null]));
 }
 
@@ -127,6 +139,7 @@ fn laid_out_arguments_follow_their_call() {
     let at = || "/exprs/0".to_owned();
     let expanded = |form: &Form| {
         form.state
+            .chain
             .expanded
             .iter()
             .cloned()
@@ -134,14 +147,14 @@ fn laid_out_arguments_follow_their_call() {
     };
 
     // showing more is no change
-    assert!(!form.send(Message::Toggle(at())));
+    assert!(!form.send(chain::Message::Toggle(at())));
     assert_eq!(expanded(&form), ["/exprs/0"]);
 
     // `contains` is the receiver of `alias`, whose name is to be filled
-    assert!(form.send(Message::Call(at(), form.method("", "alias"))));
+    assert!(form.send(chain::Message::Call(at(), form.method("", "alias"))));
     assert_eq!(expanded(&form), ["/exprs/0", "/exprs/0/Alias/0"]);
 
-    assert!(form.send(Message::Remove(at())));
+    assert!(form.send(chain::Message::Remove(at())));
     assert_eq!(expanded(&form), ["/exprs/0"]);
 }
 
@@ -229,7 +242,8 @@ fn a_number_that_is_being_typed_is_shown_but_not_put_in_the_value() -> Result<()
 
     // what else is done ends the typing, and the field shows the value again
     assert!(state.update(typed("-"), &mut args));
-    let _ = state.update(Message::Toggle(String::new()), &mut args);
+    let toggle = Message::Chain(chain::Message::Toggle(String::new()));
+    let _ = state.update(toggle, &mut args);
     let mut ui = simulator(view(
         &state,
         defs,

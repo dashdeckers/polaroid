@@ -2,8 +2,6 @@
 
 mod chain;
 
-use std::collections::BTreeSet;
-
 use iced::widget::{
     button,
     checkbox,
@@ -20,17 +18,14 @@ use polaroid_iced::width_of;
 use serde_json::{Map, Value, json};
 
 use super::{NOTE, TEXT};
-use crate::methods::{self, Method};
 use crate::schema::{blank, default, json_type, number, optional, resolve, variants};
-use crate::{marked, marker};
+use crate::{marked, marker, methods};
 
 /// What a form shows that its value does not hold.
 #[derive(Debug, Default)]
 pub struct State {
-    /// The calls whose arguments are laid out, by the JSON pointers to their nodes.
-    expanded: BTreeSet<String>,
-    /// The namespace whose methods are offered, and the pointer to the expression to call on.
-    namespace: Option<(String, &'static str)>,
+    /// What the chains of the expressions in it show.
+    chain: chain::State,
     /// The pointer to the number being typed, and its text, which may be no number yet.
     typing: Option<(String, String)>,
 }
@@ -44,16 +39,8 @@ pub enum Message {
     Type(String, String),
     /// Take the array element at a JSON pointer away.
     Drop(String),
-    /// Lay out the arguments of the call at this pointer, or fold them away.
-    Toggle(String),
-    /// Offer the methods of this namespace to call on the expression at this pointer.
-    Narrow(String, &'static str),
-    /// Call this Method on the expression at this pointer.
-    Call(String, &'static Method),
-    /// Put a call of this Method at this pointer, on the receiver that is there.
-    Replace(String, &'static Method),
-    /// Take the call at this pointer away and leave its receiver, or a hole.
-    Remove(String),
+    /// What the chain of an expression in it asks for.
+    Chain(chain::Message),
 }
 
 impl State {
@@ -78,104 +65,20 @@ impl State {
             }
             Message::Drop(at) => {
                 put(value, &at, None);
-                // the later elements move down, away from the marks under the array
+                // the later elements move down, away from what the chains under the array show
                 let array = at
                     .rsplit_once('/')
                     .map_or("", |(array, _)| array);
-                self.relocate(array, None, "");
+                self.chain
+                    .relocate(array, None, "");
             }
-            Message::Toggle(at) => {
-                if !self
-                    .expanded
-                    .remove(&at)
-                {
-                    self.expanded
-                        .insert(at);
-                }
-                return false;
-            }
-            Message::Narrow(at, namespace) => {
-                self.namespace = Some((at, namespace));
-                return false;
-            }
-            Message::Call(at, method) => {
-                let Some(node) = value.pointer_mut(&at) else {
-                    return false;
-                };
-                *node = method.call(node.take());
-
-                // what was here is the receiver now, if the call takes one
-                match method
-                    .receiver
-                    .as_deref()
-                {
-                    Some(receiver) => self.relocate(&at, Some(""), receiver),
-                    None => self.relocate(&at, None, ""),
-                }
-                if method.inputs.len() + method.options.len() > 0 {
-                    self.expanded
-                        .insert(at);
-                }
-            }
-            // another call in its place is a call on what it leaves; the same again is no change
-            Message::Replace(at, method) => {
-                let is_same = value
-                    .pointer(&at)
-                    .and_then(methods::read)
-                    == Some(method);
-                if is_same {
-                    return false;
-                }
-                self.update(Message::Remove(at.clone()), value);
-                return self.update(Message::Call(at, method), value);
-            }
-            Message::Remove(at) => {
-                let Some(node) = value.pointer_mut(&at) else {
-                    return false;
-                };
-                let old = methods::read(node).and_then(|method| {
-                    method
-                        .receiver
-                        .as_deref()
-                });
-                *node = old
-                    .and_then(|old| node.pointer_mut(old))
-                    .map(Value::take)
-                    .unwrap_or_default();
-                self.relocate(&at, old, "");
+            Message::Chain(message) => {
+                return self
+                    .chain
+                    .update(message, value);
             }
         }
         true
-    }
-
-    /// Follows a change to the node at `at`: what was at `from` below it is at `to`, the rest gone.
-    fn relocate(
-        &mut self,
-        at: &str,
-        from: Option<&str>,
-        to: &str,
-    ) {
-        // what is left of `pointer` below `root`, if it is there or below
-        fn below<'a>(
-            pointer: &'a str,
-            root: &str,
-        ) -> Option<&'a str> {
-            pointer
-                .strip_prefix(root)
-                .filter(|rest| rest.is_empty() || rest.starts_with('/'))
-        }
-
-        self.expanded = std::mem::take(&mut self.expanded)
-            .into_iter()
-            .filter_map(|pointer| {
-                let Some(rest) = below(&pointer, at) else {
-                    return Some(pointer);
-                };
-                let rest = below(rest, from?)?;
-                Some(format!("{at}{to}{rest}"))
-            })
-            .collect();
-        self.namespace = None;
     }
 }
 

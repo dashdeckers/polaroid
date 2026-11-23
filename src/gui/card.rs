@@ -29,11 +29,11 @@ use iced::{
     border,
     mouse,
 };
-use polaroid_iced::width_of;
+use polaroid_iced::{Heading, width_of};
 use serde_json::{Map, Value};
 
 use super::form::{Expressions, Tone};
-use super::table::Table;
+use super::known::Status;
 use super::{Editor, Message, NOTE, TEXT, TITLE, cross, error, form, layout, toggle};
 use crate::polars::prelude::{DataFrame, DataType};
 use crate::{Described, Node, schema};
@@ -76,21 +76,6 @@ pub enum Edit {
     /// Its card is laid open, or closed if it is open.
     Toggle,
     Delete,
-}
-
-/// What is known of a node, which colours the border of its card.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Status {
-    /// Nothing, but that it is wired well.
-    Unknown,
-    /// Its columns resolve.
-    Checked,
-    /// It is wired badly, or its columns do not resolve.
-    Rejected,
-    /// A Run computed it.
-    Ran,
-    /// A Run of it failed.
-    Failed,
 }
 
 impl Editor {
@@ -137,14 +122,9 @@ impl Editor {
                 match is_output {
                     true => outputs.push(id.to_owned()),
                     // a frame that is no longer saved is let go
-                    false => {
-                        if let Some(known) = self
-                            .known
-                            .get_mut(id)
-                        {
-                            known.frame = None;
-                        }
-                    }
+                    false => self
+                        .known
+                        .unsave(id),
                 }
             }
             Edit::Args(args) => {
@@ -179,17 +159,18 @@ impl Editor {
                 .pipeline
                 .outputs
                 .contains(&node.id),
-            status: self.status(&node.id),
-            found: self.found(&node.id),
+            status: self
+                .known
+                .status(&node.id),
+            found: self
+                .known
+                .columns(&node.id),
             failed: self
                 .known
-                .get(&node.id)
-                .and_then(|known| {
-                    known
-                        .failed
-                        .as_deref()
-                }),
-            frame: self.frame(&node.id),
+                .failure(&node.id),
+            frame: self
+                .known
+                .frame(&node.id),
             doc: self
                 .docs
                 .get(&node.block),
@@ -466,9 +447,42 @@ impl<'a> Card<'a> {
 
     /// A saved frame, or else the columns that a Check found, to select cells in and copy them.
     fn table(&self) -> Option<impl Widget<Event> + use<'a>> {
+        let heading = |name: &'a str, dtype: &DataType| Heading {
+            name,
+            kind: dtype.to_string(),
+            is_numeric: dtype.is_numeric(),
+        };
         let table = match (self.frame, self.found) {
-            (Some(frame), _) => Table::of(frame),
-            (None, Some(Ok(columns))) => Table::listing(columns),
+            (Some(frame), _) => {
+                let columns = frame.columns();
+                let headings = columns
+                    .iter()
+                    .map(|column| {
+                        let name = column
+                            .name()
+                            .as_str();
+                        heading(name, column.dtype())
+                    })
+                    .collect();
+                let cell = move |row: usize, column: usize| {
+                    columns[column]
+                        .get(row)
+                        .map(|value| {
+                            value
+                                .str_value()
+                                .into_owned()
+                        })
+                        .unwrap_or_default()
+                };
+                polaroid_iced::table(headings).rows(frame.height(), cell)
+            }
+            (None, Some(Ok(columns))) => {
+                let headings = columns
+                    .iter()
+                    .map(|(name, dtype)| heading(name, dtype))
+                    .collect();
+                polaroid_iced::table(headings)
+            }
             _ => return None,
         };
         // it takes what the card has left over, and its first rows at the least

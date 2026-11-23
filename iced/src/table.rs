@@ -1,4 +1,4 @@
-//! A frame as a table under its columns; only the cells in view are drawn, whatever its size.
+//! A table under its headings: only the cells in view are drawn, whatever its size.
 
 use iced::alignment::Vertical;
 use iced::font::Weight;
@@ -6,84 +6,73 @@ use iced::keyboard::{self, Key};
 use iced::widget::canvas::{self, Frame};
 use iced::widget::text;
 use iced::{Color, Font, Point, Rectangle, Renderer, Size, Theme, mouse};
-use polaroid_iced::width_of;
 
-use super::NOTE;
-use crate::polars::prelude::{Column, DataFrame, DataType};
+use crate::width_of;
 
-pub const ROW: f32 = 20.0;
-/// The height of the names of the columns over their types.
-pub const HEADER: f32 = 38.0;
+/// The height of a row, and of the names of the columns over their kinds.
+const ROW: f32 = 20.0;
+const HEADER: f32 = 38.0;
 const COLUMN: f32 = 140.0;
 const PAD: f32 = 6.0;
+const TEXT: f32 = 12.0;
 
 /// A row and a column.
 type Cell = (usize, usize);
 
-/// The columns of a node by name and type, over its rows if a Run saved them.
-pub struct Table<'a> {
-    columns: Vec<(&'a str, &'a DataType)>,
-    frame: Option<&'a DataFrame>,
+/// What heads a column: its name over its kind; cells of numbers are set to the right.
+pub struct Heading<'a> {
+    pub name: &'a str,
+    pub kind: String,
+    pub is_numeric: bool,
 }
 
+/// A table of these columns and no rows, to draw on a canvas.
+pub fn table(columns: Vec<Heading<'_>>) -> Table<'_> {
+    Table {
+        columns,
+        cells: None,
+    }
+}
+
+/// Columns over their rows, if it has any; it publishes the text that Ctrl+C copies from it.
+pub struct Table<'a> {
+    columns: Vec<Heading<'a>>,
+    /// How many rows there are, and the text of the cell of a row and a column.
+    cells: Option<(usize, Cells<'a>)>,
+}
+
+/// What gives the text of the cell of a row and a column.
+type Cells<'a> = Box<dyn Fn(usize, usize) -> String + 'a>;
+
 impl<'a> Table<'a> {
-    pub fn of(frame: &'a DataFrame) -> Self {
-        Self {
-            columns: frame
-                .columns()
-                .iter()
-                .map(|column| {
-                    (
-                        column
-                            .name()
-                            .as_str(),
-                        column.dtype(),
-                    )
-                })
-                .collect(),
-            frame: Some(frame),
-        }
+    /// Gives it this many rows, numbered on the left, with `cell` for the text of each cell.
+    pub fn rows(
+        mut self,
+        rows: usize,
+        cell: impl Fn(usize, usize) -> String + 'a,
+    ) -> Self {
+        self.cells = Some((rows, Box::new(cell)));
+        self
     }
 
-    /// A table of no rows, as a Check finds the columns alone.
-    pub fn listing(columns: &'a [(String, DataType)]) -> Self {
-        Self {
-            columns: columns
-                .iter()
-                .map(|(name, dtype)| (name.as_str(), dtype))
-                .collect(),
-            frame: None,
-        }
-    }
-
-    /// The least height that shows it: its header, and up to five of its rows if it has any.
+    /// The least height that shows it: its header, and up to five of its rows if it was given any.
     pub fn least(&self) -> f32 {
-        match self.frame {
-            Some(frame) => {
-                HEADER
-                    + ROW
-                        * frame
-                            .height()
-                            .clamp(1, 5) as f32
-            }
+        match self.cells {
+            Some((rows, _)) => HEADER + ROW * rows.clamp(1, 5) as f32,
             None => HEADER,
         }
     }
 
-    fn rows(&self) -> usize {
-        self.frame
-            .map_or(0, DataFrame::height)
+    fn height(&self) -> usize {
+        self.cells
+            .as_ref()
+            .map_or(0, |(rows, _)| *rows)
     }
 
     /// The width of the numbers of the rows, left of the cells.
     fn gutter(&self) -> f32 {
-        match self.frame {
-            Some(frame) => {
-                let last = frame
-                    .height()
-                    .to_string();
-                2.0 * PAD + width_of(&last, NOTE, Font::DEFAULT)
-            }
+        match self.cells {
+            Some((rows, _)) => 2.0 * PAD + width_of(&rows.to_string(), TEXT, Font::DEFAULT),
             None => 0.0,
         }
     }
@@ -118,7 +107,7 @@ impl<'a> Table<'a> {
             view.row as usize + (down / ROW) as usize,
             (along / COLUMN) as usize,
         );
-        (cell.0 < self.rows() && cell.1 < self.columns.len()).then_some(cell)
+        (cell.0 < self.height() && cell.1 < self.columns.len()).then_some(cell)
     }
 
     /// The selected cells as tab-separated lines, headed by their names unless it is one cell.
@@ -127,26 +116,20 @@ impl<'a> Table<'a> {
         view: &View,
     ) -> Option<String> {
         let ((top, left), (bottom, right)) = view.span()?;
-        let columns = self
-            .frame?
-            .columns()
-            .get(left..=right)?;
-        let names = (top, left) != (bottom, right);
-        let header = names.then(|| {
-            columns
+        let (_, cell) = self
+            .cells
+            .as_ref()?;
+        let is_headed = (top, left) != (bottom, right);
+        let header = is_headed.then(|| {
+            self.columns[left..=right]
                 .iter()
-                .map(|column| {
-                    column
-                        .name()
-                        .to_string()
-                })
+                .map(|column| column.name)
                 .collect::<Vec<_>>()
                 .join("\t")
         });
         let rows = (top..=bottom).map(|row| {
-            columns
-                .iter()
-                .map(|column| value(column, row))
+            (left..=right)
+                .map(|column| cell(row, column))
                 .collect::<Vec<_>>()
                 .join("\t")
         });
@@ -184,7 +167,6 @@ impl View {
     }
 }
 
-/// A table publishes the text that Ctrl+C copies from it.
 impl canvas::Program<String> for Table<'_> {
     type State = View;
 
@@ -195,7 +177,7 @@ impl canvas::Program<String> for Table<'_> {
         bounds: Rectangle,
         cursor: mouse::Cursor,
     ) -> Option<canvas::Action<String>> {
-        let shape = (self.rows(), self.columns.len());
+        let shape = (self.height(), self.columns.len());
         if view.shape != shape {
             *view = View {
                 shape,
@@ -254,7 +236,7 @@ impl canvas::Program<String> for Table<'_> {
                 };
                 let shown = (body.height / ROW).floor() as f64;
                 // less a row at the least, so that the last one stays in view
-                let last = (self.rows() as f64 - shown.max(1.0)).max(0.0);
+                let last = (self.height() as f64 - shown.max(1.0)).max(0.0);
                 let width = self.columns.len() as f32 * COLUMN;
                 let right = (width - body.width).max(0.0);
                 // a table that is all in view leaves the wheel to what it lies on
@@ -285,7 +267,7 @@ impl canvas::Program<String> for Table<'_> {
         let body = self.body(bounds.size());
 
         let first = view.row.floor() as usize;
-        let rows = first..(first + (body.height / ROW).ceil() as usize + 1).min(self.rows());
+        let rows = first..(first + (body.height / ROW).ceil() as usize + 1).min(self.height());
         let left = (view.x / COLUMN) as usize;
         let shown =
             left..(left + (body.width / COLUMN).ceil() as usize + 1).min(self.columns.len());
@@ -311,24 +293,23 @@ impl canvas::Program<String> for Table<'_> {
         // the numbers of the rows stay put, left of whatever is scrolled to
         for row in rows.clone() {
             let number = (row + 1).to_string();
-            frame.fill_text(cell(&number, 0.0, down(row), body.x, true, muted));
+            frame.fill_text(line(&number, 0.0, down(row), body.x, true, muted));
         }
-        // the names and types of the columns scroll along with their cells
+        // the names and kinds of the columns scroll along with their cells
         let header = Rectangle::new(Point::new(body.x, 0.0), Size::new(body.width, HEADER));
         frame.with_clip(header, |frame| {
             for index in shown.clone() {
-                let (name, dtype) = self.columns[index];
-                let numeric = dtype.is_numeric();
+                let column = &self.columns[index];
+                let numeric = column.is_numeric;
                 let x = along(index);
                 frame.fill_text(canvas::Text {
                     font: bold,
-                    ..cell(name, x, 0.0, COLUMN, numeric, ink)
+                    ..line(column.name, x, 0.0, COLUMN, numeric, ink)
                 });
-                let dtype = dtype.to_string();
-                frame.fill_text(cell(&dtype, x, HEADER - ROW, COLUMN, numeric, muted));
+                frame.fill_text(line(&column.kind, x, HEADER - ROW, COLUMN, numeric, muted));
             }
         });
-        let Some(table) = self.frame else {
+        let Some((_, cell)) = &self.cells else {
             return vec![frame.into_geometry()];
         };
         frame.with_clip(body, |frame| {
@@ -346,13 +327,10 @@ impl canvas::Program<String> for Table<'_> {
                 frame.fill_rectangle(Point::new(along(c0), down(r0)), size, selected);
             }
             for index in shown {
-                let column = &table.columns()[index];
-                let numeric = column
-                    .dtype()
-                    .is_numeric();
+                let numeric = self.columns[index].is_numeric;
                 for row in rows.clone() {
-                    let value = value(column, row);
-                    frame.fill_text(cell(&value, along(index), down(row), COLUMN, numeric, ink));
+                    let text = cell(row, index);
+                    frame.fill_text(line(&text, along(index), down(row), COLUMN, numeric, ink));
                 }
             }
         });
@@ -372,22 +350,8 @@ impl canvas::Program<String> for Table<'_> {
     }
 }
 
-fn value(
-    column: &Column,
-    row: usize,
-) -> String {
-    column
-        .get(row)
-        .map(|value| {
-            value
-                .str_value()
-                .into_owned()
-        })
-        .unwrap_or_default()
-}
-
 /// A line of text in a cell of this `width` at `x` and `y`, numbers to the right.
-fn cell(
+fn line(
     content: &str,
     x: f32,
     y: f32,
@@ -403,7 +367,7 @@ fn cell(
         content: content.to_owned(),
         position: Point::new(x, y + ROW / 2.0),
         color,
-        size: NOTE.into(),
+        size: TEXT.into(),
         align_x,
         align_y: Vertical::Center,
         max_width: width - 2.0 * PAD,

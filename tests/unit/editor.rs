@@ -1,5 +1,6 @@
 use iced_test::simulator;
 
+use super::known::Status;
 use super::*;
 
 /// A chain of `limit`s below a scan, each reading the one before.
@@ -37,7 +38,11 @@ fn status(editor: &Editor) -> Vec<Status> {
         .pipeline
         .nodes
         .iter()
-        .map(|node| editor.status(&node.id))
+        .map(|node| {
+            editor
+                .known
+                .status(&node.id)
+        })
         .collect()
 }
 
@@ -170,6 +175,7 @@ fn a_run_keeps_the_saved_frames_and_a_rerun_does_not() {
     let _ = editor.update(Message::Run);
     assert!(
         editor
+            .known
             .frame("n1")
             .is_some()
     );
@@ -178,6 +184,7 @@ fn a_run_keeps_the_saved_frames_and_a_rerun_does_not() {
     let _ = editor.update(Message::Rerun);
     assert!(
         editor
+            .known
             .frame("n1")
             .is_none()
     );
@@ -206,7 +213,11 @@ fn a_run_has_the_writes_done() {
             ui: Value::Null,
         });
     editor.check_wiring();
-    assert_eq!(editor.writes, ["written"]);
+    // a Run is to have it write, though it is no output
+    let (_, targets, _) = editor
+        .known
+        .plan(&editor.pipeline, false);
+    assert_eq!(targets, ["written"]);
 
     let _ = editor.update(Message::Run);
     let _ = editor.update(Message::Ran(vec!["written".to_owned()], Ok(vec![])));
@@ -442,11 +453,7 @@ fn a_closed_card_is_as_wide_as_its_id_and_wires_by_its_ports_alone() {
 }
 
 #[test]
-fn an_open_card_is_resized_and_its_table_shows_five_rows_at_the_least() {
-    use table::{HEADER, ROW, Table};
-
-    use crate::polars::prelude::df;
-
+fn an_open_card_is_resized_to_whole_pixels() {
     let mut editor = chain(1);
     let _ = editor.update(Message::Resize("n0".to_owned(), Size::new(300.4, 200.6)));
     assert_eq!(
@@ -458,12 +465,6 @@ fn an_open_card_is_resized_and_its_table_shows_five_rows_at_the_least() {
         Size::new(300.0, 201.0)
     );
     assert!(editor.is_dirty);
-
-    let rows = |rows: i32| df!("x" => (0..rows).collect::<Vec<_>>()).unwrap();
-    assert_eq!(Table::of(&rows(0)).least(), HEADER + ROW);
-    assert_eq!(Table::of(&rows(3)).least(), HEADER + 3.0 * ROW);
-    assert_eq!(Table::of(&rows(40)).least(), HEADER + 5.0 * ROW);
-    assert_eq!(Table::listing(&[]).least(), HEADER);
 }
 
 #[test]

@@ -1,5 +1,6 @@
 //! An expression laid out as its chain of calls: the root, then one call to a line.
 
+use std::collections::BTreeSet;
 use std::iter::successors;
 
 use iced::widget::{PickList, column, container, mouse_area, pick_list, row, text_input};
@@ -7,7 +8,7 @@ use iced::{Center, Element, Fill, Font, Function, Widget, padding};
 use polaroid_iced::width_of;
 use serde_json::Value;
 
-use super::{Expressions, Form, Message, Tone, small};
+use super::{self as form, Expressions, Form, Tone, small};
 use crate::methods::{self, Method};
 use crate::schema;
 
@@ -23,13 +24,141 @@ const INDENT: f32 = 20.0;
 /// Arguments longer than this are not written while folded away.
 const WRITTEN: usize = 32;
 
+/// What a chain shows that its expression does not hold.
+#[derive(Debug, Default)]
+pub struct State {
+    /// The calls whose arguments are laid out, by the JSON pointers to their nodes.
+    pub(super) expanded: BTreeSet<String>,
+    /// The namespace whose methods are offered, and the pointer to the expression to call on.
+    namespace: Option<(String, &'static str)>,
+}
+
+/// What a chain asks for.
+#[derive(Debug, Clone)]
+pub enum Message {
+    /// Lay out the arguments of the call at this pointer, or fold them away.
+    Toggle(String),
+    /// Offer the methods of this namespace to call on the expression at this pointer.
+    Narrow(String, &'static str),
+    /// Call this Method on the expression at this pointer.
+    Call(String, &'static Method),
+    /// Put a call of this Method at this pointer, on the receiver that is there.
+    Replace(String, &'static Method),
+    /// Take the call at this pointer away and leave its receiver, or a hole.
+    Remove(String),
+}
+
+impl State {
+    /// Does what `message` asks to the expressions in `value`, and returns whether it changed.
+    pub fn update(
+        &mut self,
+        message: Message,
+        value: &mut Value,
+    ) -> bool {
+        match message {
+            Message::Toggle(at) => {
+                if !self
+                    .expanded
+                    .remove(&at)
+                {
+                    self.expanded
+                        .insert(at);
+                }
+                false
+            }
+            Message::Narrow(at, namespace) => {
+                self.namespace = Some((at, namespace));
+                false
+            }
+            Message::Call(at, method) => {
+                let Some(node) = value.pointer_mut(&at) else {
+                    return false;
+                };
+                *node = method.call(node.take());
+
+                // what was here is the receiver now, if the call takes one
+                match method
+                    .receiver
+                    .as_deref()
+                {
+                    Some(receiver) => self.relocate(&at, Some(""), receiver),
+                    None => self.relocate(&at, None, ""),
+                }
+                if method.inputs.len() + method.options.len() > 0 {
+                    self.expanded
+                        .insert(at);
+                }
+                true
+            }
+            // another call in its place is a call on what it leaves; the same again is no change
+            Message::Replace(at, method) => {
+                let is_same = value
+                    .pointer(&at)
+                    .and_then(methods::read)
+                    == Some(method);
+                if is_same {
+                    return false;
+                }
+                self.update(Message::Remove(at.clone()), value);
+                self.update(Message::Call(at, method), value)
+            }
+            Message::Remove(at) => {
+                let Some(node) = value.pointer_mut(&at) else {
+                    return false;
+                };
+                let old = methods::read(node).and_then(|method| {
+                    method
+                        .receiver
+                        .as_deref()
+                });
+                *node = old
+                    .and_then(|old| node.pointer_mut(old))
+                    .map(Value::take)
+                    .unwrap_or_default();
+                self.relocate(&at, old, "");
+                true
+            }
+        }
+    }
+
+    /// Follows a change to the node at `at`: what was at `from` below it is at `to`, the rest gone.
+    pub(super) fn relocate(
+        &mut self,
+        at: &str,
+        from: Option<&str>,
+        to: &str,
+    ) {
+        // what is left of `pointer` below `root`, if it is there or below
+        fn below<'a>(
+            pointer: &'a str,
+            root: &str,
+        ) -> Option<&'a str> {
+            pointer
+                .strip_prefix(root)
+                .filter(|rest| rest.is_empty() || rest.starts_with('/'))
+        }
+
+        self.expanded = std::mem::take(&mut self.expanded)
+            .into_iter()
+            .filter_map(|pointer| {
+                let Some(rest) = below(&pointer, at) else {
+                    return Some(pointer);
+                };
+                let rest = below(rest, from?)?;
+                Some(format!("{at}{to}{rest}"))
+            })
+            .collect();
+        self.namespace = None;
+    }
+}
+
 impl<'a> Form<'a, '_> {
     /// The expression `value` at the pointer `at` as its chain; a hole offers the functions.
     pub(super) fn chain(
         self,
         value: &'a Value,
         at: String,
-    ) -> Element<'a, Message> {
+    ) -> Element<'a, form::Message> {
         // the nodes from the last call back to the root, each with the Method it is a call of
         let read = |node: &'a Value, pointer: String| (methods::read(node), node, pointer);
         let links: Vec<_> = successors(Some(read(value, at.clone())), |(method, node, pointer)| {
@@ -50,7 +179,7 @@ impl<'a> Form<'a, '_> {
             .map(|(method, node, pointer)| match method {
                 Some(method) => self.call(method, node, pointer),
                 None if node.is_null() => pick(None, choices(None), label, "pl.…")
-                    .on_select(Message::Replace.with(pointer))
+                    .on_select(move |method| asked(Message::Replace(pointer.clone(), method)))
                     .boxed(),
                 None => self.plain(&self.defs["Expr"], node, pointer, Tone::Given),
             });
@@ -75,7 +204,7 @@ impl<'a> Form<'a, '_> {
         method: &'static Method,
         node: &'a Value,
         at: String,
-    ) -> Element<'a, Message> {
+    ) -> Element<'a, form::Message> {
         // the namespace of a method; it may be replaced by those that are called the same way
         let called = method
             .receiver
@@ -86,12 +215,15 @@ impl<'a> Form<'a, '_> {
             Some("") => ".".to_owned(),
             Some(namespace) => format!(".{namespace}."),
         };
-        let name = pick(Some(method), choices(called), label, "")
-            .on_select(Message::Replace.with(at.clone()));
-        let remove = small("×", Message::Remove(at.clone()));
-        let toggle =
-            |label: &str| mouse_area(code(label)).on_double_click(Message::Toggle(at.clone()));
-        let line = |after: Element<'a, Message>| {
+        let name = pick(Some(method), choices(called), label, "").on_select({
+            let at = at.clone();
+            move |method| asked(Message::Replace(at.clone(), method))
+        });
+        let remove = small("×", asked(Message::Remove(at.clone())));
+        let toggle = |label: &str| {
+            mouse_area(code(label)).on_double_click(asked(Message::Toggle(at.clone())))
+        };
+        let line = |after: Element<'a, form::Message>| {
             row![
                 code(before),
                 name,
@@ -111,6 +243,7 @@ impl<'a> Form<'a, '_> {
         }
         if !self
             .state
+            .chain
             .expanded
             .contains(&at)
         {
@@ -160,12 +293,12 @@ impl<'a> Form<'a, '_> {
         method: &Method,
         node: &'a Value,
         at: &str,
-    ) -> Option<Element<'a, Message>> {
+    ) -> Option<Element<'a, form::Message>> {
         let option = method
             .options
             .first()?;
         let value = node.pointer(&option.at)?;
-        let put = Message::Put.with(format!("{at}{}", option.at));
+        let put = form::Message::Put.with(format!("{at}{}", option.at));
 
         match method.kind.as_str() {
             "/Column" => {
@@ -214,13 +347,17 @@ impl<'a> Form<'a, '_> {
     fn add(
         self,
         at: String,
-    ) -> Element<'a, Message> {
-        let narrowed = match &self.state.namespace {
+    ) -> Element<'a, form::Message> {
+        let narrowed = match &self
+            .state
+            .chain
+            .namespace
+        {
             Some((pointer, namespace)) if *pointer == at => *namespace,
             _ => {
                 return row![
                     code("."),
-                    small("+", Message::Narrow(at, ""))
+                    small("+", asked(Message::Narrow(at, "")))
                 ]
                 .align_y(Center)
                 .boxed();
@@ -249,10 +386,12 @@ impl<'a> Form<'a, '_> {
             "" => "(none)".to_owned(),
             namespace => namespace.to_owned(),
         };
-        let namespace = pick(selected, namespaces, named, "namespace")
-            .on_select(Message::Narrow.with(at.clone()));
-        let method =
-            pick(None, choices(Some(narrowed)), label, "method").on_select(Message::Call.with(at));
+        let namespace = pick(selected, namespaces, named, "namespace").on_select({
+            let at = at.clone();
+            move |namespace| asked(Message::Narrow(at.clone(), namespace))
+        });
+        let method = pick(None, choices(Some(narrowed)), label, "method")
+            .on_select(move |method| asked(Message::Call(at.clone(), method)));
 
         row![
             code("."),
@@ -264,6 +403,11 @@ impl<'a> Form<'a, '_> {
         .align_y(Center)
         .boxed()
     }
+}
+
+/// What a chain asks for, as the form that it is part of passes it on.
+fn asked(message: Message) -> form::Message {
+    form::Message::Chain(message)
 }
 
 /// The functions, or the methods of `namespace`, the most picked first.
@@ -302,7 +446,7 @@ fn pick<'a, T: Clone + PartialEq + 'a>(
     options: Vec<T>,
     label: impl Fn(&T) -> String + 'a,
     placeholder: &str,
-) -> PickList<'a, T, Vec<T>, T, Message> {
+) -> PickList<'a, T, Vec<T>, T, form::Message> {
     let text = selected
         .as_ref()
         .map_or_else(|| placeholder.to_owned(), &label);

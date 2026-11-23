@@ -4,8 +4,10 @@ mod measure;
 mod menu;
 mod split;
 mod surface;
+mod table;
 
 pub use measure::width_of;
 pub use menu::{Menu, menu};
 pub use split::{Split, split};
 pub use surface::{Card, Surface, card, surface};
+pub use table::{Heading, Table, table};
