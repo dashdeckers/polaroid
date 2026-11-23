@@ -192,3 +192,33 @@ fn a_value_is_given_the_default_or_missing() {
         Tone::Default
     );
 }
+
+#[test]
+fn a_number_that_is_being_typed_is_shown_but_not_put_in_the_value() -> Result<(), Error> {
+    let catalog = Registry::with_polars().catalog();
+    let defs = &catalog["$defs"];
+    let schema = resolve(defs, &catalog["blocks"]["limit"]["args"]);
+    let mut state = State::default();
+    let mut args = json!({ "n": 1 });
+    let typed = |text: &str| Message::Type("/n".to_owned(), text.to_owned());
+
+    // on its way to a number it is none, and is shown as it was typed
+    assert!(state.update(typed("1."), &mut args));
+    assert_eq!(args, json!({ "n": null }));
+    simulator(view(&state, defs, schema, &args, vec![], None, 0.0)).find("1.")?;
+    // more of what is no number changes nothing
+    assert!(!state.update(typed("1.e"), &mut args));
+
+    assert!(state.update(typed("15"), &mut args));
+    assert_eq!(args, json!({ "n": 15 }));
+
+    // what else is done ends the typing, and the field shows the value again
+    assert!(state.update(typed("-"), &mut args));
+    let _ = state.update(Message::Toggle(String::new()), &mut args);
+    let mut ui = simulator(view(&state, defs, schema, &args, vec![], None, 0.0));
+    assert!(
+        ui.find("-")
+            .is_err()
+    );
+    Ok(())
+}

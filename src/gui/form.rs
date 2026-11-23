@@ -32,6 +32,8 @@ pub struct State {
     expanded: BTreeSet<String>,
     /// The namespace whose methods are offered, and the pointer to the expression to call on.
     namespace: Option<(String, &'static str)>,
+    /// The pointer to the number being typed, and its text, which may be no number yet.
+    typing: Option<(String, String)>,
 }
 
 /// What a form asks for.
@@ -39,6 +41,8 @@ pub struct State {
 pub enum Message {
     /// Put a value at a JSON pointer.
     Put(String, Value),
+    /// Put the number that this text writes at a JSON pointer, or none if it writes none yet.
+    Type(String, String),
     /// Take the array element at a JSON pointer away.
     Drop(String),
     /// Lay out the arguments of the call at this pointer, or fold them away.
@@ -60,8 +64,19 @@ impl State {
         message: Message,
         value: &mut Value,
     ) -> bool {
+        // a number is being typed for as long as nothing else is done
+        self.typing = None;
         match message {
             Message::Put(at, new) => put(value, &at, Some(new)),
+            Message::Type(at, typed) => {
+                let new = number(&typed).map_or(Value::Null, Value::from);
+                let is_changed = value
+                    .pointer(&at)
+                    .is_none_or(|old| *old != new);
+                put(value, &at, Some(new));
+                self.typing = Some((at, typed));
+                return is_changed;
+            }
             Message::Drop(at) => {
                 put(value, &at, None);
                 // the later elements move down, away from the marks under the array
@@ -549,14 +564,25 @@ impl<'a> Form<'a, '_> {
                     .boxed()
             }
             "integer" | "number" => {
-                let typed = match value {
-                    Value::String(typed) => typed.clone(),
+                // as it is being typed here, or else as the number that it is
+                let typing = self
+                    .state
+                    .typing
+                    .as_ref()
+                    .filter(|(pointer, _)| *pointer == at)
+                    .map(|(_, typed)| typed.clone());
+                // text that writes no number is none, and shown as one that is missing
+                let tone = match &typing {
+                    Some(typed) if !typed.is_empty() && number(typed).is_none() => Tone::Missing,
+                    _ => tone,
+                };
+                let typed = typing.unwrap_or_else(|| match value {
                     // none yet is an empty field, to type one in
                     Value::Null => String::new(),
                     number => number.to_string(),
-                };
+                });
                 text_input("", typed)
-                    .on_input(move |typed| put(number(&typed).map_or(typed.into(), Value::from)))
+                    .on_input(Message::Type.with(at))
                     .width(Fill.max(100))
                     .size(SIZE)
                     .padding(4)
