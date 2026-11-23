@@ -113,6 +113,12 @@ pub fn open(
     log::set_max_level(log::LevelFilter::Warn);
     let registry = Arc::new(registry);
     let path = path.to_owned();
+    // DirectX on Windows, where Intel's Vulkan driver shows frames it has not finished drawing
+    #[cfg(windows)]
+    if std::env::var_os("WGPU_BACKEND").is_none() {
+        // SAFETY: on Windows the environment may be set from any thread
+        unsafe { std::env::set_var("WGPU_BACKEND", "dx12") };
+    }
 
     iced::application(
         move || {
