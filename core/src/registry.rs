@@ -71,22 +71,24 @@ impl Registry {
     /// The standard Polars repertoire.
     pub fn with_polars() -> Self {
         Self::default()
-            .category("Read and write")
+            .category("Source / Sink")
             .register::<io::ScanParquet, _>("scan_parquet")
             .register::<io::WriteParquet, _>("write_parquet")
-            // as many rows out as in
-            .category("Keep rows")
+            // as many rows out as in, with other columns
+            .category("Transform")
             .register::<frames::WithColumns, _>("with_columns")
-            .register::<frames::Rename, _>("rename")
-            .register::<frames::Drop, _>("drop")
-            .register::<frames::Sort, _>("sort")
-            // other rows out than in, or other columns altogether
-            .category("Reshape")
             .register::<frames::Select, _>("select")
+            .register::<frames::Rename, _>("rename")
+            .register::<frames::Sort, _>("sort")
+            // fewer rows or columns out than in, and those as they were
+            .category("Filter")
             .register::<frames::Filter, _>("filter")
+            .register::<frames::Drop, _>("drop")
             .register::<frames::Limit, _>("limit")
             .register::<frames::Unique, _>("unique")
             .register::<frames::DropNulls, _>("drop_nulls")
+            // other rows out than in
+            .category("Reshape")
             .register::<frames::GroupBy, _>("group_by")
             .register::<frames::Join, _>("join")
             .register::<frames::Concat, _>("concat")
