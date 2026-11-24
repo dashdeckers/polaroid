@@ -1,6 +1,8 @@
-use std::collections::HashSet;
+use std::collections::HashMap;
+use std::fs::{File, OpenOptions};
+use std::io::{ErrorKind, Write};
 use std::num::NonZeroUsize;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use file_format::FileFormat;
@@ -192,6 +194,9 @@ pub struct WriteFiles {
     /// Column of the extensions of the files, such as svg; where it is none, the bytes tell it.
     #[serde(default)]
     pub extension: Option<ColumnName>,
+    /// Replace the files that are there; without it, one that is there stops every write.
+    #[serde(default)]
+    pub overwrite_existing: bool,
 }
 
 /// A folder in the path of every file.
@@ -236,6 +241,78 @@ impl WriteFiles {
         }
         Ok(())
     }
+
+    /// The path and value of the file of each row that has a value: every name valid, none twice.
+    fn files<'a>(
+        &self,
+        frame: &'a DataFrame,
+    ) -> PolarsResult<Vec<(PathBuf, &'a [u8])>> {
+        let text = |column: &ColumnName| {
+            frame
+                .column(&column.0)?
+                .str()
+        };
+        let values = frame
+            .column(&self.column.0)?
+            .binary()?;
+        let names = text(&self.name)?;
+        let extensions = self
+            .extension
+            .as_ref()
+            .map(text)
+            .transpose()?;
+        // a text is a column of it in every row
+        let subfolders = self
+            .subfolders
+            .iter()
+            .map(|subfolder| match subfolder {
+                Subfolder::Text(folder) => Ok(StringChunked::full(
+                    PlSmallStr::EMPTY,
+                    folder,
+                    frame.height(),
+                )),
+                Subfolder::Column(column) => text(column).cloned(),
+            })
+            .collect::<PolarsResult<Vec<_>>>()?;
+
+        let mut files = Vec::new();
+        // the row of each path in lower case, as some file systems do not tell A from a
+        let mut rows = HashMap::new();
+        for row in 0..frame.height() {
+            let Some(value) = values.get(row) else {
+                continue;
+            };
+            let Some(name) = names.get(row) else {
+                polars_bail!(ComputeError: "row {row}: the file has no name");
+            };
+            let extension = match extensions.and_then(|extensions| extensions.get(row)) {
+                Some(extension) => extension
+                    .strip_prefix('.')
+                    .unwrap_or(extension)
+                    .to_owned(),
+                None => extension_of(value, row)?,
+            };
+            let mut path = PathBuf::from(&self.folder);
+            for subfolder in &subfolders {
+                if let Some(folder) = subfolder.get(row) {
+                    path.push(valid(folder, row)?);
+                }
+            }
+            let file = format!("{}.{extension}", valid(name, row)?);
+            path.push(valid(&file, row)?);
+            let key = path
+                .to_string_lossy()
+                .to_lowercase();
+            if let Some(first) = rows.insert(key, row) {
+                polars_bail!(
+                    ComputeError: "rows {first} and {row} write '{}', in letter case or not",
+                    path.display()
+                );
+            }
+            files.push((path, value));
+        }
+        Ok(files)
+    }
 }
 
 impl Block for WriteFiles {
@@ -249,74 +326,71 @@ impl Block for WriteFiles {
         let lf = checked(lf, move |schema| block.check(schema));
 
         let write = move |frame: DataFrame| {
-            let text = |column: &ColumnName| {
-                frame
-                    .column(&column.0)?
-                    .str()
-            };
-            let values = frame
-                .column(&this.column.0)?
-                .binary()?;
-            let names = text(&this.name)?;
-            let extensions = this
-                .extension
-                .as_ref()
-                .map(text)
-                .transpose()?;
-            // a text is a column of it in every row
-            let subfolders = this
-                .subfolders
+            let files = this.files(&frame)?;
+            if !this.overwrite_existing {
+                let there: Vec<_> = files
+                    .iter()
+                    .filter(|(path, _)| path.exists())
+                    .map(|(path, _)| format!("'{}'", path.display()))
+                    .collect();
+                polars_ensure!(
+                    there.is_empty(),
+                    ComputeError: "{} of the files are there already, such as {}, and \
+                    overwrite_existing is off",
+                    there.len(),
+                    there[..there.len().min(SHOWN)].join(", ")
+                );
+            }
+            for (done, (path, value)) in files
                 .iter()
-                .map(|subfolder| match subfolder {
-                    Subfolder::Text(folder) => Ok(StringChunked::full(
-                        PlSmallStr::EMPTY,
-                        folder,
-                        frame.height(),
-                    )),
-                    Subfolder::Column(column) => text(column).cloned(),
-                })
-                .collect::<PolarsResult<Vec<_>>>()?;
-            // the files written, to find two rows that write the same one
-            let mut written = HashSet::new();
-            for row in 0..frame.height() {
-                let Some(value) = values.get(row) else {
-                    continue;
-                };
-                let Some(name) = names.get(row) else {
-                    polars_bail!(ComputeError: "row {row}: the file has no name");
-                };
-                let extension = match extensions.and_then(|extensions| extensions.get(row)) {
-                    Some(extension) => extension
-                        .strip_prefix('.')
-                        .unwrap_or(extension)
-                        .to_owned(),
-                    None => extension_of(value, row)?,
-                };
-                let mut path = PathBuf::from(&this.folder);
-                for subfolder in &subfolders {
-                    if let Some(folder) = subfolder.get(row) {
-                        path.push(valid(folder, row)?);
-                    }
+                .enumerate()
+            {
+                let wrote = created(path, !this.overwrite_existing)
+                    .and_then(|mut file| file.write_all(value));
+                if let Err(e) = wrote {
+                    let why = match e.kind() {
+                        ErrorKind::AlreadyExists => {
+                            "it appeared while the files were written".into()
+                        }
+                        _ => e.to_string(),
+                    };
+                    polars_bail!(
+                        ComputeError: "'{}': {why}; {done} files were written and {} were not, \
+                        so '{}' is only partly updated",
+                        path.display(),
+                        files.len() - done,
+                        this.folder
+                    );
                 }
-                let file = format!("{}.{extension}", valid(name, row)?);
-                valid(&file, row)?;
-                let told = |e| polars_err!(ComputeError: "{}: {e}", path.display());
-                std::fs::create_dir_all(&path).map_err(told)?;
-                path.push(file);
-                // a file system may hold A and a to be the same file
-                let key = path
-                    .to_string_lossy()
-                    .to_lowercase();
-                let is_new = written.insert(key);
-                polars_ensure!(is_new, ComputeError: "two rows write '{}'", path.display());
-                let told = |e| polars_err!(ComputeError: "{}: {e}", path.display());
-                std::fs::write(&path, value).map_err(told)?;
             }
             Ok(false)
         };
-        // every row in one batch, so that a row is numbered as in the frame
+        // every row in one batch, so that every path is known before a file is written
         lf.sink_batches(PlanCallback::new(write), true, Some(NonZeroUsize::MAX))
     }
+}
+
+/// How many of the files that are there already an error names.
+const SHOWN: usize = 5;
+
+/// The file at `path`, empty, and its folders; if `is_new`, an error where there is one already.
+fn created(
+    path: &Path,
+    is_new: bool,
+) -> std::io::Result<File> {
+    if let Some(folder) = path.parent() {
+        std::fs::create_dir_all(folder)?;
+    }
+    let mut options = OpenOptions::new();
+    match is_new {
+        true => options.create_new(true),
+        false => options
+            .create(true)
+            .truncate(true),
+    };
+    options
+        .write(true)
+        .open(path)
 }
 
 /// The extension of a file of `bytes`, as file-format tells it; an error of `row` if it cannot.

@@ -269,8 +269,46 @@ fn write_files_writes_no_file_twice_and_none_without_a_name() {
 
     assert!(write([Some("a"), Some("b")]).is_ok());
     // a file system may hold these to be one file
-    assert!(write([Some("a"), Some("A")]).is_err());
-    assert!(write([Some("a"), None]).is_err());
+    let error = write([Some("c"), Some("C")])
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("rows 0 and 1 write"), "{error}");
+    assert!(write([Some("c"), Some("c")]).is_err());
+    assert!(write([Some("c"), None]).is_err());
+    std::fs::remove_dir_all(&folder).unwrap();
+}
+
+#[test]
+fn write_files_writes_none_of_its_files_where_one_is_there_unless_it_overwrites() {
+    let folder = folder("there");
+    let write = |overwrite: bool| {
+        let frame = df!(
+            "bytes" => [b"one".to_vec(), b"two".to_vec()],
+            "name" => ["a", "b"],
+            "type" => ["txt", "txt"],
+        )
+        .unwrap();
+        let args = json!({
+            "column": "bytes", "folder": folder, "name": "name", "extension": "type",
+            "overwrite_existing": overwrite,
+        });
+        apply("write_files", args, frame)
+    };
+    let read = |name: &str| std::fs::read(folder.join(name)).ok();
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::write(folder.join("a.txt"), "there").unwrap();
+
+    // the error names the file that is there, and no other is written
+    let error = write(false)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("a.txt"), "{error}");
+    assert_eq!(read("a.txt").as_deref(), Some(&b"there"[..]));
+    assert_eq!(read("b.txt"), None);
+
+    write(true).unwrap();
+    assert_eq!(read("a.txt").as_deref(), Some(&b"one"[..]));
+    assert_eq!(read("b.txt").as_deref(), Some(&b"two"[..]));
     std::fs::remove_dir_all(&folder).unwrap();
 }
 
