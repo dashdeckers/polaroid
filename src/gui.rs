@@ -7,7 +7,7 @@ mod form;
 mod known;
 mod layout;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -333,7 +333,7 @@ impl Editor {
             // their button is that of the mode in which nothing follows a change
             Message::Check => {
                 self.mode = Mode::Manual;
-                return self.check(Duration::ZERO);
+                return self.check(Duration::ZERO, true);
             }
             Message::Checked(checks) => {
                 self.job = None;
@@ -480,17 +480,24 @@ impl Editor {
         }
     }
 
-    /// Starts a Check, once `wait` has passed.
+    /// Starts a Check, once `wait` has passed: of every node, or of those alone that were edited
+    /// since the columns of the others were found.
     fn check(
         &mut self,
         wait: Duration,
+        is_whole: bool,
     ) -> Task<Message> {
+        let found = match is_whole {
+            true => HashMap::new(),
+            false => self.known.found(),
+        };
         let check = self
             .worker
             .clone()
             .check(
                 self.pipeline
                     .clone(),
+                found,
             );
         let check = async move {
             tokio::time::sleep(wait).await;
@@ -514,9 +521,9 @@ impl Editor {
             return Task::none();
         }
         match self.mode {
-            Mode::Live => self.check(Duration::ZERO),
+            Mode::Live => self.check(Duration::ZERO, false),
             // a change that comes while it waits takes its place
-            Mode::Delay => self.check(self.still),
+            Mode::Delay => self.check(self.still, false),
             Mode::Manual => Task::none(),
         }
     }

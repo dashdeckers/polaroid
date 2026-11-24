@@ -19,13 +19,14 @@ use crate::{Pipeline, stream};
 pub struct Worker(Arc<Mutex<Option<Child>>>);
 
 impl Worker {
-    /// Every node's columns or error.
+    /// Every node's columns or error; a node in `known` has those of that frame, unlooked at.
     pub async fn check(
         self,
         pipeline: Pipeline,
+        known: HashMap<String, DataFrame>,
     ) -> Result<BTreeMap<String, Columns>, String> {
         let checks = self
-            .ask("check", &pipeline, HashMap::new())
+            .ask("check", &pipeline, known)
             .await
             .map_err(|e| e.to_string())?;
         serde_json::from_slice(&checks).map_err(|e| e.to_string())

@@ -155,6 +155,16 @@ fn one_process_answers_one_thing_after_another_for_the_editor_alone() {
     assert!(is_well);
     assert_eq!(checks["some"]["Ok"][0][0], "x");
 
+    // and those of a node that reads a known frame, which is not looked at
+    let (_, checks) = ask(
+        &mut served,
+        "check",
+        &pipeline,
+        &[("all", df!("y" => [0; 0]).unwrap())],
+    );
+    let checks: serde_json::Value = serde_json::from_slice(&checks).unwrap();
+    assert_eq!(checks["some"]["Ok"][0][0], "y");
+
     // what fails is told, and the next thing is answered all the same
     pipeline["nodes"][1]["args"] = serde_json::json!({ "n": "two" });
     let (is_well, problem) = ask(&mut served, "collect", &pipeline, &[]);

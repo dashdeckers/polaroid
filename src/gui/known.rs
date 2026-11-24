@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use super::Columns;
-use crate::polars::prelude::{DataFrame, DataType};
+use crate::polars::prelude::{DataFrame, DataType, Field, Schema};
 use crate::{Catalog, Node, Pipeline, Registry, is_sink};
 
 /// What is known of a node, which colours the border of its card.
@@ -137,6 +137,28 @@ impl Known {
             // why a Run failed before may no longer hold
             found.failed = None;
         }
+    }
+
+    /// An empty frame of the columns found of each node, to stand in for it in a Check.
+    ///
+    /// What was found holds until the node or one it reads is edited, so only those are looked at.
+    pub fn found(&self) -> HashMap<String, DataFrame> {
+        self.found
+            .iter()
+            .filter_map(|(id, found)| {
+                let columns = found
+                    .columns
+                    .as_ref()?
+                    .as_ref()
+                    .ok()?;
+                let schema: Schema = columns
+                    .iter()
+                    .cloned()
+                    .map(|(name, dtype)| Field::new(name.into(), dtype))
+                    .collect();
+                Some((id.clone(), DataFrame::empty_with_schema(&schema)))
+            })
+            .collect()
     }
 
     /// What a Run is to compute: the pipeline to run, its targets, and the saved frames it reads.
