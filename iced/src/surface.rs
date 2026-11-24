@@ -32,6 +32,8 @@ use crate::seen::Seen;
 const STEP: f32 = 1.1;
 /// How far out and in a surface zooms.
 const ZOOM: (f32, f32) = (0.25, 2.5);
+/// How long after the last step of the wheel a zoom is settled, and is told.
+const SETTLE: Duration = Duration::from_millis(200);
 /// The radius of a port; a press twice as far from its middle still takes it.
 const PORT: f32 = 5.0;
 /// The corner of a card that resizes it.
@@ -55,6 +57,7 @@ pub fn surface<'a, Key, Message>() -> Surface<'a, Key, Message> {
         on_menu: None,
         on_open: None,
         on_swap: None,
+        on_zoom: None,
     }
 }
 
@@ -166,6 +169,7 @@ pub struct Surface<'a, Key, Message> {
     on_menu: Option<Box<dyn Fn(Point, Point) -> Message + 'a>>,
     on_open: Option<Box<dyn Fn(Key) -> Message + 'a>>,
     on_swap: Option<OnSwap<'a, Key, Message>>,
+    on_zoom: Option<Box<dyn Fn(f32) -> Message + 'a>>,
 }
 
 impl<'a, Key, Message> Surface<'a, Key, Message> {
@@ -260,6 +264,19 @@ impl<'a, Key, Message> Surface<'a, Key, Message> {
     }
 }
 
+impl<'a, Key, Message> Surface<'a, Key, Message> {
+    /// The message for how many times their size the cards are drawn, once a zoom has settled.
+    ///
+    /// A card that draws for the pixels of the screen, as a plot does, is to draw for this many more.
+    pub fn on_zoom(
+        mut self,
+        on_zoom: impl Fn(f32) -> Message + 'a,
+    ) -> Self {
+        self.on_zoom = Some(Box::new(on_zoom));
+        self
+    }
+}
+
 /// What makes the message for a card dropped on another, if there is one to make.
 type OnSwap<'a, Key, Message> = Box<dyn Fn(Key, Key, Point) -> Option<Message> + 'a>;
 
@@ -276,6 +293,8 @@ struct State<Key> {
     pressed: Option<mouse::Click>,
     /// The card that the dragged one lies on.
     swap: Option<Swap<Key>>,
+    /// When the zoom is settled, if it is not told yet.
+    settles: Option<Instant>,
 }
 
 /// A card that the dragged one lies on, which a drop swaps it with once it lay there a while.
@@ -510,6 +529,7 @@ where
             drag: None,
             pressed: None,
             swap: None,
+            settles: None,
         })
     }
 
@@ -675,6 +695,17 @@ where
             .filter(|_| cursor.is_over(bounds));
         // only the top card under the cursor is under it, and none during a drag
         let is_free = state.drag.is_none();
+        // a move tells the cards where the cursor is as they see it, as their cursor does
+        let moved = match event {
+            Event::Mouse(mouse::Event::CursorMoved { position }) => {
+                let position = *position * view.inverse();
+                Some(Event::Mouse(mouse::Event::CursorMoved { position }))
+            }
+            _ => None,
+        };
+        let seen = moved
+            .as_ref()
+            .unwrap_or(event);
 
         for (index, (card, tree)) in self
             .cards
@@ -689,7 +720,7 @@ where
             let layout = view.layout(card.at, tree);
             let viewport = *viewport * view.inverse();
             card.content
-                .update(tree, event, layout, cursor, renderer, shell, &viewport);
+                .update(tree, seen, layout, cursor, renderer, shell, &viewport);
         }
 
         let key = |index: usize| {
@@ -710,6 +741,19 @@ where
                 .get_or_insert(*now);
             swap.is_armed = *now >= since + HOVER;
             shell.request_redraw_at(since + HOVER);
+        }
+        if let Event::Window(window::Event::RedrawRequested(now)) = event
+            && let Some(settles) = state.settles
+        {
+            match *now >= settles {
+                true => {
+                    state.settles = None;
+                    if let Some(on_zoom) = &self.on_zoom {
+                        shell.publish(on_zoom(state.scale));
+                    }
+                }
+                false => shell.request_redraw_at(settles),
+            }
         }
         let Event::Mouse(event) = event else {
             return;
@@ -871,7 +915,10 @@ where
                 let held = at - bounds.position();
                 state.pan = held - (held - state.pan) * (scale / state.scale);
                 state.scale = scale;
+                let settles = Instant::now() + SETTLE;
+                state.settles = Some(settles);
                 shell.capture_event();
+                shell.request_redraw_at(settles);
                 shell.request_redraw();
             }
             _ => {}

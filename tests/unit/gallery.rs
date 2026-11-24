@@ -34,7 +34,7 @@ fn a_frame_without_images_is_no_gallery() {
     let gallery = Gallery::of(&frame);
     assert!(
         gallery
-            .view(&State::default(), 300.0, true, Help::default())
+            .view(&State::default(), 300.0, true, 1.0, Help::default())
             .is_none()
     );
 }
@@ -99,7 +99,7 @@ fn it_says_which_row_of_those_left_it_shows_when_it_is_browsed() {
     let mut state = State::default();
     let says = |state: &State, is_browsed: bool, text: &str| {
         let view = gallery
-            .view(state, 300.0, is_browsed, Help::default())
+            .view(state, 300.0, is_browsed, 1.0, Help::default())
             .expect("it has images");
         simulator(view)
             .find(text)
@@ -169,4 +169,98 @@ fn an_image_says_how_wide_and_tall_it_is() {
     assert_eq!(size(quoted), Some((640.0, 480.0)));
     assert_eq!(size(b"<svg>"), None);
     assert_eq!(size(b"%PDF"), None);
+}
+
+/// A gallery of two rows that a line plot drew, of the lists beside their images.
+#[cfg(feature = "plot")]
+fn drawn() -> Gallery {
+    let lists = |name: &str, rows: [&[f64]; 2]| -> Column {
+        let rows = rows.map(|row| Series::new("".into(), row));
+        Series::new(name.into(), rows).into()
+    };
+    let frame = df!("plot" => [image(4), image(5)])
+        .unwrap()
+        .hstack(&[
+            lists("t", [&[0.0, 1.0], &[0.0, 2.0, 3.0]]),
+            lists("v", [&[1.0, 3.0], &[2.0, 4.0, 5.0]]),
+        ])
+        .unwrap();
+    let drawer = crate::Registry::with_polars()
+        .drawer("line", serde_json::json!({ "x": "t", "y": "v" }))
+        .expect("a line is a plot")
+        .unwrap();
+    Gallery::of(&frame).live(&frame, drawer)
+}
+
+#[cfg(feature = "plot")]
+#[test]
+fn a_row_that_a_plot_drew_is_shown_live_and_says_the_point_under_the_cursor() {
+    let gallery = drawn();
+    let mut state = State::default();
+    // whether the gallery shows this
+    let shows = |state: &State, text: &str| {
+        let view = gallery
+            .view(state, 300.0, true, 1.0, Help::default())
+            .unwrap();
+        simulator(view)
+            .find(text)
+            .is_ok()
+    };
+    let hint = "over a point, its values show here";
+
+    assert!(shows(&state, "Live") && !shows(&state, hint));
+    state.update(Message::Live, &gallery);
+    assert!(shows(&state, "Image") && shows(&state, hint));
+
+    // once a frame has drawn the plot, the wheel over it is the plot's, to zoom
+    let view = gallery
+        .view(&state, 300.0, true, 1.0, Help::default())
+        .unwrap();
+    let mut ui = simulator(view);
+    ui.point_at(iced::Point::new(150.0, 100.0));
+    let frame = iced::window::Event::RedrawRequested(iced::time::Instant::now());
+    ui.simulate([iced::Event::Window(frame)]);
+    let wheel = iced::mouse::Event::WheelScrolled {
+        delta: iced::mouse::ScrollDelta::Lines { x: 0.0, y: 1.0 },
+    };
+    let taken = ui.simulate([iced::Event::Mouse(wheel)]);
+    assert_eq!(taken, [iced::event::Status::Captured]);
+
+    // the third point of the second row
+    state.update(Message::Row(1), &gallery);
+    state.update(Message::Hover(Some(2)), &gallery);
+    assert!(shows(&state, "t = 3.0,  v = 5.0"));
+    // another row has other points, and stays live
+    state.update(Message::Row(0), &gallery);
+    assert!(shows(&state, hint) && shows(&state, "Image"));
+
+    state.update(Message::Live, &gallery);
+    assert!(shows(&state, "Live") && !shows(&state, hint));
+    // closed, a card shows the image whatever is asked of it
+    state.update(Message::Live, &gallery);
+    let closed = gallery
+        .view(&state, 300.0, false, 1.0, Help::default())
+        .unwrap();
+    assert!(
+        simulator(closed)
+            .find(hint)
+            .is_err()
+    );
+}
+
+#[test]
+fn a_gallery_that_no_plot_drew_is_not_shown_live() {
+    let gallery = gallery();
+    let view = gallery
+        .view(&State::default(), 300.0, true, 1.0, Help::default())
+        .unwrap();
+    let mut ui = simulator(view);
+    assert!(
+        ui.find("Save")
+            .is_ok()
+    );
+    assert!(
+        ui.find("Live")
+            .is_err()
+    );
 }

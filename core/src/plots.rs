@@ -1,9 +1,8 @@
 //! The standard plots.
 
 use polars::prelude::*;
-use rustd3_core::series;
-use rustd3_figure::Figure;
-use rustd3_figure::helpers::chart;
+use rustd3_core::{scale, series};
+use rustd3_figure::{Figure, axis, mark};
 use schemars::JsonSchema;
 use serde::Deserialize;
 
@@ -28,6 +27,9 @@ pub struct Line {
     pub options: Options,
 }
 
+/// What the one line of a figure is called, to give it the first colour of the theme.
+const KEY: &str = "0";
+
 impl Plot for Line {
     fn columns(&self) -> Vec<&str> {
         vec![&self.x.0, &self.y.0]
@@ -43,14 +45,32 @@ impl Plot for Line {
     ) -> PolarsResult<Figure<'a>> {
         // the columns as they lie in the frame, which is not copied
         let points = series::slices(numbers(values, &self.x.0)?, numbers(values, &self.y.0)?);
-        let chart = chart::line(points)
-            .x_label(self.x.0.as_str())
-            .y_label(self.y.0.as_str());
-        Ok(match &self.title {
-            Some(title) => chart
-                .title(title.as_str())
-                .figure(),
-            None => chart.figure(),
-        })
+        // as the line that rustd3 presets, and zoomed and panned where it is shown live
+        let mut figure = Figure::new();
+        let (x, y) = (figure.fit(scale::linear()), figure.fit(scale::linear()));
+        let palette = figure
+            .get_theme()
+            .get_palette()
+            .to_vec();
+        let color = figure.scale(scale::ordinal([KEY], palette));
+        let panel = figure.panel(0, 0);
+        panel
+            .mark(mark::line(points, x, y).stroke(color, KEY))
+            .axis(
+                axis::bottom(x)
+                    .label(self.x.0.as_str())
+                    .minor(true),
+            )
+            .axis(
+                axis::left(y)
+                    .label(self.y.0.as_str())
+                    .minor(true),
+            )
+            .zoom_x(x)
+            .zoom_y(y);
+        if let Some(title) = &self.title {
+            panel.title(title.as_str());
+        }
+        Ok(figure)
     }
 }

@@ -621,3 +621,80 @@ fn a_card_that_is_pressed_comes_to_the_top() {
         .collect();
     assert_eq!(pressed, [Placed::Pressed(1)]);
 }
+
+/// A surface of one card, a field that tells the steps of a drag across it, and tells its zoom.
+fn zoomed() -> impl Widget<f32> {
+    let field = text_input("", "5").width(200);
+    let field = polaroid_iced::scrub(field).on_scrub(|steps| steps as f32);
+    surface()
+        .on_zoom(|zoom| zoom)
+        .push(card(1, Point::new(50.0, 50.0), field))
+}
+
+#[test]
+fn a_zoom_is_told_once_it_has_settled() {
+    use iced::time::{Duration, Instant};
+    use iced::window;
+
+    let frame = |after| {
+        Event::Window(window::Event::RedrawRequested(
+            Instant::now() + Duration::from_millis(after),
+        ))
+    };
+    let mut simulator = simulator(zoomed());
+    simulator.point_at(Point::new(100.0, 60.0));
+    // two steps of the wheel, and a frame before they have settled
+    let step = Event::Mouse(mouse::Event::WheelScrolled {
+        delta: ScrollDelta::Lines { x: 0.0, y: 1.0 },
+    });
+    simulator.simulate([step.clone(), step, frame(0)]);
+    simulator.simulate([frame(1000), frame(2000)]);
+
+    let told: Vec<f32> = simulator
+        .into_messages()
+        .collect();
+    assert_eq!(told.len(), 1);
+    assert!((told[0] - 1.21).abs() < 1e-4);
+}
+
+#[test]
+fn a_card_is_told_a_move_where_it_sees_it() {
+    use iced::time::{Duration, Instant};
+    use iced::window;
+
+    let start = Instant::now();
+    let frame = |after| {
+        Event::Window(window::Event::RedrawRequested(
+            start + Duration::from_secs(after),
+        ))
+    };
+    let moved = |simulator: &mut Simulator<f32>, position: Point| {
+        simulator.point_at(position);
+        simulator.simulate([Event::Mouse(
+            mouse::Event::CursorMoved { position },
+        )]);
+    };
+    let mut simulator = simulator(zoomed());
+    let from = Point::new(100.0, 60.0);
+    // the cards are a tenth larger, about where the cursor is
+    moved(&mut simulator, from);
+    simulator.simulate([Event::Mouse(
+        mouse::Event::WheelScrolled {
+            delta: ScrollDelta::Lines { x: 0.0, y: 1.0 },
+        },
+    )]);
+    moved(&mut simulator, from);
+    simulator.simulate([
+        Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+        frame(0),
+    ]);
+    // 66 pixels of the window are 60 of the card, which are ten steps of a slow drag
+    moved(&mut simulator, Point::new(from.x + 66.0, from.y));
+    simulator.simulate([frame(1)]);
+
+    let steps: Vec<f32> = simulator
+        .into_messages()
+        .filter(|told| told.fract() == 0.0)
+        .collect();
+    assert_eq!(steps, [10.0]);
+}

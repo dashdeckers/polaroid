@@ -267,3 +267,38 @@ fn a_plot_is_built_without_a_look_at_its_columns_which_a_check_takes() {
         .unwrap();
     assert_eq!(ran[0].height(), 2);
 }
+
+#[test]
+fn the_figure_of_a_row_is_drawn_over_again_of_the_values_beside_its_image() {
+    let registry = Registry::with_polars();
+    let drawn = line(json!({ "by": ["name"] }), rows()).unwrap();
+    let drawer = registry
+        .drawer("line", json!({ "x": "t", "y": "v", "by": ["name"] }))
+        .expect("a line is a plot")
+        .unwrap();
+
+    // the second group as numbers, without the row whose value is null
+    let values = drawer
+        .values(&drawn, 1)
+        .unwrap()
+        .expect("the row has an image");
+    assert!(values.equals(&df!("t" => [0.0, 2.0], "v" => [2.0, 4.0]).unwrap()));
+    assert!(
+        drawer
+            .figure(&values)
+            .is_ok()
+    );
+    assert_eq!(drawer.size, (640.0, 480.0));
+
+    // a block that is no plot draws nothing, and a plot none of args that are not its own
+    assert!(
+        registry
+            .drawer("limit", json!({ "n": 1 }))
+            .is_none()
+    );
+    assert!(
+        registry
+            .drawer("line", json!({ "x": "t" }))
+            .is_some_and(|drawer| drawer.is_err())
+    );
+}
