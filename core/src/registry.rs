@@ -75,9 +75,9 @@ impl Default for Registry {
 }
 
 impl Registry {
-    /// The standard Polars repertoire.
+    /// The standard Polars repertoire, and the standard plots if this build draws them.
     pub fn with_polars() -> Self {
-        Self::default()
+        let registry = Self::default()
             .category("Source / Sink")
             .register::<io::ScanParquet, _>("scan_parquet")
             .register::<io::WriteParquet, _>("write_parquet")
@@ -105,7 +105,12 @@ impl Registry {
             .register::<frames::Explode, _>("explode")
             // the frame out as it came in, with something of it to look at
             .category("View")
-            .register::<frames::ViewImages, _>("view_images")
+            .register::<frames::ViewImages, _>("view_images");
+        #[cfg(feature = "plot")]
+        let registry = registry
+            .category("Plot")
+            .register::<crate::plots::Line, _>("line");
+        registry
     }
 
     /// Names the category of the Blocks added from here on; without one it is "Other".

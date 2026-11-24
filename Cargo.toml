@@ -40,6 +40,7 @@ tokio = { optional = true, version = "1", features = [
 rfd = { optional = true, version = "0.18.0" }
 
 [features]
+plot = ["polaroid_core/plot"]
 gui = [
     "dep:iced",
     "dep:polaroid_iced",
@@ -64,3 +65,5 @@ members = [
 [workspace.dependencies]
 iced = { git = "https://github.com/iced-rs/iced", rev = "98bd48fe011efc0ec5819fee0fa7673a7169ff11" }
 iced_test = { git = "https://github.com/iced-rs/iced", rev = "98bd48fe011efc0ec5819fee0fa7673a7169ff11" }
+rustd3-core = { git = "https://github.com/dashdeckers/rustd3", rev = "2342fca83a44207659bfab98236837edf505273d" }
+rustd3-figure = { git = "https://github.com/dashdeckers/rustd3", rev = "2342fca83a44207659bfab98236837edf505273d" }

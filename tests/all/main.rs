@@ -3,6 +3,8 @@
 mod blocks;
 mod engine;
 mod methods;
+#[cfg(feature = "plot")]
+mod plots;
 mod render;
 mod run;
 mod schema;
