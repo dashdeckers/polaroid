@@ -35,7 +35,7 @@ use serde_json::{Map, Value};
 use super::form::{Expressions, Tone};
 use super::known::Status;
 use super::{Editor, Message, NOTE, TEXT, TITLE, cross, error, form, layout, toggle};
-use crate::polars::prelude::{DataFrame, DataType};
+use crate::polars::prelude::{AnyValue, DataFrame, DataType};
 use crate::{Described, Node, schema};
 
 /// The space around what a card holds, and between its lines.
@@ -165,6 +165,9 @@ impl Editor {
             found: self
                 .known
                 .columns(&node.id),
+            columns: self
+                .known
+                .names(&node.inputs),
             failed: self
                 .known
                 .failure(&node.id),
@@ -207,6 +210,8 @@ pub struct Card<'a> {
     is_output: bool,
     status: Status,
     found: Option<Result<&'a Vec<(String, DataType)>, &'a String>>,
+    /// The columns of the frames it reads that a Check found, which its args may name.
+    columns: Vec<String>,
     failed: Option<&'a str>,
     frame: Option<&'a DataFrame>,
     /// What its block does, as Markdown, and the theme to lay that out in.
@@ -323,7 +328,7 @@ impl<'a> Component<'a, Message> for Card<'a> {
                     markdown::view(doc.items(), settings, self.theme.clone()).map(|_| Event::Link)
                 });
                 // an expression is picked by its name, and edited in the drawer
-                let named = Expressions::Named(self.expressions);
+                let named = Expressions::Named(self.expressions, &self.columns);
                 let form = form::view(&state.form, self.defs, schema, &node.args, named, names)
                     .map(Event::Form);
                 column![
@@ -467,11 +472,7 @@ impl<'a> Card<'a> {
                 let cell = move |row: usize, column: usize| {
                     columns[column]
                         .get(row)
-                        .map(|value| {
-                            value
-                                .str_value()
-                                .into_owned()
-                        })
+                        .map(shown)
                         .unwrap_or_default()
                 };
                 polaroid_iced::table(headings).rows(frame.height(), cell)
@@ -492,6 +493,17 @@ impl<'a> Card<'a> {
             .height(height)
             .map(Event::Copy);
         Some(table)
+    }
+}
+
+/// The text of a cell that holds `value`: what is no text is told by its size.
+pub(super) fn shown(value: AnyValue) -> String {
+    match value {
+        AnyValue::Binary(bytes) => format!("{} bytes", bytes.len()),
+        AnyValue::BinaryOwned(bytes) => format!("{} bytes", bytes.len()),
+        value => value
+            .str_value()
+            .into_owned(),
     }
 }
 

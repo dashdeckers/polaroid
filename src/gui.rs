@@ -9,6 +9,7 @@ mod layout;
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 use iced::keyboard::key::Named;
 use iced::keyboard::{self, Key};
@@ -28,7 +29,6 @@ use iced::widget::{
     tooltip,
 };
 use iced::{
-    Fill,
     Function,
     Point,
     Size,
@@ -58,7 +58,7 @@ Drag from the dot on a card's right to a dot on another's left to wire them. Rig
 to unwire it, and the background to add a node there.
 
 Press the small table on a card and Run to keep its frame. A Run reads again only what was edited \
-since, and a Rerun everything.
+since, and Reload everything, from the disk on.
 
 Double-click a closed card or press its plus to lay it open, and the minus to close it. An open \
 card shows its args, and the saved frame or else the columns that Check found. Scroll over the \
@@ -68,8 +68,9 @@ select them for Ctrl+C.
 Type an id and press Enter to rename a node. The cross deletes it.
 
 A card turns red at once when it is wired badly. What is wrong with a file shows on Check, which \
-comes before a Run: its button covers Run and Rerun until every node that a Run computes is \
-checked and sound.
+comes before a Run: the button is Check until every node that a Run computes is checked and \
+sound, and Run from then on. Live has a Check and a Run follow every change, and Delay once \
+there has been none for a second.
 
 Expressions are kept in the drawer on the left, each under a name, and a card picks them by \
 that name. The Expressions button hides the drawer, and its edge is dragged to resize it.
@@ -81,6 +82,20 @@ of an empty one; either takes the place of this pipeline, and drops what was not
 const TITLE: f32 = 14.0;
 const TEXT: f32 = 13.0;
 const NOTE: f32 = 12.0;
+
+/// How long Delay waits for a change to be the last, before a Check and a Run follow it.
+const STILL: Duration = Duration::from_secs(1);
+
+/// When a Check and a Run follow a change.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Mode {
+    /// At once.
+    Live,
+    /// Once no other change has come for a while.
+    Delay,
+    /// When their button is pressed.
+    Manual,
+}
 
 /// A node's columns and their types, or its error, as the `check` command prints them.
 type Columns = Result<Vec<(String, DataType)>, String>;
@@ -147,6 +162,7 @@ struct Editor {
     problem: Option<String>,
     /// The Check or Run under way, whose child is killed when this is dropped.
     job: Option<task::Handle>,
+    mode: Mode,
     drawer: Drawer,
     is_drawer_shown: bool,
     /// What each block does, as the Markdown its description is written in.
@@ -180,7 +196,8 @@ enum Message {
     Checked(Result<BTreeMap<String, Columns>, String>),
     Run,
     /// A Run of everything, whatever was saved before.
-    Rerun,
+    Reload,
+    Mode(Mode),
     /// What a Run made of the nodes it was to save or have write.
     Ran(Vec<String>, Result<Vec<(String, DataFrame)>, String>),
     Stop,
@@ -222,6 +239,7 @@ impl Editor {
             known: Known::default(),
             problem: None,
             job: None,
+            mode: Mode::Manual,
             is_drawer_shown: true,
             docs,
             theme: Theme::Light,
@@ -261,7 +279,14 @@ impl Editor {
             Message::Menu(at, point) => self.menu = Some((at, point)),
             Message::CloseMenu => self.menu = None,
             Message::Add(block, point) => self.add(block, point),
-            Message::Edit(id, edit) => self.edit(&id, edit),
+            Message::Edit(id, edit) => {
+                // a card laid open or closed is the same node
+                let is_change = !matches!(edit, Edit::Toggle);
+                self.edit(&id, edit);
+                if is_change {
+                    return self.follow();
+                }
+            }
             Message::Load => {
                 let file = dialog().pick_file();
                 return Task::perform(file, |file| Message::Loaded(file.map(path_of)));
@@ -278,12 +303,10 @@ impl Editor {
             Message::Named(Some(path)) => self.replace(path, Pipeline::default(), true),
             Message::Loaded(None) | Message::Named(None) => {}
             Message::Save => self.save(),
+            // their button is that of the mode in which nothing follows a change
             Message::Check => {
-                let check = child::check(
-                    self.pipeline
-                        .clone(),
-                );
-                return self.start(Task::perform(check, Message::Checked));
+                self.mode = Mode::Manual;
+                return self.check(Duration::ZERO);
             }
             Message::Checked(checks) => {
                 self.job = None;
@@ -293,9 +316,22 @@ impl Editor {
                         .checked(checks),
                     Err(problem) => self.problem = Some(problem),
                 }
+                let is_sound = self
+                    .known
+                    .is_checked(&self.pipeline);
+                if self.mode != Mode::Manual && is_sound {
+                    return self.run(false);
+                }
             }
-            Message::Run => return self.run(false),
-            Message::Rerun => return self.run(true),
+            Message::Run => {
+                self.mode = Mode::Manual;
+                return self.run(false);
+            }
+            Message::Reload => return self.run(true),
+            Message::Mode(mode) => {
+                self.mode = mode;
+                return self.follow();
+            }
             Message::Ran(targets, Ok(frames)) => {
                 self.job = None;
                 self.known
@@ -306,7 +342,10 @@ impl Editor {
                 self.known
                     .failed(targets, &e);
             }
-            Message::Stop => self.job = None,
+            Message::Stop => {
+                self.mode = Mode::Manual;
+                self.job = None;
+            }
             Message::Drawer(message) => {
                 let change = self
                     .drawer
@@ -319,6 +358,7 @@ impl Editor {
                 }
                 self.is_dirty = true;
                 self.check_wiring();
+                return self.follow();
             }
             Message::ToggleDrawer => self.is_drawer_shown = !self.is_drawer_shown,
             Message::Tone(mode) => {
@@ -402,14 +442,52 @@ impl Editor {
         }
     }
 
-    /// Starts a Run of what is not saved yet, or of everything if it is a Rerun.
+    /// Starts a Check, once `wait` has passed.
+    fn check(
+        &mut self,
+        wait: Duration,
+    ) -> Task<Message> {
+        let check = child::check(
+            self.pipeline
+                .clone(),
+        );
+        let check = async move {
+            tokio::time::sleep(wait).await;
+            check.await
+        };
+        self.start(Task::perform(check, Message::Checked))
+    }
+
+    /// Has a Check follow a change as the mode says, and a Run that Check if it finds all sound.
+    ///
+    /// None follows a change that leaves the pipeline or a node that a Run computes unsound.
+    fn follow(&mut self) -> Task<Message> {
+        let is_sound = self
+            .known
+            .is_wired(&self.pipeline);
+        if self
+            .problem
+            .is_some()
+            || !is_sound
+        {
+            return Task::none();
+        }
+        match self.mode {
+            Mode::Live => self.check(Duration::ZERO),
+            // a change that comes while it waits takes its place
+            Mode::Delay => self.check(STILL),
+            Mode::Manual => Task::none(),
+        }
+    }
+
+    /// Starts a Run of what is not saved yet, or of everything if it is a Reload.
     fn run(
         &mut self,
-        is_rerun: bool,
+        is_reload: bool,
     ) -> Task<Message> {
         let (pipeline, targets, read) = self
             .known
-            .plan(&self.pipeline, is_rerun);
+            .plan(&self.pipeline, is_reload);
         let run = child::run(pipeline, read);
         self.start(Task::perform(run, Message::Ran.with(targets)))
     }
@@ -474,9 +552,14 @@ impl Editor {
             .pipeline
             .expressions;
         // every column that a Check found, for the expressions to name
+        let ids = self
+            .pipeline
+            .nodes
+            .iter()
+            .map(|node| &node.id);
         let columns = self
             .known
-            .names(&self.pipeline);
+            .names(ids);
         let drawer = self
             .drawer
             .view(&self.catalog.defs, expressions, &columns)
@@ -495,33 +578,34 @@ impl Editor {
         ]
     }
 
-    /// The drawer's button and the help, then the jobs and the files.
+    /// The drawer's button and the help, then the modes, Reload and the files.
     fn toolbar(&self) -> impl Widget<Message> + use<> {
         let save = self
             .is_dirty
             .then_some(Message::Save);
-        // a Check goes before a Run: its button covers theirs until every node is sound
+        // a Check goes before a Run: the button is a Check until every node is sound
         let is_checked = self
             .known
             .is_checked(&self.pipeline);
-        let over = match (&self.job, is_checked) {
-            (Some(_), _) => Some(("Stop", Message::Stop)),
-            (None, false) => Some(("Check", Message::Check)),
-            (None, true) => None,
-        }
-        .map(|(label, message)| {
-            button(
-                text(label)
-                    .width(Fill)
-                    .center(),
-            )
-            .width(Fill)
-            .height(Fill)
-            .on_press(message)
-        });
-        let runs = row![
-            button("Run").on_press(Message::Run),
-            button("Rerun").on_press(Message::Rerun),
+        let (manual, pressed) = match (&self.job, is_checked) {
+            (Some(_), _) => ("Stop", Message::Stop),
+            (None, false) => ("Check", Message::Check),
+            (None, true) => ("Run", Message::Run),
+        };
+        let mode = |label, mode, pressed| {
+            let style = match self.mode == mode {
+                true => button::primary,
+                false => button::secondary,
+            };
+            button(text(label).center())
+                .style(style)
+                .on_press(pressed)
+        };
+        let modes = row![
+            mode("Live", Mode::Live, Message::Mode(Mode::Live)),
+            mode("Delay", Mode::Delay, Message::Mode(Mode::Delay)),
+            // as wide whatever it says
+            mode(manual, Mode::Manual, pressed).width(64),
         ]
         .spacing(1);
         let files = row![
@@ -544,7 +628,10 @@ impl Editor {
                 .on_press(Message::ToggleDrawer),
             tooltip(container("Help").padding(5), help).position(tooltip::Position::Bottom),
             space::horizontal(),
-            stack![runs, over],
+            modes,
+            button("Reload")
+                .style(button::secondary)
+                .on_press(Message::Reload),
             files,
         ]
         .spacing(10)

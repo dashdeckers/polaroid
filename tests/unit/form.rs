@@ -263,3 +263,27 @@ fn a_number_that_is_being_typed_is_shown_but_not_put_in_the_value() -> Result<()
 fn a_description_flows_within_its_paragraphs() {
     assert_eq!(flowed("one\ntwo\n\nthree\nfour"), "one two\n\nthree four");
 }
+
+#[test]
+fn the_name_of_a_column_is_picked_from_the_columns_that_are_read() {
+    let catalog = Registry::with_polars().catalog();
+    let defs = &catalog.defs;
+    let schema = resolve(defs, &catalog.blocks["write_files"].args);
+    let (state, named) = (State::default(), Map::new());
+    let args = json!({ "column": null, "name": "to" });
+    let pick = |columns: &[String]| {
+        let named = Expressions::Named(&named, columns);
+        let mut ui = simulator(view(&state, defs, schema, &args, named, 0.0));
+        (
+            ui.find("column…")
+                .is_ok(),
+            ui.find("to")
+                .is_ok(),
+        )
+    };
+
+    // one that is not among them is shown all the same
+    assert_eq!(pick(&["plot".to_owned()]), (true, true));
+    // and until a Check finds the columns, a name is typed
+    assert_eq!(pick(&[]), (false, true));
+}

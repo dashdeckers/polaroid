@@ -8,7 +8,7 @@ use iced::{Center, Element, Fill, Font, Function, Widget, padding};
 use polaroid_iced::width_of;
 use serde_json::Value;
 
-use super::{self as form, Expressions, Form, Tone, small};
+use super::{self as form, Form, Tone, small};
 use crate::methods::{self, Method};
 use crate::schema;
 
@@ -305,10 +305,9 @@ impl<'a> Form<'a, '_> {
                 let name = value
                     .as_str()
                     .unwrap_or_default();
-                let columns = match self.expressions {
-                    Expressions::Chained(columns) => columns,
-                    Expressions::Named(_) => &[],
-                };
+                let columns = self
+                    .expressions
+                    .columns();
                 if columns.is_empty() {
                     return Some(
                         text_input("column", name)

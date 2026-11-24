@@ -35,6 +35,7 @@ iced = { optional = true, workspace = true, features = [
 tokio = { optional = true, version = "1", features = [
     "io-util",
     "process",
+    "time",
 ] }
 rfd = { optional = true, version = "0.18.0" }
 
