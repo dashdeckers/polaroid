@@ -1,19 +1,37 @@
-//! A field that a drag across it adjusts, as a slider is dragged; a press alone is the field's.
+//! A field that a drag adjusts, as a slider is dragged; a press alone is the field's.
+//!
+//! A slow drag steps evenly, to set a value exactly; a faster one steps more to the pixel.
 
 use iced::advanced::layout::{self, Layout};
 use iced::advanced::widget::{self, Tree, tree};
 use iced::advanced::{Shell, Widget, mouse, overlay, renderer};
-use iced::{Element, Event, Length, Rectangle, Renderer, Size, Theme, Vector};
+use iced::time::Instant;
+use iced::{Element, Event, Length, Point, Rectangle, Renderer, Size, Theme, Vector, window};
 
 /// How far a press is dragged before it adjusts, and how far then for each step.
 const START: f32 = 4.0;
 const STEP: f32 = 6.0;
+
+/// The pixels a second up to which a drag steps evenly.
+const SLOW: f32 = 200.0;
+/// How steeply a drag steps more as it gets faster than that, and the most it ever does.
+const POWER: f32 = 1.5;
+const MOST: f32 = 40.0;
+
+/// How many times the steps of a slow drag one at `speed` makes, in pixels a second.
+fn gain(speed: f32) -> f32 {
+    (speed / SLOW)
+        .max(1.0)
+        .powf(POWER)
+        .min(MOST)
+}
 
 /// A field that nothing adjusts until it is told what a drag asks for.
 pub fn scrub<'a, Message>(field: impl Widget<Message, Theme, Renderer> + 'a) -> Scrub<'a, Message> {
     Scrub {
         field: field._boxed(),
         on_scrub: None,
+        is_upward: false,
     }
 }
 
@@ -21,10 +39,31 @@ pub fn scrub<'a, Message>(field: impl Widget<Message, Theme, Renderer> + 'a) -> 
 pub struct Scrub<'a, Message> {
     field: Element<'a, Message>,
     on_scrub: Option<Box<dyn Fn(i32) -> Message + 'a>>,
+    /// Whether it is dragged up for more, and not to the right.
+    is_upward: bool,
 }
 
 impl<'a, Message> Scrub<'a, Message> {
-    /// What to ask for when a drag has gone this many steps further: to the right, or the left.
+    /// Has a drag up and down adjust it, and not one across it.
+    pub fn upward(mut self) -> Self {
+        self.is_upward = true;
+        self
+    }
+
+    /// How far along a drag is at `point`: more to the right, or higher up if it is dragged up.
+    fn along(
+        &self,
+        point: Point,
+    ) -> f32 {
+        match self.is_upward {
+            true => -point.y,
+            false => point.x,
+        }
+    }
+
+    /// What to ask for when a drag has gone this many steps further, or back if they are fewer.
+    ///
+    /// It is asked once a frame at the most, so that what is built of the answer is there to see.
     pub fn on_scrub(
         mut self,
         on_scrub: impl Fn(i32) -> Message + 'a,
@@ -36,9 +75,15 @@ impl<'a, Message> Scrub<'a, Message> {
 
 #[derive(Default)]
 struct State {
-    /// Where the press was, or the latest step of its drag.
+    /// How far along the press was, or its drag at the latest frame.
     pressed: Option<f32>,
+    /// How far along the drag is now.
+    along: f32,
     is_dragged: bool,
+    /// The part of a step that is not asked for yet.
+    carried: f32,
+    /// When the latest frame was, from which the speed of the drag is told.
+    frame: Option<Instant>,
 }
 
 impl<Message> widget::Meta for Scrub<'_, Message> {}
@@ -120,23 +165,46 @@ impl<Message> Widget<Message, Theme, Renderer> for Scrub<'_, Message> {
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
                 state.pressed = cursor
                     .position_over(layout.bounds())
-                    .map(|position| position.x);
+                    .map(|point| self.along(point));
             }
             Event::Mouse(mouse::Event::CursorMoved { position }) => {
                 let Some(from) = state.pressed else {
                     return;
                 };
-                let moved = position.x - from;
-                if !state.is_dragged && moved.abs() < START {
+                let along = self.along(*position);
+                if !state.is_dragged && (along - from).abs() < START {
                     return;
                 }
                 state.is_dragged = true;
-                let steps = (moved / STEP).trunc();
+                state.along = along;
+                shell.capture_event();
+                shell.request_redraw();
+            }
+            Event::Window(window::Event::RedrawRequested(now)) => {
+                let since = state
+                    .frame
+                    .replace(*now)
+                    .map(|frame| (*now - frame).as_secs_f32());
+                let Some(from) = state
+                    .pressed
+                    .filter(|_| state.is_dragged)
+                else {
+                    return;
+                };
+                let moved = state.along - from;
+                state.pressed = Some(state.along);
+                // the first frame of a drag tells no speed, and steps as a slow one
+                let speed = since
+                    .filter(|since| *since > 0.0)
+                    .map_or(0.0, |since| moved.abs() / since);
+                state.carried += moved / STEP * gain(speed);
+                let steps = state
+                    .carried
+                    .trunc();
                 if steps != 0.0 {
-                    state.pressed = Some(from + steps * STEP);
+                    state.carried -= steps;
                     shell.publish(on_scrub(steps as i32));
                 }
-                shell.capture_event();
             }
             _ => {}
         }
@@ -153,8 +221,10 @@ impl<Message> Widget<Message, Theme, Renderer> for Scrub<'_, Message> {
         let state = tree
             .state
             .downcast_ref::<State>();
-        if state.is_dragged {
-            return mouse::Interaction::ResizingHorizontally;
+        match (state.is_dragged, self.is_upward) {
+            (true, true) => return mouse::Interaction::ResizingVertically,
+            (true, false) => return mouse::Interaction::ResizingHorizontally,
+            (false, _) => {}
         }
         self.field
             .mouse_interaction(&tree.children[0], layout, cursor, viewport, renderer)

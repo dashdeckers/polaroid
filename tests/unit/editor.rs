@@ -683,3 +683,20 @@ fn a_cell_of_bytes_shows_their_number() {
     assert_eq!(card::shown(AnyValue::Int32(4)), "4");
     assert_eq!(card::shown(AnyValue::String("4 bytes")), "4 bytes");
 }
+
+#[test]
+fn delay_waits_longer_as_it_is_dragged_up_and_half_a_second_at_the_least() {
+    let mut editor = chain(1);
+    assert_eq!(editor.still, Duration::from_millis(500));
+    let _ = editor.update(Message::Wait(3));
+    assert_eq!(editor.still, Duration::from_millis(800));
+    let _ = editor.update(Message::Wait(-1));
+    assert_eq!(editor.still, Duration::from_millis(700));
+    let _ = editor.update(Message::Wait(-9));
+    assert_eq!(editor.still, Duration::from_millis(500));
+    assert!(
+        simulator(editor.view())
+            .find("Delay 0.5 s")
+            .is_ok()
+    );
+}

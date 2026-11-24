@@ -12,4 +12,4 @@ pub use menu::{Menu, menu};
 pub use scrub::{Scrub, scrub};
 pub use split::{Split, split};
 pub use surface::{Card, Surface, card, surface};
-pub use table::{Heading, Table, table};
+pub use table::{Asked, Heading, Table, table};

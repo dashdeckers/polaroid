@@ -19,6 +19,15 @@ const TEXT: f32 = 12.0;
 /// A row and a column.
 type Cell = (usize, usize);
 
+/// What a table asks for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Asked {
+    /// This text is to be copied: the cells selected when Ctrl+C was pressed.
+    Copy(String),
+    /// A cell of this row was pressed.
+    Row(usize),
+}
+
 /// What heads a column: its name over its kind; cells of numbers are set to the right.
 pub struct Heading<'a> {
     pub name: &'a str,
@@ -34,7 +43,7 @@ pub fn table(columns: Vec<Heading<'_>>) -> Table<'_> {
     }
 }
 
-/// Columns over their rows, if it has any; it publishes the text that Ctrl+C copies from it.
+/// Columns over their rows, if it has any; it asks for a row pressed and the text Ctrl+C copies.
 pub struct Table<'a> {
     columns: Vec<Heading<'a>>,
     /// How many rows there are, and the text of the cell of a row and a column.
@@ -167,7 +176,7 @@ impl View {
     }
 }
 
-impl canvas::Program<String> for Table<'_> {
+impl canvas::Program<Asked> for Table<'_> {
     type State = View;
 
     fn update(
@@ -176,7 +185,7 @@ impl canvas::Program<String> for Table<'_> {
         event: &canvas::Event,
         bounds: Rectangle,
         cursor: mouse::Cursor,
-    ) -> Option<canvas::Action<String>> {
+    ) -> Option<canvas::Action<Asked>> {
         let shape = (self.height(), self.columns.len());
         if view.shape != shape {
             *view = View {
@@ -195,7 +204,7 @@ impl canvas::Program<String> for Table<'_> {
             canvas::Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. })
                 if view.is_active && modifiers.command() && key.as_ref() == Key::Character("c") =>
             {
-                Some(canvas::Action::publish(self.copy(view)?).and_capture())
+                Some(canvas::Action::publish(Asked::Copy(self.copy(view)?)).and_capture())
             }
             canvas::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
                 // a press elsewhere, as in a text field, takes Ctrl+C from the table
@@ -204,7 +213,11 @@ impl canvas::Program<String> for Table<'_> {
                 let cell = self.cell_at(view, point);
                 view.selection = cell.map(|cell| (cell, cell));
                 view.is_selecting = true;
-                Some(canvas::Action::request_redraw().and_capture())
+                let action = match cell {
+                    Some((row, _)) => canvas::Action::publish(Asked::Row(row)),
+                    None => canvas::Action::request_redraw(),
+                };
+                Some(action.and_capture())
             }
             canvas::Event::Mouse(mouse::Event::CursorMoved { position }) if view.is_selecting => {
                 let point = *position - (bounds.position() - Point::ORIGIN);

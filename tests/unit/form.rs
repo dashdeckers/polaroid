@@ -287,3 +287,51 @@ fn the_name_of_a_column_is_picked_from_the_columns_that_are_read() {
     // and until a Check finds the columns, a name is typed
     assert_eq!(pick(&[]), (false, true));
 }
+
+/// What a drag of sixty pixels across the field that shows `shown` leaves of `expr`.
+fn dragged(
+    expr: Expr,
+    shown: &str,
+) -> Result<Value, Error> {
+    use iced::{Event, mouse, window};
+
+    let mut form = Form::of(json_of(expr));
+    // the arguments of its last call are laid out, to be found
+    form.send(chain::Message::Toggle("/exprs/0".to_owned()));
+    let mut ui = simulator(form.view());
+    let from = ui
+        .find(shown)?
+        .bounds()
+        .center();
+    let to = iced::Point::new(from.x + 60.0, from.y);
+    ui.point_at(from);
+    ui.simulate([Event::Mouse(
+        mouse::Event::ButtonPressed(mouse::Button::Left),
+    )]);
+    ui.point_at(to);
+    ui.simulate([
+        Event::Mouse(mouse::Event::CursorMoved { position: to }),
+        Event::Window(window::Event::RedrawRequested(iced::time::Instant::now())),
+    ]);
+    let asked: Vec<Message> = ui
+        .into_messages()
+        .collect();
+    for message in asked {
+        form.send(message);
+    }
+    Ok(form.args.take())
+}
+
+#[test]
+fn a_drag_across_a_number_in_an_expression_moves_it() -> Result<(), Error> {
+    // ten steps: of one for a whole number, which stays whole
+    let more = dragged(col("a").gt(lit(5)), "5")?;
+    assert_eq!(more["exprs"][0], json_of(col("a").gt(lit(15))));
+    // and of a tenth for one that is not
+    let more = dragged(col("a").gt(lit(0.5)), "0.5")?;
+    assert_eq!(more["exprs"][0], json_of(col("a").gt(lit(1.5))));
+    // what is no number is not moved
+    let same = dragged(col("a").eq(lit("x")), "x")?;
+    assert_eq!(same["exprs"][0], json_of(col("a").eq(lit("x"))));
+    Ok(())
+}

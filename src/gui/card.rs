@@ -29,7 +29,7 @@ use iced::{
     border,
     mouse,
 };
-use polaroid_iced::{Heading, width_of};
+use polaroid_iced::{Asked, Heading, width_of};
 use serde_json::{Map, Value};
 
 use super::form::{Expressions, Tone};
@@ -233,7 +233,7 @@ pub enum Event {
     Rename,
     Form(form::Message),
     Edit(Edit),
-    Copy(String),
+    Table(Asked),
     /// A link in what a block does was pressed, which leads nowhere.
     Link,
 }
@@ -269,7 +269,9 @@ impl<'a> Component<'a, Message> for Card<'a> {
                 Edit::Args(args)
             }
             Event::Edit(edit) => edit,
-            Event::Copy(text) => return Some(Message::Copy(text)),
+            Event::Table(Asked::Copy(text)) => return Some(Message::Copy(text)),
+            // nothing follows a row that is pressed
+            Event::Table(Asked::Row(_)) => return None,
             Event::Link => return None,
         };
         let id = self.node.id.clone();
@@ -491,7 +493,7 @@ impl<'a> Card<'a> {
         let table = draw(table)
             .width(Fill)
             .height(height)
-            .map(Event::Copy);
+            .map(Event::Table);
         Some(table)
     }
 }
