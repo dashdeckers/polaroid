@@ -357,3 +357,150 @@ fn a_port_is_level_with_the_container_of_its_id() {
         .collect();
     assert_eq!(messages, [Wiring::Unwired(1, 0)]);
 }
+
+#[test]
+fn text_on_a_zoomed_card_is_selected_where_it_is_pressed() {
+    use iced::advanced::widget::Id;
+    use iced::advanced::widget::operation::{Operation, Text};
+
+    /// Gathers what is selected of every text.
+    struct Copy(Vec<String>);
+    impl Operation for Copy {
+        fn traverse(
+            &mut self,
+            operate: &mut dyn FnMut(&mut dyn Operation),
+        ) {
+            operate(self);
+        }
+
+        fn text(
+            &mut self,
+            _id: Option<&Id>,
+            _bounds: Rectangle,
+            state: &mut dyn Text,
+        ) {
+            self.0
+                .extend(state.copy());
+        }
+    }
+
+    // two cards level with each other, as text is selected by where the lines are
+    let lines = |key: u32, at: Point| {
+        let lines = column![
+            text!("first of {key}").selectable(true),
+            text!("second of {key}").selectable(true),
+        ];
+        card(key, at, lines)
+    };
+    let scene = surface::<u32, ()>()
+        .push(lines(1, Point::new(20.0, 40.0)))
+        .push(lines(2, Point::new(300.0, 40.0)));
+    let mut simulator = simulator(scene);
+    simulator.point_at(Point::ORIGIN);
+    simulator.scroll(ScrollDelta::Lines { x: 0.0, y: 3.0 });
+    let scale = Transformation::scale(1.1_f32.powi(3));
+
+    // from the start of the first line of the first card to the end of its second
+    let mut line = |line: &str| {
+        simulator
+            .find(line)
+            .expect("the line is shown")
+            .bounds()
+    };
+    let (first, second) = (line("first of 1"), line("second of 1"));
+    let left = Point::new(first.x, first.center_y()) * scale;
+    let right = Point::new(second.x + second.width, second.center_y()) * scale;
+    // moved there first, for the text to show that a press on it selects
+    simulator.point_at(left);
+    simulator.simulate([
+        Event::Mouse(mouse::Event::CursorMoved { position: left }),
+        Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+    ]);
+    simulator.point_at(right);
+    simulator.simulate([Event::Mouse(
+        mouse::Event::CursorMoved { position: right },
+    )]);
+
+    let mut copy = Copy(Vec::new());
+    simulator.operate(&mut copy);
+    // and of the card beside it nothing, though its lines are level with these
+    assert_eq!(copy.0, ["first of 1", "second of 1"]);
+}
+
+#[test]
+fn text_that_is_scrolled_on_a_zoomed_card_is_selected_where_it_is_pressed() {
+    use iced::advanced::widget::Id;
+    use iced::advanced::widget::operation::{Operation, Text};
+    use iced::widget::scrollable;
+
+    /// Gathers what is selected of every text.
+    struct Copy(Vec<String>);
+    impl Operation for Copy {
+        fn traverse(
+            &mut self,
+            operate: &mut dyn FnMut(&mut dyn Operation),
+        ) {
+            operate(self);
+        }
+
+        fn text(
+            &mut self,
+            _id: Option<&Id>,
+            _bounds: Rectangle,
+            state: &mut dyn Text,
+        ) {
+            self.0
+                .extend(state.copy());
+        }
+    }
+
+    // twenty lines of 20 pixels, of which five are seen at a time
+    let lines: Vec<String> = (0..20)
+        .map(|line| format!("line {line}"))
+        .collect();
+    let written = text(lines.join("\n"))
+        .size(16)
+        .line_height(iced::Pixels(20.0))
+        .wrapping(text::Wrapping::None)
+        .selectable(true);
+    let both = scrollable::Direction::Both {
+        vertical: scrollable::Scrollbar::new(),
+        horizontal: scrollable::Scrollbar::new(),
+    };
+    let scrolled = scrollable(written)
+        .direction(both)
+        .width(200)
+        .height(100);
+    let at = Point::new(20.0, 40.0);
+    let scene = surface::<u32, ()>().push(card(1, at, scrolled));
+    let mut simulator = simulator(scene);
+    simulator.point_at(Point::ORIGIN);
+    simulator.scroll(ScrollDelta::Lines { x: 0.0, y: 3.0 });
+    let scale = Transformation::scale(1.1_f32.powi(3));
+
+    // seven lines down, with the cursor over what scrolls
+    let over = Point::new(at.x + 100.0, at.y + 50.0) * scale;
+    simulator.point_at(over);
+    simulator.scroll(ScrollDelta::Pixels { x: 0.0, y: -140.0 });
+    // which is where it was scrolled to as of the next frame
+    simulator.simulate([Event::Window(
+        iced::window::Event::RedrawRequested(iced::time::Instant::now()),
+    )]);
+
+    // across the second of the lines that are seen now
+    let left = Point::new(at.x, at.y + 30.0) * scale;
+    let right = Point::new(at.x + 150.0, at.y + 30.0) * scale;
+    simulator.point_at(left);
+    simulator.simulate([
+        Event::Mouse(mouse::Event::CursorMoved { position: left }),
+        Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+    ]);
+    simulator.point_at(right);
+    simulator.simulate([Event::Mouse(
+        mouse::Event::CursorMoved { position: right },
+    )]);
+
+    let mut copy = Copy(Vec::new());
+    simulator.operate(&mut copy);
+    assert_eq!(copy.0, ["line 8"]);
+}

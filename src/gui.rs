@@ -15,7 +15,6 @@ use iced::keyboard::key::Named;
 use iced::keyboard::{self, Key};
 use iced::widget::{
     Button,
-    Text,
     button,
     column,
     component,
@@ -23,20 +22,26 @@ use iced::widget::{
     markdown,
     row,
     rule,
+    scrollable,
     space,
     stack,
     text,
+    text_input,
     tooltip,
 };
 use iced::{
+    Element,
+    Fill,
     Function,
     Point,
+    Shrink,
     Size,
     Subscription,
     Task,
     Theme,
     Widget,
     clipboard,
+    padding,
     system,
     task,
     theme,
@@ -72,7 +77,7 @@ comes before a Run: the button is Check until every node that a Run computes is 
 sound, and Run from then on. Live has a Check and a Run follow every change, and Delay once \
 there has been none for half a second, or for longer as its button is dragged up.
 
-Drag across a number to move it.
+Drag the arrows beside a number to move it, faster for more, and those beside a list to step through it.
 
 Expressions are kept in the drawer on the left, each under a name, and a card picks them by \
 that name. The Expressions button hides the drawer, and its edge is dragged to resize it.
@@ -752,11 +757,84 @@ fn cross<'a, Message: Clone + 'a>(message: Message) -> Button<'a, Message, &'sta
         .on_press(message)
 }
 
-/// An error, which can be selected to copy it.
-fn error(message: &str) -> Text<'_> {
-    text(message)
+/// How thick the bars are that an error is scrolled by.
+const BAR: f32 = 6.0;
+
+/// The most that an error takes of the height of what shows it.
+const ERROR: f32 = 120.0;
+
+/// An error, which can be selected to copy it; one that is long or wide is scrolled through.
+fn error<'a, Message: 'a>(message: &'a str) -> Element<'a, Message> {
+    let written = text(message)
         .style(text::danger)
-        .selectable(true)
+        .wrapping(text::Wrapping::None)
+        .selectable(true);
+    let bar = || {
+        scrollable::Scrollbar::new()
+            .width(BAR)
+            .scroller_width(BAR)
+            .margin(0)
+    };
+    let direction = scrollable::Direction::Both {
+        vertical: bar(),
+        horizontal: bar(),
+    };
+    // the bars lie over the edges of what is seen, so the text ends clear of them
+    let clear = padding::right(BAR + 2.0).bottom(BAR + 2.0);
+    scrollable(container(written).padding(clear))
+        .direction(direction)
+        .width(Fill)
+        .height(Shrink.max(ERROR))
+        .style(|theme: &Theme, status| {
+            // and no text shows through them: it ends at a bar as at an edge
+            let paper = theme
+                .palette()
+                .background
+                .base
+                .color;
+            let mut style = scrollable::default(theme, status);
+            style
+                .vertical_rail
+                .background = Some(paper.into());
+            style
+                .horizontal_rail
+                .background = Some(paper.into());
+            style.gap = Some(paper.into());
+            style
+        })
+        .boxed()
+}
+
+/// A field for a name, which is given on Enter: what is `typed` until then, marked as not given.
+fn name_field<'a, Message: Clone + 'a>(
+    placeholder: &'static str,
+    typed: Option<&str>,
+    name: &str,
+) -> text_input::TextInput<'a, Message> {
+    let is_typed = is_unsaved(typed, name);
+    let shown = typed
+        .unwrap_or(name)
+        .to_owned();
+    text_input(placeholder, shown).style(move |theme: &Theme, status| {
+        let mut style = text_input::default(theme, status);
+        if is_typed {
+            style.border.color = theme
+                .palette()
+                .warning
+                .base
+                .color;
+            style.border.width = 2.0;
+        }
+        style
+    })
+}
+
+/// Whether what is typed for a name is another than the name, which Enter is still to give.
+fn is_unsaved(
+    typed: Option<&str>,
+    name: &str,
+) -> bool {
+    typed.is_some_and(|typed| typed != name)
 }
 
 #[cfg(test)]

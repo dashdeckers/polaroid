@@ -3,9 +3,9 @@
 use std::collections::BTreeSet;
 use std::iter::successors;
 
-use iced::widget::{PickList, column, container, mouse_area, pick_list, row, text_input};
+use iced::widget::{button, column, container, mouse_area, row, space, text_input};
 use iced::{Center, Element, Fill, Font, Function, Widget, padding};
-use polaroid_iced::{scrub, width_of};
+use polaroid_iced::{PickList, handle, pick_list};
 use serde_json::{Value, json};
 
 use super::{self as form, Form, Tone, small};
@@ -20,6 +20,12 @@ const CODE: f32 = 16.0;
 
 /// How far a call is set in from its root, and arguments from their call.
 const INDENT: f32 = 20.0;
+
+/// The width of the column before the lines of a chain, where a call is taken away.
+const REMOVE: f32 = 22.0;
+
+/// What the methods that are in no namespace are offered under.
+const BASE: &str = "base";
 
 /// Arguments longer than this are not written while folded away.
 const WRITTEN: usize = 32;
@@ -173,25 +179,40 @@ impl<'a> Form<'a, '_> {
         })
         .collect();
 
+        // each line, after what takes its call away if it is one
         let lines = links
             .into_iter()
             .rev()
             .map(|(method, node, pointer)| match method {
-                Some(method) => self.call(method, node, pointer),
-                None if node.is_null() => pick(None, choices(None), label, "pl.…")
-                    .on_select(move |method| asked(Message::Replace(pointer.clone(), method)))
-                    .boxed(),
-                None => self.plain(&self.defs["Expr"], node, pointer, Tone::Given),
+                Some(method) => {
+                    let remove = remove(asked(Message::Remove(pointer.clone())));
+                    (Some(remove), self.call(method, node, pointer))
+                }
+                None if node.is_null() => {
+                    let hole = pick(None, choices(None), label, "pl.…")
+                        .on_select(move |method| asked(Message::Replace(pointer.clone(), method)))
+                        .boxed();
+                    (None, hole)
+                }
+                None => (
+                    None,
+                    self.plain(&self.defs["Expr"], node, pointer, Tone::Given),
+                ),
             });
-        let add = (!value.is_null()).then(|| self.add(at));
+        let add = (!value.is_null()).then(|| (None, self.add(at)));
         let lines = lines
             .chain(add)
             .enumerate()
-            .map(|(i, line)| match i {
-                0 => line,
-                _ => container(line)
-                    .padding(padding::left(INDENT))
-                    .boxed(),
+            .map(|(i, (remove, line))| {
+                let indent = match i {
+                    0 => 0.0,
+                    _ => INDENT,
+                };
+                row![
+                    container(remove).width(REMOVE),
+                    container(line).padding(padding::left(indent)),
+                ]
+                .boxed()
             });
         column(lines)
             .spacing(5)
@@ -219,19 +240,19 @@ impl<'a> Form<'a, '_> {
             let at = at.clone();
             move |method| asked(Message::Replace(at.clone(), method))
         });
-        let remove = small("×", asked(Message::Remove(at.clone())));
+        // the brackets and all the room to their right lay the arguments out, or fold them away
         let toggle = |label: &str| {
-            mouse_area(code(label)).on_double_click(asked(Message::Toggle(at.clone())))
+            let area = row![
+                code(label),
+                space::horizontal()
+            ]
+            .align_y(Center);
+            mouse_area(area).on_double_click(asked(Message::Toggle(at.clone())))
         };
         let line = |after: Element<'a, form::Message>| {
-            row![
-                code(before),
-                name,
-                after,
-                remove
-            ]
-            .spacing(2)
-            .align_y(Center)
+            row![code(before), name, after]
+                .spacing(2)
+                .align_y(Center)
         };
 
         if let Some(inline) = self.inline(method, node, &at) {
@@ -335,19 +356,20 @@ impl<'a> Form<'a, '_> {
                             move |name| put(name.into())
                         })
                         .placeholder(placeholder.to_owned())
-                        .boxed(),
+                        .stepped(),
                 )
             }
             "/Literal" => {
                 let typed = methods::typed(node)?;
                 let number = schema::number(&typed);
+                let width = form::fitted(&typed, CODE);
                 let field = text_input("value", typed)
                     .on_input({
                         let put = put();
                         move |typed| put(methods::literal_of(&typed))
                     })
-                    .width(Fill.max(150));
-                // a drag across a number moves it, and it stays whole if it was
+                    .width(width);
+                // a number has a handle that moves it, and it stays whole if it was
                 let Some(number) = number else {
                     return Some(field.boxed());
                 };
@@ -361,9 +383,13 @@ impl<'a> Form<'a, '_> {
                     put(methods::literal_of(&moved.to_string()))
                 };
                 Some(
-                    scrub(field)
-                        .on_scrub(on_scrub)
-                        .boxed(),
+                    row![
+                        field,
+                        handle().on_scrub(on_scrub)
+                    ]
+                    .spacing(2)
+                    .align_y(Center)
+                    .boxed(),
                 )
             }
             _ => None,
@@ -404,16 +430,13 @@ impl<'a> Form<'a, '_> {
                 namespaces.push(method.namespace);
             }
         }
-        // back to the methods of the expression itself
-        if !narrowed.is_empty() {
-            namespaces.insert(0, "");
-        }
-        let selected = (!narrowed.is_empty()).then_some(narrowed);
+        // the methods of the expression itself come first, under a name of their own
+        namespaces.insert(0, "");
         let named = |namespace: &&str| match *namespace {
-            "" => "(none)".to_owned(),
+            "" => BASE.to_owned(),
             namespace => namespace.to_owned(),
         };
-        let namespace = pick(selected, namespaces, named, "namespace").on_select({
+        let namespace = pick(Some(narrowed), namespaces, named, "namespace").on_select({
             let at = at.clone();
             move |namespace| asked(Message::Narrow(at.clone(), namespace))
         });
@@ -430,6 +453,15 @@ impl<'a> Form<'a, '_> {
         .align_y(Center)
         .boxed()
     }
+}
+
+/// The button before a line that takes its call away.
+fn remove<'a>(message: form::Message) -> Element<'a, form::Message> {
+    button(code("×"))
+        .padding([2, 6])
+        .style(button::text)
+        .on_press(message)
+        .boxed()
 }
 
 /// What a chain asks for, as the form that it is part of passes it on.
@@ -467,22 +499,16 @@ fn label(method: &&Method) -> String {
     }
 }
 
-/// A pick list of code, as wide as what it shows: `selected`, or else `placeholder`.
+/// A pick list of code, which shows `selected`, or else `placeholder`.
 fn pick<'a, T: Clone + PartialEq + 'a>(
     selected: Option<T>,
     options: Vec<T>,
     label: impl Fn(&T) -> String + 'a,
     placeholder: &str,
-) -> PickList<'a, T, Vec<T>, T, form::Message> {
-    let text = selected
-        .as_ref()
-        .map_or_else(|| placeholder.to_owned(), &label);
-    // beside its text, the padding and the arrow
-    let width = width_of(&text, CODE, Font::MONOSPACE) + 36.0;
+) -> PickList<'a, T, form::Message> {
     pick_list(selected, options, label)
         .placeholder(placeholder)
         .padding([2, 6])
-        .width(width)
         .text_size(CODE)
         .font(Font::MONOSPACE)
 }

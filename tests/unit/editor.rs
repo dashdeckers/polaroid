@@ -700,3 +700,31 @@ fn delay_waits_longer_as_it_is_dragged_up_and_half_a_second_at_the_least() {
             .is_ok()
     );
 }
+
+#[test]
+fn a_name_is_marked_while_what_is_typed_for_it_is_another() {
+    // nothing typed, or the name again
+    assert!(!is_unsaved(None, "n1"));
+    assert!(!is_unsaved(Some("n1"), "n1"));
+    assert!(is_unsaved(Some("n"), "n1"));
+    assert!(is_unsaved(Some(""), "n1"));
+
+    // typed in the drawer, it is marked until Enter gives it
+    let mut editor = chain(1);
+    let drawer = |editor: &mut Editor, message| {
+        let _ = editor.update(Message::Drawer(message));
+    };
+    drawer(&mut editor, drawer::Message::New);
+    let name = || "expression_1".to_owned();
+    drawer(&mut editor, drawer::Message::Name(name(), "few".to_owned()));
+    simulator(editor.view())
+        .find("few")
+        .expect("what is typed is shown");
+    drawer(&mut editor, drawer::Message::Rename(name()));
+    assert!(
+        editor
+            .pipeline
+            .expressions
+            .contains_key("few")
+    );
+}

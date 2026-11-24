@@ -22,6 +22,8 @@ use iced::{
     border,
 };
 
+use crate::seen::Seen;
+
 /// How much one step of the wheel zooms.
 const STEP: f32 = 1.1;
 /// How far out and in a surface zooms.
@@ -527,8 +529,15 @@ where
                 .zip(&mut tree.children)
             {
                 let layout = view.layout(card.at, tree);
+                // a point of the screen, as where text is selected from, is elsewhere to a card
+                let mut seen = Seen {
+                    operation: &mut *operation,
+                    inverse: view.inverse(),
+                    card: layout.bounds(),
+                    scrolled: Vector::ZERO,
+                };
                 card.content
-                    .operate(tree, layout, viewport, renderer, operation);
+                    .operate(tree, layout, viewport, renderer, &mut seen);
             }
         });
     }

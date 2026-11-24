@@ -174,9 +174,16 @@ fn arguments_are_written_until_they_are_laid_out() -> Result<(), Error> {
             .is_err()
     );
 
-    // a double click lays them out
-    let _ = ui.click(written)?;
-    let _ = ui.click(written)?;
+    // a double click lays them out, on them or anywhere to their right
+    let brackets = ui
+        .find(written)?
+        .bounds();
+    ui.point_at(iced::Point::new(
+        brackets.x + brackets.width + 80.0,
+        brackets.center_y(),
+    ));
+    ui.simulate(iced_test::simulator::click());
+    ui.simulate(iced_test::simulator::click());
     let messages: Vec<Message> = ui
         .into_messages()
         .collect();
@@ -288,11 +295,8 @@ fn the_name_of_a_column_is_picked_from_the_columns_that_are_read() {
     assert_eq!(pick(&[]), (false, true));
 }
 
-/// What a drag of sixty pixels across the field that shows `shown` leaves of `expr`.
-fn dragged(
-    expr: Expr,
-    shown: &str,
-) -> Result<Value, Error> {
+/// What a drag of sixty pixels up from the handle of its number leaves of `expr`.
+fn dragged(expr: Expr) -> Result<Value, Error> {
     use iced::{Event, mouse, window};
 
     let mut form = Form::of(json_of(expr));
@@ -300,10 +304,10 @@ fn dragged(
     form.send(chain::Message::Toggle("/exprs/0".to_owned()));
     let mut ui = simulator(form.view());
     let from = ui
-        .find(shown)?
+        .find(polaroid_iced::HANDLE)?
         .bounds()
         .center();
-    let to = iced::Point::new(from.x + 60.0, from.y);
+    let to = iced::Point::new(from.x, from.y - 60.0);
     ui.point_at(from);
     ui.simulate([Event::Mouse(
         mouse::Event::ButtonPressed(mouse::Button::Left),
@@ -325,13 +329,49 @@ fn dragged(
 #[test]
 fn a_drag_across_a_number_in_an_expression_moves_it() -> Result<(), Error> {
     // ten steps: of one for a whole number, which stays whole
-    let more = dragged(col("a").gt(lit(5)), "5")?;
+    let more = dragged(col("a").gt(lit(5)))?;
     assert_eq!(more["exprs"][0], json_of(col("a").gt(lit(15))));
     // and of a tenth for one that is not
-    let more = dragged(col("a").gt(lit(0.5)), "0.5")?;
+    let more = dragged(col("a").gt(lit(0.5)))?;
     assert_eq!(more["exprs"][0], json_of(col("a").gt(lit(1.5))));
-    // what is no number is not moved
-    let same = dragged(col("a").eq(lit("x")), "x")?;
-    assert_eq!(same["exprs"][0], json_of(col("a").eq(lit("x"))));
+    // what is no number has no handle
+    assert!(dragged(col("a").eq(lit("x"))).is_err());
+    Ok(())
+}
+
+#[test]
+fn the_methods_of_no_namespace_are_offered_under_a_name_of_their_own() -> Result<(), Error> {
+    let mut form = Form::of(json_of(col("a")));
+    // nothing to pick from until a call is to be added
+    assert!(
+        simulator(form.view())
+            .find("base")
+            .is_err()
+    );
+    form.send(chain::Message::Narrow("/exprs/0".to_owned(), ""));
+    simulator(form.view()).find("base")?;
+
+    // and to come back to from another
+    form.send(chain::Message::Narrow("/exprs/0".to_owned(), "str"));
+    let mut ui = simulator(form.view());
+    let _ = ui.click("str")?;
+    let base = ui
+        .find("str")?
+        .bounds();
+    // the first of the list that opened under it
+    ui.point_at(iced::Point::new(
+        base.center_x(),
+        base.y + base.height * 1.5,
+    ));
+    ui.simulate(iced_test::simulator::click());
+    let asked: Vec<Message> = ui
+        .into_messages()
+        .collect();
+    assert!(matches!(
+        asked.as_slice(),
+        [Message::Chain(
+            chain::Message::Narrow(_, "")
+        )]
+    ));
     Ok(())
 }
