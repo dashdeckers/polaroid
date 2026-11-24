@@ -360,6 +360,42 @@ impl Pipeline {
         }
     }
 
+    /// Has two Nodes swap places: each reads what the other read, and is read where the other was.
+    ///
+    /// False if either is no Node or they are one; whether their Blocks read as many is not asked.
+    pub fn swap(
+        &mut self,
+        one: &str,
+        other: &str,
+    ) -> bool {
+        let index = |id: &str| {
+            self.nodes
+                .iter()
+                .position(|node| node.id == id)
+        };
+        let (Some(first), Some(second)) = (index(one), index(other)) else {
+            return false;
+        };
+        if first == second {
+            return false;
+        }
+        let inputs = std::mem::take(&mut self.nodes[first].inputs);
+        self.nodes[first].inputs = std::mem::replace(&mut self.nodes[second].inputs, inputs);
+        // one that read the other reads it still, from the other side
+        let inputs = self
+            .nodes
+            .iter_mut()
+            .flat_map(|node| &mut node.inputs);
+        for input in inputs {
+            if input == one {
+                other.clone_into(input);
+            } else if input == other {
+                one.clone_into(input);
+            }
+        }
+        true
+    }
+
     /// Calls the expression `old` `new`, in its place and where it is used; false if it cannot.
     pub fn rename_expression(
         &mut self,
