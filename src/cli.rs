@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::fs::{File, OpenOptions};
-use std::io::{IsTerminal, Read};
+use std::io::{IsTerminal, Write};
 use std::path::Path;
 use std::time::Instant;
 
@@ -74,6 +74,61 @@ pub fn cli(registry: Registry) -> PolarsResult<()> {
         .inspect_err(|e| log::error!("{e}"))
 }
 
+/// Every node's columns and types, or error, as JSON.
+fn checked(
+    registry: &Registry,
+    pipeline: &Pipeline,
+) -> PolarsResult<String> {
+    let schemas = pipeline.schemas(registry)?;
+    let checks: BTreeMap<_, _> = schemas
+        .iter()
+        .map(|(id, schema)| {
+            let columns = match schema {
+                Ok(schema) => Ok(schema
+                    .iter()
+                    .map(|(name, dtype)| (name.as_str(), dtype))
+                    .collect::<Vec<_>>()),
+                Err(e) => Err(e.to_string()),
+            };
+            (*id, columns)
+        })
+        .collect();
+    Ok(serde_json::to_string_pretty(&checks).expect("columns serialize"))
+}
+
+/// What the editor asked for: a `check` of a pipeline, or to `collect` its outputs.
+///
+/// It asks with a pipeline and then the frames it has saved, which stand in for their nodes.
+fn answered(
+    registry: &Registry,
+    mut asked: &[u8],
+) -> PolarsResult<Vec<u8>> {
+    let what = stream::part(&mut asked)?;
+    let pipeline: Pipeline = serde_json::from_slice(stream::part(&mut asked)?)
+        .map_err(|e| polars_err!(ComputeError: "the pipeline: {e}"))?;
+    log::info!("asked to {}", String::from_utf8_lossy(what));
+    let mut answer = Vec::new();
+    match what {
+        b"check" => answer.extend(checked(registry, &pipeline)?.into_bytes()),
+        b"collect" => {
+            let known = stream::read(asked)?
+                .into_iter()
+                .collect();
+            for (id, mut frame) in pipeline
+                .outputs
+                .iter()
+                .zip(pipeline.run_from(registry, &known)?)
+            {
+                log::info!("writing {} rows of '{id}'", frame.height());
+                stream::write(&mut answer, id, &mut frame)?;
+            }
+        }
+        _ => polars_bail!(ComputeError: "asked for neither a check nor to collect"),
+    }
+    log::info!("answered");
+    Ok(answer)
+}
+
 #[allow(clippy::print_stdout)]
 fn command(
     registry: Registry,
@@ -126,48 +181,33 @@ fn command(
             }
         }
 
-        // for the editor alone: the pipeline and its known frames in, the outputs out
-        ["collect"] if std::env::var_os(CHILD).is_some() => {
-            let mut input = Vec::new();
-            std::io::stdin().read_to_end(&mut input)?;
-            let mut input = input.as_slice();
-            let pipeline: Pipeline = serde_json::from_slice(stream::part(&mut input)?)
-                .map_err(|e| polars_err!(ComputeError: "the pipeline: {e}"))?;
-            let known = stream::read(input)?
-                .into_iter()
-                .collect();
-            let mut out = std::io::stdout().lock();
-            for (id, mut frame) in pipeline
-                .outputs
-                .iter()
-                .zip(pipeline.run_from(&registry, &known)?)
-            {
-                log::info!("writing {} rows of '{id}' to stdout", frame.height());
-                stream::write(&mut out, id, &mut frame)?;
+        // for the editor alone: it asks over stdin, one thing after another, until stdin ends
+        ["serve"] if std::env::var_os(CHILD).is_some() => {
+            let (mut input, mut out) = (std::io::stdin().lock(), std::io::stdout().lock());
+            while let Some(asked) = stream::next(&mut input)? {
+                let mut answer = Vec::new();
+                // what fails is told, and the next thing is asked of the same process
+                match answered(&registry, &asked) {
+                    Ok(body) => {
+                        stream::put(&mut answer, b"ok")?;
+                        answer.extend(body);
+                    }
+                    Err(e) => {
+                        log::error!("{e}");
+                        stream::put(&mut answer, b"error")?;
+                        stream::put(
+                            &mut answer,
+                            e.to_string()
+                                .as_bytes(),
+                        )?;
+                    }
+                }
+                stream::put(&mut out, &answer)?;
+                out.flush()?;
             }
         }
 
-        ["check", path] => {
-            let pipeline = Pipeline::load(path)?;
-            let schemas = pipeline.schemas(&registry)?;
-            let checks: BTreeMap<_, _> = schemas
-                .iter()
-                .map(|(id, schema)| {
-                    let columns = match schema {
-                        Ok(schema) => Ok(schema
-                            .iter()
-                            .map(|(name, dtype)| (name.as_str(), dtype))
-                            .collect::<Vec<_>>()),
-                        Err(e) => Err(e.to_string()),
-                    };
-                    (*id, columns)
-                })
-                .collect();
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&checks).expect("columns serialize")
-            );
-        }
+        ["check", path] => println!("{}", checked(&registry, &Pipeline::load(path)?)?),
 
         ["catalog"] => println!(
             "{}",
