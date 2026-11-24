@@ -4,7 +4,8 @@ use polars::prelude::*;
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-use crate::Block;
+use crate::block::checked;
+use crate::{Block, ColumnName};
 
 const EXPLODE: ExplodeOptions = ExplodeOptions {
     empty_as_null: true,
@@ -354,5 +355,36 @@ impl Block for Sample {
         // the rows that a shuffle of the row numbers gives one of the first `n` numbers
         let shuffled = int_range(lit(0), len(), 1, IDX_DTYPE).shuffle(Some(self.seed));
         Ok(lf.filter(shuffled.lt(lit(self.n))))
+    }
+}
+
+/// Shows the images of a column, as an editor does on the card of the node.
+///
+/// The nodes that read this one get the frame it reads.
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ViewImages {
+    /// Column of the images to show, of binary values such as the images of a plot.
+    pub column: ColumnName,
+}
+
+impl Block for ViewImages {
+    fn apply(
+        self,
+        [lf]: [LazyFrame; 1],
+    ) -> PolarsResult<LazyFrame> {
+        let column = self.column.0;
+        Ok(checked(lf, move |schema| {
+            let dtype = schema.try_get(&column)?;
+            polars_ensure!(
+                dtype.is_binary(),
+                SchemaMismatch: "column '{column}' holds {dtype}, which is no image"
+            );
+            Ok(())
+        }))
+    }
+
+    fn images(&self) -> Option<&str> {
+        Some(&self.column.0)
     }
 }

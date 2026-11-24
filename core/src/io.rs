@@ -7,6 +7,7 @@ use polars::prelude::*;
 use schemars::JsonSchema;
 use serde::Deserialize;
 
+use crate::block::checked;
 use crate::{Block, ColumnName};
 
 /// Reads a Parquet file, or several as one frame.
@@ -137,17 +138,8 @@ impl Block for WriteFiles {
         [lf]: [LazyFrame; 1],
     ) -> PolarsResult<LazyFrame> {
         let (this, strings) = (Arc::new(self), DataType::List(Box::new(DataType::String)));
-        // the columns are not known until the plan resolves, which is before the run
         let block = this.clone();
-        let checked = PlanCallback::new(move |(plans, schemas): (Vec<DslPlan>, Vec<SchemaRef>)| {
-            let (plan, schema) = plans
-                .into_iter()
-                .zip(&schemas)
-                .next()
-                .ok_or_else(|| polars_err!(ComputeError: "write_files reads a frame"))?;
-            block.check(schema)?;
-            Ok(plan)
-        });
+        let lf = checked(lf, move |schema| block.check(schema));
 
         // the files written, to find two rows that write the same one
         let written = Mutex::new(HashSet::new());
@@ -215,8 +207,7 @@ impl Block for WriteFiles {
             // more is to come
             Ok(false)
         };
-        lf.pipe_with_schema(checked)
-            .sink_batches(PlanCallback::new(write), true, None)
+        lf.sink_batches(PlanCallback::new(write), true, None)
     }
 }
 

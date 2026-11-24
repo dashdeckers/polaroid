@@ -15,6 +15,7 @@ pub(crate) struct Entry {
     category: &'static str,
     schema: fn(&mut SchemaGenerator) -> Schema,
     build: fn(Value, Vec<LazyFrame>) -> PolarsResult<LazyFrame>,
+    images: fn(Value) -> Option<String>,
 }
 
 impl Entry {
@@ -27,6 +28,12 @@ impl Entry {
                 let block: B = serde_json::from_value(args)
                     .map_err(|e| polars_err!(ComputeError: "args: {e}"))?;
                 block.apply(take(inputs)?)
+            },
+            images: |args| {
+                let block: B = serde_json::from_value(args).ok()?;
+                block
+                    .images()
+                    .map(str::to_owned)
             },
         }
     }
@@ -96,6 +103,9 @@ impl Registry {
             .register::<frames::Concat, _>("concat")
             .register::<frames::Unpivot, _>("unpivot")
             .register::<frames::Explode, _>("explode")
+            // the frame out as it came in, with something of it to look at
+            .category("View")
+            .register::<frames::ViewImages, _>("view_images")
     }
 
     /// Names the category of the Blocks added from here on; without one it is "Other".
@@ -131,6 +141,19 @@ impl Registry {
             .is_some();
         assert!(!taken, "two blocks are called '{name}'");
         self
+    }
+
+    /// The column whose images a node of `block` with `args` has shown, if it has such a one.
+    pub fn images(
+        &self,
+        block: &str,
+        args: Value,
+    ) -> Option<String> {
+        let images = self
+            .blocks
+            .get(block)?
+            .images;
+        images(args)
     }
 
     pub(crate) fn get(
