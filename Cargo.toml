@@ -29,6 +29,7 @@ serde_json = "1"
 iced = { optional = true, workspace = true, features = [
     "advanced",
     "canvas",
+    "fira-sans",
     "image-without-codecs",
     "markdown",
     "svg",
