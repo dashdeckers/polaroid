@@ -6,6 +6,7 @@ use std::sync::Arc;
 use file_format::FileFormat;
 use polars::io::path_utils::expand_paths;
 use polars::prelude::*;
+use sanitize_filename::{OptionsForCheck, is_sanitized_with_options};
 use schemars::JsonSchema;
 use serde::Deserialize;
 
@@ -290,10 +291,11 @@ impl Block for WriteFiles {
                         .str()?
                         .iter()
                     {
-                        path.push(part(folder.unwrap_or_default())?);
+                        path.push(valid(folder.unwrap_or_default(), row)?);
                     }
                 }
-                let file = format!("{}.{}", part(name)?, part(&extension)?);
+                let file = format!("{}.{extension}", valid(name, row)?);
+                valid(&file, row)?;
                 let told = |e| polars_err!(ComputeError: "{}: {e}", path.display());
                 std::fs::create_dir_all(&path).map_err(told)?;
                 path.push(file);
@@ -330,28 +332,17 @@ fn extension_of(
     Ok(extension)
 }
 
-/// `text`, if it names one file or folder on every platform: Windows takes the least.
-fn part(text: &str) -> PolarsResult<&str> {
-    let device = text
-        .split('.')
-        .next()
-        .unwrap_or_default()
-        .to_ascii_uppercase();
-    let is_numbered = |port: &str| {
-        device
-            .strip_prefix(port)
-            .is_some_and(|number| number.len() == 1 && number.as_bytes()[0].is_ascii_digit())
+/// `name`, if it is a valid file name on every platform: by the rules of Windows, the strictest.
+fn valid(
+    name: &str,
+    row: usize,
+) -> PolarsResult<&str> {
+    let strictest = OptionsForCheck {
+        windows: true,
+        truncate: true,
     };
-    let is_device = matches!(device.as_str(), "CON" | "PRN" | "AUX" | "NUL")
-        || is_numbered("COM")
-        || is_numbered("LPT");
-    let is_plain = !text.is_empty()
-        && !text.contains(|c: char| c.is_control() || r#"<>:"/\|?*"#.contains(c))
-        // which rules out . and .. too
-        && !text.ends_with(['.', ' ']);
-    polars_ensure!(
-        is_plain && !is_device,
-        ComputeError: "'{text}' does not name one file or folder on every platform"
-    );
-    Ok(text)
+    // which takes an empty name
+    let is_valid = !name.is_empty() && is_sanitized_with_options(name, strictest);
+    polars_ensure!(is_valid, ComputeError: "row {row}: '{name}' is an invalid file name");
+    Ok(name)
 }

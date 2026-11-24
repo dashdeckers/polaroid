@@ -13,6 +13,7 @@ file-format = { version = "0.29", features = [
     "reader-xml",
     "reader-zip",
 ] }
+sanitize-filename = "0.6.0"
 # plots
 rustd3-core = { optional = true, workspace = true }
 rustd3-figure = { optional = true, workspace = true, features = [
