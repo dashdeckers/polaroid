@@ -50,6 +50,10 @@ gui = [
 iced_test = { workspace = true }
 schemars = "1.2"
 
+# the dependencies without debug info, which is most of what a build writes to disk
+[profile.dev.package."*"]
+debug = false
+
 [workspace]
 members = [
     "core",
