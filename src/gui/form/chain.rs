@@ -5,8 +5,8 @@ use std::iter::successors;
 
 use iced::widget::{PickList, column, container, mouse_area, pick_list, row, text_input};
 use iced::{Center, Element, Fill, Font, Function, Widget, padding};
-use polaroid_iced::width_of;
-use serde_json::Value;
+use polaroid_iced::{scrub, width_of};
+use serde_json::{Value, json};
 
 use super::{self as form, Form, Tone, small};
 use crate::methods::{self, Method};
@@ -298,7 +298,7 @@ impl<'a> Form<'a, '_> {
             .options
             .first()?;
         let value = node.pointer(&option.at)?;
-        let put = form::Message::Put.with(format!("{at}{}", option.at));
+        let put = || form::Message::Put.with(format!("{at}{}", option.at));
 
         match method.kind.as_str() {
             "/Column" => {
@@ -311,7 +311,10 @@ impl<'a> Form<'a, '_> {
                 if columns.is_empty() {
                     return Some(
                         text_input("column", name)
-                            .on_input(move |name| put(name.into()))
+                            .on_input({
+                                let put = put();
+                                move |name| put(name.into())
+                            })
                             .width(Fill.max(150))
                             .boxed(),
                     );
@@ -327,17 +330,42 @@ impl<'a> Form<'a, '_> {
                 };
                 Some(
                     pick_list(selected, columns.to_vec(), String::clone)
-                        .on_select(move |name| put(name.into()))
+                        .on_select({
+                            let put = put();
+                            move |name| put(name.into())
+                        })
                         .placeholder(placeholder.to_owned())
                         .boxed(),
                 )
             }
-            "/Literal" => Some(
-                text_input("value", methods::typed(node)?)
-                    .on_input(move |typed| put(methods::literal_of(&typed)))
-                    .width(Fill.max(150))
-                    .boxed(),
-            ),
+            "/Literal" => {
+                let typed = methods::typed(node)?;
+                let number = schema::number(&typed);
+                let field = text_input("value", typed)
+                    .on_input({
+                        let put = put();
+                        move |typed| put(methods::literal_of(&typed))
+                    })
+                    .width(Fill.max(150));
+                // a drag across a number moves it, and it stays whole if it was
+                let Some(number) = number else {
+                    return Some(field.boxed());
+                };
+                let kind = match number.is_f64() {
+                    true => "number",
+                    false => "integer",
+                };
+                let put = put();
+                let on_scrub = move |steps| {
+                    let moved = schema::nudged(&json!({ "type": kind }), &json!(number), steps);
+                    put(methods::literal_of(&moved.to_string()))
+                };
+                Some(
+                    scrub(field)
+                        .on_scrub(on_scrub)
+                        .boxed(),
+                )
+            }
             _ => None,
         }
     }

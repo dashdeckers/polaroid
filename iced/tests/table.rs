@@ -6,7 +6,7 @@ use iced::mouse::{self, ScrollDelta};
 use iced::widget::canvas;
 use iced::{Event, Point, Widget};
 use iced_test::simulator::{Simulator, press_key, simulator};
-use polaroid_iced::{Heading, Table, table};
+use polaroid_iced::{Asked, Heading, Table, table};
 
 /// A table of this many columns and rows, in which a cell says its row and its column.
 fn cells<'a>(
@@ -26,7 +26,7 @@ fn cells<'a>(
 }
 
 /// The table at the corner of the window, 400 wide: three of its columns start in view.
-fn scene<'a>(table: Table<'a>) -> impl Widget<String> + use<'a> {
+fn scene<'a>(table: Table<'a>) -> impl Widget<Asked> + use<'a> {
     let height = table.least();
     canvas(table)
         .width(400)
@@ -44,7 +44,7 @@ fn cell(
 
 /// Presses at a point, moves to another and lets go there.
 fn drag(
-    simulator: &mut Simulator<'_, String>,
+    simulator: &mut Simulator<'_, Asked>,
     from: Point,
     to: Point,
 ) {
@@ -61,7 +61,7 @@ fn drag(
 }
 
 /// What Ctrl+C copies.
-fn copied(simulator: &mut Simulator<'_, String>) -> Vec<String> {
+fn copied(simulator: &mut Simulator<'_, Asked>) -> Vec<String> {
     let mut press = press_key(Key::Character("c".into()), None);
     if let Event::Keyboard(keyboard::Event::KeyPressed { modifiers, .. }) = &mut press {
         *modifiers = Modifiers::COMMAND;
@@ -69,12 +69,16 @@ fn copied(simulator: &mut Simulator<'_, String>) -> Vec<String> {
     simulator.simulate([press]);
     simulator
         .drain()
+        .filter_map(|asked| match asked {
+            Asked::Copy(text) => Some(text),
+            Asked::Row(_) => None,
+        })
         .collect()
 }
 
 /// Turns the wheel this many notches over the first cell, and tells whether the table took it.
 fn wheel(
-    simulator: &mut Simulator<'_, String>,
+    simulator: &mut Simulator<'_, Asked>,
     notches: f32,
 ) -> Status {
     simulator.point_at(cell(0, 0));
@@ -136,4 +140,18 @@ fn the_wheel_scrolls_three_rows_a_notch_and_sideways_with_shift() {
 fn a_table_that_is_all_in_view_leaves_the_wheel_to_what_it_lies_on() {
     let mut simulator = simulator(scene(cells(2, 3)));
     assert_eq!(wheel(&mut simulator, -1.0), Status::Ignored);
+}
+
+#[test]
+fn a_press_on_a_cell_asks_for_its_row() {
+    let mut simulator = simulator(scene(cells(3, 40)));
+    wheel(&mut simulator, -1.0);
+    drag(&mut simulator, cell(1, 2), cell(2, 2));
+    // the header is no row
+    let header = Point::new(100.0, 10.0);
+    drag(&mut simulator, header, header);
+    let asked: Vec<Asked> = simulator
+        .drain()
+        .collect();
+    assert_eq!(asked, [Asked::Row(4)]);
 }

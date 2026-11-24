@@ -41,7 +41,7 @@ use iced::{
     task,
     theme,
 };
-use polaroid_iced::{Menu, Surface, menu, split, surface};
+use polaroid_iced::{Menu, Surface, menu, scrub, split, surface};
 use serde_json::Value;
 
 use self::card::Edit;
@@ -70,7 +70,9 @@ Type an id and press Enter to rename a node. The cross deletes it.
 A card turns red at once when it is wired badly. What is wrong with a file shows on Check, which \
 comes before a Run: the button is Check until every node that a Run computes is checked and \
 sound, and Run from then on. Live has a Check and a Run follow every change, and Delay once \
-there has been none for a second.
+there has been none for half a second, or for longer as its button is dragged up.
+
+Drag across a number to move it.
 
 Expressions are kept in the drawer on the left, each under a name, and a card picks them by \
 that name. The Expressions button hides the drawer, and its edge is dragged to resize it.
@@ -83,8 +85,9 @@ const TITLE: f32 = 14.0;
 const TEXT: f32 = 13.0;
 const NOTE: f32 = 12.0;
 
-/// How long Delay waits for a change to be the last, before a Check and a Run follow it.
-const STILL: Duration = Duration::from_secs(1);
+/// How long Delay waits at the least for a change to be the last, and a step of a drag on it.
+const STILL: Duration = Duration::from_millis(500);
+const LONGER: Duration = Duration::from_millis(100);
 
 /// When a Check and a Run follow a change.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -163,6 +166,8 @@ struct Editor {
     /// The Check or Run under way, whose child is killed when this is dropped.
     job: Option<task::Handle>,
     mode: Mode,
+    /// How long Delay waits for a change to be the last, before a Check and a Run follow it.
+    still: Duration,
     drawer: Drawer,
     is_drawer_shown: bool,
     /// What each block does, as the Markdown its description is written in.
@@ -198,6 +203,8 @@ enum Message {
     /// A Run of everything, whatever was saved before.
     Reload,
     Mode(Mode),
+    /// Delay is to wait this many steps longer, or shorter if they are fewer than none.
+    Wait(i32),
     /// What a Run made of the nodes it was to save or have write.
     Ran(Vec<String>, Result<Vec<(String, DataFrame)>, String>),
     Stop,
@@ -240,6 +247,7 @@ impl Editor {
             problem: None,
             job: None,
             mode: Mode::Manual,
+            still: STILL,
             is_drawer_shown: true,
             docs,
             theme: Theme::Light,
@@ -331,6 +339,16 @@ impl Editor {
             Message::Mode(mode) => {
                 self.mode = mode;
                 return self.follow();
+            }
+            Message::Wait(steps) => {
+                let longer = LONGER * steps.unsigned_abs();
+                self.still = match steps > 0 {
+                    true => self.still + longer,
+                    false => self
+                        .still
+                        .saturating_sub(longer)
+                        .max(STILL),
+                };
             }
             Message::Ran(targets, Ok(frames)) => {
                 self.job = None;
@@ -475,7 +493,7 @@ impl Editor {
         match self.mode {
             Mode::Live => self.check(Duration::ZERO),
             // a change that comes while it waits takes its place
-            Mode::Delay => self.check(STILL),
+            Mode::Delay => self.check(self.still),
             Mode::Manual => Task::none(),
         }
     }
@@ -592,7 +610,12 @@ impl Editor {
             (None, false) => ("Check", Message::Check),
             (None, true) => ("Run", Message::Run),
         };
-        let mode = |label, mode, pressed| {
+        let delay = format!(
+            "Delay {:.1} s",
+            self.still
+                .as_secs_f32()
+        );
+        let mode = |label: String, mode, pressed| {
             let style = match self.mode == mode {
                 true => button::primary,
                 false => button::secondary,
@@ -602,10 +625,13 @@ impl Editor {
                 .on_press(pressed)
         };
         let modes = row![
-            mode("Live", Mode::Live, Message::Mode(Mode::Live)),
-            mode("Delay", Mode::Delay, Message::Mode(Mode::Delay)),
+            mode("Live".to_owned(), Mode::Live, Message::Mode(Mode::Live)),
+            // dragged up it waits longer, and down again shorter
+            scrub(mode(delay, Mode::Delay, Message::Mode(Mode::Delay)).width(120))
+                .upward()
+                .on_scrub(Message::Wait),
             // as wide whatever it says
-            mode(manual, Mode::Manual, pressed).width(64),
+            mode(manual.to_owned(), Mode::Manual, pressed).width(64),
         ]
         .spacing(1);
         let files = row![
