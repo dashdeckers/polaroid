@@ -63,9 +63,18 @@ gui = [
 iced_test = { workspace = true }
 schemars = "1.2"
 
-# the dependencies without debug info, which is most of what a build writes to disk
+# optimize for fast compilation
+[profile.dev]
+debug = "line-tables-only"
+
 [profile.dev.package."*"]
 debug = false
+opt-level = 1
+
+# optimize for fast runtime
+[profile.release]
+codegen-units = 1
+lto = "thin"
 
 [workspace]
 members = [
