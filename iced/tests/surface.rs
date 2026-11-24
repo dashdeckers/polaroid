@@ -504,3 +504,120 @@ fn text_that_is_scrolled_on_a_zoomed_card_is_selected_where_it_is_pressed() {
     simulator.operate(&mut copy);
     assert_eq!(copy.0, ["line 8"]);
 }
+
+#[derive(Debug, Clone, PartialEq)]
+enum Placed {
+    Moved(u32, Point),
+    Swapped(u32, u32, Point),
+    Pressed(u32),
+}
+
+/// Three blank cards of 100 by 60, of which the third swaps with none; each holds a button.
+fn blanks() -> impl Widget<Placed> {
+    let blank = |key: u32| {
+        container(button(text!("press {key}")).on_press(Placed::Pressed(key)))
+            .width(100)
+            .height(60)
+    };
+    surface()
+        .push(card(1, Point::new(20.0, 20.0), blank(1)))
+        .push(card(2, Point::new(300.0, 20.0), blank(2)))
+        .push(card(3, Point::new(300.0, 200.0), blank(3)))
+        .on_move(Placed::Moved)
+        .on_swap(|dragged, under, from| {
+            (under != 3).then_some(Placed::Swapped(dragged, under, from))
+        })
+}
+
+/// What is asked for when the first card is dragged by this much, left there this long, and let go.
+fn dropped(
+    by: iced::Vector,
+    left: std::time::Duration,
+) -> Vec<Placed> {
+    let frame = |simulator: &mut Simulator<'_, Placed>, at| {
+        simulator.simulate([Event::Window(
+            iced::window::Event::RedrawRequested(at),
+        )]);
+    };
+    let start = iced::time::Instant::now();
+    let mut simulator = simulator(blanks());
+    // by its lower edge, under its button
+    let from = Point::new(70.0, 70.0);
+    simulator.point_at(from);
+    simulator.simulate([Event::Mouse(
+        mouse::Event::ButtonPressed(mouse::Button::Left),
+    )]);
+    let to = from + by;
+    simulator.point_at(to);
+    simulator.simulate([Event::Mouse(
+        mouse::Event::CursorMoved { position: to },
+    )]);
+    frame(&mut simulator, start);
+    frame(&mut simulator, start + left);
+    simulator.simulate([Event::Mouse(
+        mouse::Event::ButtonReleased(mouse::Button::Left),
+    )]);
+    simulator
+        .into_messages()
+        .collect()
+}
+
+#[test]
+fn a_card_left_on_another_for_a_while_swaps_with_it_when_dropped() {
+    let long = std::time::Duration::from_millis(500);
+    let short = std::time::Duration::from_millis(100);
+    let first = Point::new(20.0, 20.0);
+    let moved = |by: iced::Vector| Placed::Moved(1, first + by);
+
+    // most of it on the second card
+    let on_second = iced::Vector::new(260.0, 10.0);
+    assert_eq!(
+        dropped(on_second, long),
+        [
+            moved(on_second),
+            Placed::Swapped(1, 2, first)
+        ]
+    );
+    // let go of too soon, it is only moved there
+    assert_eq!(dropped(on_second, short), [moved(on_second)]);
+    // as is one that lies on the corner of another alone
+    let on_corner = iced::Vector::new(200.0, 40.0);
+    assert_eq!(dropped(on_corner, long), [moved(on_corner)]);
+    // and one that cannot swap goes back to where it was
+    let on_third = iced::Vector::new(270.0, 170.0);
+    assert_eq!(
+        dropped(on_third, long),
+        [
+            moved(on_third),
+            Placed::Moved(1, first)
+        ]
+    );
+}
+
+#[test]
+fn a_card_that_is_pressed_comes_to_the_top() {
+    // the second card lies over the button of the first
+    let scene = || {
+        let blank = |key: u32| {
+            container(button(text!("press {key}")).on_press(Placed::Pressed(key)))
+                .width(100)
+                .height(60)
+        };
+        surface::<u32, Placed>()
+            .push(card(1, Point::new(20.0, 20.0), blank(1)))
+            .push(card(2, Point::new(20.0, 40.0), blank(2)))
+    };
+    let button = Point::new(40.0, 30.0);
+    let mut simulator = simulator(scene());
+    // a press on the top of the first, which the second leaves free
+    simulator.point_at(Point::new(110.0, 25.0));
+    simulator.simulate(click());
+    // it stays on top when the surface is built anew
+    let mut simulator = simulator.rebuild(scene());
+    simulator.point_at(button + iced::Vector::new(0.0, 12.0));
+    simulator.simulate(click());
+    let pressed: Vec<_> = simulator
+        .into_messages()
+        .collect();
+    assert_eq!(pressed, [Placed::Pressed(1)]);
+}

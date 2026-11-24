@@ -185,7 +185,10 @@ impl<'a> Form<'a, '_> {
             .rev()
             .map(|(method, node, pointer)| match method {
                 Some(method) => {
-                    let remove = remove(asked(Message::Remove(pointer.clone())));
+                    let remove = self.help.of(
+                        remove(asked(Message::Remove(pointer.clone()))),
+                        "Takes this call out of the chain, and leaves what it was called on.",
+                    );
                     (Some(remove), self.call(method, node, pointer))
                 }
                 None if node.is_null() => {
@@ -247,12 +250,26 @@ impl<'a> Form<'a, '_> {
                 space::horizontal()
             ]
             .align_y(Center);
-            mouse_area(area).on_double_click(asked(Message::Toggle(at.clone())))
+            let area = mouse_area(area).on_double_click(asked(Message::Toggle(at.clone())));
+            self.help.of(
+                area,
+                "Double-click to lay the arguments out, or to fold them away.",
+            )
         };
-        let line = |after: Element<'a, form::Message>| {
-            row![code(before), name, after]
-                .spacing(2)
-                .align_y(Center)
+        // the name tells what Polars says the method does, and each argument what it is for
+        let says = method
+            .doc
+            .map(|doc| doc.says.to_owned());
+        let name = form::told(name, says);
+        let mut name = Some(name);
+        let mut line = |after: Element<'a, form::Message>| {
+            row![
+                code(before.clone()),
+                name.take(),
+                after
+            ]
+            .spacing(2)
+            .align_y(Center)
         };
 
         if let Some(inline) = self.inline(method, node, &at) {
@@ -289,8 +306,11 @@ impl<'a> Form<'a, '_> {
                 let value = node
                     .pointer(&arg.at)
                     .unwrap_or(&Value::Null);
+                let says = method
+                    .says_of(&arg.name)
+                    .map(str::to_owned);
                 row![
-                    code(format!("{}=", arg.name)),
+                    form::told(code(format!("{}=", arg.name)), says),
                     self.value(
                         schema::pointer(self.defs, expr, &arg.at),
                         value,
@@ -385,7 +405,8 @@ impl<'a> Form<'a, '_> {
                 Some(
                     row![
                         field,
-                        handle().on_scrub(on_scrub)
+                        self.help
+                            .of(handle().on_scrub(on_scrub), form::DRAG)
                     ]
                     .spacing(2)
                     .align_y(Center)
@@ -410,7 +431,10 @@ impl<'a> Form<'a, '_> {
             _ => {
                 return row![
                     code("."),
-                    small("+", asked(Message::Narrow(at, "")))
+                    self.help.of(
+                        small("+", asked(Message::Narrow(at, ""))),
+                        "Calls a method on the expression: pick its namespace, then the method.",
+                    )
                 ]
                 .align_y(Center)
                 .boxed();

@@ -55,35 +55,35 @@ use self::known::Known;
 use crate::polars::prelude::{DataFrame, DataType, PolarsResult, polars_err};
 use crate::{Catalog, Described, Node, Pipeline, Registry, schema};
 
-const HELP: &str = "\
-Drag a closed card to move it, or any card by the dots in its corner. Drag the background to pan, \
-and scroll to zoom.
+/// What the editor is, and what is done in it that no button does; what the Help button says.
+const INTRO: &str = "\
+A pipeline is a chain of nodes, each a card: it reads the frames of the cards wired into it, and \
+gives one on. Right-click the background to add a node. Drag from the dot on the right of a card \
+to a dot on the left of another to wire them, and right-click that dot to unwire it. Drag the \
+background to pan, and scroll to zoom. Drag a closed card anywhere, or any card by the dots in \
+its corner; left on another for a moment, it swaps places with it when dropped, wiring and all.
 
-Drag from the dot on a card's right to a dot on another's left to wire them. Right-click that dot \
-to unwire it, and the background to add a node there.
+While Help is on, everything says what it is for when the cursor rests on it. Press Help again \
+to turn that off.";
 
-Press the small table on a card and Run to keep its frame. A Run reads again only what was edited \
-since, and Reload everything, from the disk on.
+/// Whether what the editor is made of says what it is for when hovered.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Help(bool);
 
-Double-click a closed card or press its plus to lay it open, and the minus to close it. An open \
-card shows its args, and the saved frame or else the columns that Check found. Scroll over the \
-table, with shift for sideways. Drag the corner of the card to resize it, and across cells to \
-select them for Ctrl+C.
-
-Type an id and press Enter to rename a node. The cross deletes it.
-
-A card turns red at once when it is wired badly. What is wrong with a file shows on Check, which \
-comes before a Run: the button is Check until every node that a Run computes is checked and \
-sound, and Run from then on. Live has a Check and a Run follow every change, and Delay once \
-there has been none for half a second, or for longer as its button is dragged up.
-
-Drag the arrows beside a number to move it, faster for more, and those beside a list to step through it.
-
-Expressions are kept in the drawer on the left, each under a name, and a card picks them by \
-that name. The Expressions button hides the drawer, and its edge is dragged to resize it.
-
-Save is lit when there is something to save. Load asks for another pipeline and New for the name \
-of an empty one; either takes the place of this pipeline, and drops what was not saved.";
+impl Help {
+    /// `content`, which `says` what it is for when hovered while help is on.
+    pub fn of<'a, Message: 'a>(
+        self,
+        content: impl Widget<Message> + 'a,
+        says: &str,
+    ) -> Element<'a, Message> {
+        let says = self
+            .0
+            .then(|| says.to_owned());
+        // under it, where what Polars says of it, over it, is not hidden
+        form::told_at(content, says, tooltip::Position::Bottom)
+    }
+}
 
 /// The sizes of text: of a name to type, of an argument, and of what is said beside them.
 const TITLE: f32 = 14.0;
@@ -175,6 +175,7 @@ struct Editor {
     still: Duration,
     drawer: Drawer,
     is_drawer_shown: bool,
+    help: Help,
     /// What each block does, as the Markdown its description is written in.
     docs: BTreeMap<String, markdown::Content>,
     theme: Theme,
@@ -183,6 +184,8 @@ struct Editor {
 #[derive(Debug, Clone)]
 enum Message {
     Move(String, Point),
+    /// The first node was dragged from this point and dropped on the second, to swap with it.
+    Swap(String, String, Point),
     /// The open card of this node is to be of this size.
     Resize(String, Size),
     /// The menu of blocks is asked for here on the surface, which is this point among the cards.
@@ -216,6 +219,8 @@ enum Message {
     Drawer(drawer::Message),
     /// The drawer is shown, or hidden if it is shown.
     ToggleDrawer,
+    /// Help is shown, or no longer if it is.
+    Help,
     /// The system is light or dark.
     Tone(theme::Mode),
 }
@@ -254,6 +259,7 @@ impl Editor {
             mode: Mode::Manual,
             still: STILL,
             is_drawer_shown: true,
+            help: Help::default(),
             docs,
             theme: Theme::Light,
         };
@@ -287,6 +293,11 @@ impl Editor {
     ) -> Task<Message> {
         match message {
             Message::Move(id, position) => self.lay(&id, |node| layout::place(node, position)),
+            Message::Swap(dragged, under, from) => {
+                if self.swap(&dragged, &under, from) {
+                    return self.follow();
+                }
+            }
             Message::Resize(id, size) => self.lay(&id, |node| layout::resize(node, size)),
             Message::Copy(text) => return clipboard::write(text).discard(),
             Message::Menu(at, point) => self.menu = Some((at, point)),
@@ -384,6 +395,7 @@ impl Editor {
                 return self.follow();
             }
             Message::ToggleDrawer => self.is_drawer_shown = !self.is_drawer_shown,
+            Message::Help => self.help = Help(!self.help.0),
             Message::Tone(mode) => {
                 self.theme = match mode {
                     theme::Mode::Dark => Theme::Dark,
@@ -553,6 +565,58 @@ impl Editor {
             .get(name)
     }
 
+    /// Whether two nodes can swap places: their blocks read as many frames.
+    fn swaps(
+        &self,
+        one: &str,
+        other: &str,
+    ) -> bool {
+        let reads = |id: &str| {
+            let node = self
+                .pipeline
+                .nodes
+                .iter()
+                .find(|node| node.id == id)?;
+            Some(
+                self.block(&node.block)?
+                    .inputs
+                    .len(),
+            )
+        };
+        one != other && reads(one).is_some() && reads(one) == reads(other)
+    }
+
+    /// Has the node that was dragged from `from` swap places with the one it was dropped on.
+    ///
+    /// Each takes the wiring of the other and where its card was; false if they cannot.
+    fn swap(
+        &mut self,
+        dragged: &str,
+        under: &str,
+        from: Point,
+    ) -> bool {
+        if !self.swaps(dragged, under) {
+            return false;
+        }
+        let place = self
+            .pipeline
+            .nodes
+            .iter()
+            .find(|node| node.id == under)
+            .map(layout::position);
+        let Some(place) = place else {
+            return false;
+        };
+        // what they and their readers were found to be, they no longer are
+        self.forget(|node| node.id == dragged || node.id == under);
+        self.pipeline
+            .swap(dragged, under);
+        self.lay(dragged, |node| layout::place(node, place));
+        self.lay(under, |node| layout::place(node, from));
+        self.check_wiring();
+        true
+    }
+
     /// Notes how the nodes are wired as of the latest edit, and what is wrong with the pipeline.
     fn check_wiring(&mut self) {
         self.problem = self
@@ -585,7 +649,7 @@ impl Editor {
             .names(ids);
         let drawer = self
             .drawer
-            .view(&self.catalog.defs, expressions, &columns)
+            .view(&self.catalog.defs, expressions, &columns, self.help)
             .map(Message::Drawer);
         let graph = stack![self.graph(), self.menu()];
         let problem = self
@@ -629,40 +693,82 @@ impl Editor {
                 .style(style)
                 .on_press(pressed)
         };
+        let help = self.help;
+        let manual_says = match manual {
+            "Stop" => "Stops the Check or Run that is under way.",
+            "Check" => {
+                "Manual: nothing follows a change. Check resolves the columns of every node, \
+                 without reading any rows; once all are sound, this button is Run."
+            }
+            _ => {
+                "Manual: nothing follows a change. Run computes the frames that are kept and \
+                 writes the files; it reads again only what was edited since the last."
+            }
+        };
         let modes = row![
-            mode("Live".to_owned(), Mode::Live, Message::Mode(Mode::Live)),
+            help.of(
+                mode("Live".to_owned(), Mode::Live, Message::Mode(Mode::Live)),
+                "Live: a Check and a Run follow every change at once, if it leaves all sound.",
+            ),
             // dragged up it waits longer, and down again shorter
-            scrub(mode(delay, Mode::Delay, Message::Mode(Mode::Delay)).width(120))
-                .upward()
-                .on_scrub(Message::Wait),
+            help.of(
+                scrub(mode(delay, Mode::Delay, Message::Mode(Mode::Delay)).width(120))
+                    .upward()
+                    .on_scrub(Message::Wait),
+                "Delay: a Check and a Run follow a change once there has been none for this \
+                 long. Drag the button up to wait longer, and down for shorter.",
+            ),
             // as wide whatever it says
-            mode(manual.to_owned(), Mode::Manual, pressed).width(64),
+            help.of(
+                mode(manual.to_owned(), Mode::Manual, pressed).width(64),
+                manual_says
+            ),
         ]
         .spacing(1);
         let files = row![
-            button("Save").on_press_maybe(save),
-            button("Load")
-                .style(button::secondary)
-                .on_press(Message::Load),
-            button("New")
-                .style(button::secondary)
-                .on_press(Message::New),
+            help.of(
+                button("Save").on_press_maybe(save),
+                "Writes the pipeline to its file, if it was changed since.",
+            ),
+            help.of(
+                button("Load")
+                    .style(button::secondary)
+                    .on_press(Message::Load),
+                "Opens the pipeline of another file in place of this one.",
+            ),
+            help.of(
+                button("New")
+                    .style(button::secondary)
+                    .on_press(Message::New),
+                "Starts an empty pipeline, in a file that the first Save makes.",
+            ),
         ]
         .spacing(1);
-        let help = container(text(HELP))
-            .width(460)
-            .padding(10)
-            .style(container::bordered_box);
+        let asked = match help.0 {
+            true => button::primary,
+            false => button::secondary,
+        };
         row![
-            button("Expressions")
-                .style(button::secondary)
-                .on_press(Message::ToggleDrawer),
-            tooltip(container("Help").padding(5), help).position(tooltip::Position::Bottom),
+            help.of(
+                button("Expressions")
+                    .style(button::secondary)
+                    .on_press(Message::ToggleDrawer),
+                "Shows or hides the drawer of expressions on the left. Drag its edge to resize it.",
+            ),
+            help.of(
+                button("Help")
+                    .style(asked)
+                    .on_press(Message::Help),
+                INTRO,
+            ),
             space::horizontal(),
             modes,
-            button("Reload")
-                .style(button::secondary)
-                .on_press(Message::Reload),
+            help.of(
+                button("Reload")
+                    .style(button::secondary)
+                    .on_press(Message::Reload),
+                "Runs everything again from the files on disk, whatever was kept before.",
+            ),
             files,
         ]
         .spacing(10)
@@ -673,6 +779,10 @@ impl Editor {
     fn graph(&self) -> Surface<'_, String, Message> {
         let mut graph = surface()
             .on_move(Message::Move)
+            .on_swap(|dragged, under, from| {
+                self.swaps(&dragged, &under)
+                    .then_some(Message::Swap(dragged, under, from))
+            })
             .on_resize(Message::Resize)
             .on_wire(|from, to, slot| Message::Edit(to, Edit::Wire(slot, from)))
             .on_unwire(|to, slot| Message::Edit(to, Edit::Wire(slot, String::new())))

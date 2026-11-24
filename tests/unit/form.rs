@@ -71,6 +71,7 @@ impl Form {
             &self.args,
             Expressions::Chained(&[]),
             0.0,
+            crate::gui::Help::default(),
         )
     }
 }
@@ -239,6 +240,7 @@ fn a_number_that_is_being_typed_is_shown_but_not_put_in_the_value() -> Result<()
         &args,
         Expressions::Chained(&[]),
         0.0,
+        crate::gui::Help::default(),
     ))
     .find("1.")?;
     // more of what is no number changes nothing
@@ -258,6 +260,7 @@ fn a_number_that_is_being_typed_is_shown_but_not_put_in_the_value() -> Result<()
         &args,
         Expressions::Chained(&[]),
         0.0,
+        crate::gui::Help::default(),
     ));
     assert!(
         ui.find("-")
@@ -280,7 +283,15 @@ fn the_name_of_a_column_is_picked_from_the_columns_that_are_read() {
     let args = json!({ "column": null, "name": "to" });
     let pick = |columns: &[String]| {
         let named = Expressions::Named(&named, columns);
-        let mut ui = simulator(view(&state, defs, schema, &args, named, 0.0));
+        let mut ui = simulator(view(
+            &state,
+            defs,
+            schema,
+            &args,
+            named,
+            0.0,
+            crate::gui::Help::default(),
+        ));
         (
             ui.find("column…")
                 .is_ok(),

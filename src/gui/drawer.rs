@@ -7,7 +7,7 @@ use iced::{Center, Fill, Function, Widget};
 use serde_json::{Map, Value};
 
 use super::form::{self, Expressions};
-use super::{NOTE, TITLE, cross, name_field, toggle};
+use super::{Help, NOTE, TITLE, cross, name_field, toggle};
 use crate::{Pipeline, methods};
 
 /// What the drawer shows of the expressions of a pipeline, by their names.
@@ -135,6 +135,7 @@ impl Drawer {
         defs: &'a Value,
         expressions: &'a Map<String, Value>,
         columns: &[String],
+        help: Help,
     ) -> impl Widget<Message> + use<'a> {
         let closed = Section::default();
         let sections = expressions
@@ -148,13 +149,23 @@ impl Drawer {
                     .name
                     .as_deref();
                 let head = row![
-                    toggle(section.is_open, Message::Toggle(name.clone())),
-                    name_field("name", typed, name)
-                        .on_input(Message::Name.with(name.clone()))
-                        .on_submit(Message::Rename(name.clone()))
-                        .size(TITLE)
-                        .padding(4),
-                    cross(Message::Delete(name.clone())),
+                    help.of(
+                        toggle(section.is_open, Message::Toggle(name.clone())),
+                        "Lays the expression open to edit it, or closes it to its text.",
+                    ),
+                    help.of(
+                        name_field("name", typed, name)
+                            .on_input(Message::Name.with(name.clone()))
+                            .on_submit(Message::Rename(name.clone()))
+                            .size(TITLE)
+                            .padding(4),
+                        "The name that cards pick the expression by. Type another and press \
+                         Enter to rename it, wherever it is used.",
+                    ),
+                    help.of(
+                        cross(Message::Delete(name.clone())),
+                        "Deletes the expression; the cards that used it are left without one.",
+                    ),
                 ]
                 .spacing(6)
                 .align_y(Center);
@@ -163,7 +174,7 @@ impl Drawer {
                     true => {
                         let schema = &defs["Expr"];
                         let chained = Expressions::Chained(columns);
-                        form::view(&section.form, defs, schema, expression, chained, 0.0)
+                        form::view(&section.form, defs, schema, expression, chained, 0.0, help)
                             .map(Message::Form.with(name.clone()))
                             .boxed()
                     }
@@ -179,7 +190,10 @@ impl Drawer {
         let head = row![
             "Expressions",
             space::horizontal(),
-            button("New").on_press(Message::New),
+            help.of(
+                button("New").on_press(Message::New),
+                "Adds an empty expression, under a name that is free.",
+            ),
         ]
         .align_y(Center);
         let sections = column(sections)
