@@ -3,6 +3,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use super::Columns;
+use super::gallery::Gallery;
 use crate::polars::prelude::{DataFrame, DataType, Field, Schema};
 use crate::{Catalog, Node, Pipeline, Registry, is_sink};
 
@@ -35,8 +36,8 @@ pub struct Known {
 #[derive(Default)]
 struct Found {
     columns: Option<Columns>,
-    /// Its frame, if a Run saved it.
-    frame: Option<DataFrame>,
+    /// Its frame, if a Run saved it, and the images in that.
+    frame: Option<(DataFrame, Gallery)>,
     /// Why the latest Run failed, if it was to save this node or have it write.
     failed: Option<String>,
     /// Whether a Run computed it.
@@ -239,7 +240,8 @@ impl Known {
             }
             // in one chunk, a cell is found in constant time
             frame.rechunk_mut();
-            self.of(id).frame = Some(frame);
+            let gallery = Gallery::of(&frame);
+            self.of(id).frame = Some((frame, gallery));
         }
     }
 
@@ -269,6 +271,23 @@ impl Known {
         &self,
         id: &str,
     ) -> Option<&DataFrame> {
+        let (frame, _) = self.saved(id)?;
+        Some(frame)
+    }
+
+    /// The images in the frame of node `id`, if a Run saved it.
+    pub fn gallery(
+        &self,
+        id: &str,
+    ) -> Option<&Gallery> {
+        let (_, gallery) = self.saved(id)?;
+        Some(gallery)
+    }
+
+    fn saved(
+        &self,
+        id: &str,
+    ) -> Option<&(DataFrame, Gallery)> {
         self.found
             .get(id)?
             .frame
