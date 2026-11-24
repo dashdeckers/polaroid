@@ -82,6 +82,97 @@ impl Block for WriteParquet {
     }
 }
 
+fn comma() -> char {
+    ','
+}
+
+fn yes() -> bool {
+    true
+}
+
+/// The byte of a character that separates the values of a line of CSV.
+fn byte(separator: char) -> PolarsResult<u8> {
+    polars_ensure!(
+        separator.is_ascii(),
+        ComputeError: "the separator {separator} is no single byte"
+    );
+    Ok(separator as u8)
+}
+
+/// Reads a CSV file, or several of the same columns as one frame.
+///
+/// The data types of the columns are told from the first rows.
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ScanCsv {
+    /// Path to a file, or a glob pattern such as data/*.csv.
+    pub path: String,
+    /// Character that separates the values of a line.
+    #[serde(default = "comma")]
+    pub separator: char,
+    /// Whether the first line names the columns. Without it they are named column_1, column_2
+    /// and so on.
+    #[serde(default = "yes")]
+    pub has_header: bool,
+    /// Read values that look like dates and times as such. Otherwise they are strings.
+    #[serde(default)]
+    pub try_parse_dates: bool,
+}
+
+impl Block<0> for ScanCsv {
+    fn apply(
+        self,
+        []: [LazyFrame; 0],
+    ) -> PolarsResult<LazyFrame> {
+        LazyCsvReader::new(PlRefPath::new(&self.path))
+            .with_separator(byte(self.separator)?)
+            .with_has_header(self.has_header)
+            .with_try_parse_dates(self.try_parse_dates)
+            .finish()
+    }
+}
+
+/// Writes the frame to a CSV file on every Run, replacing a file that is there.
+///
+/// The nodes that read this one get the frame it writes.
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct WriteCsv {
+    /// Path of the CSV file to write.
+    pub path: String,
+    /// Character that separates the values of a line.
+    #[serde(default = "comma")]
+    pub separator: char,
+    /// Whether the first line names the columns.
+    #[serde(default = "yes")]
+    pub include_header: bool,
+}
+
+impl Block for WriteCsv {
+    /// Plans the write, which a run of the Pipeline then does.
+    fn apply(
+        self,
+        [lf]: [LazyFrame; 1],
+    ) -> PolarsResult<LazyFrame> {
+        let serialize = SerializeOptions {
+            separator: byte(self.separator)?,
+            ..Default::default()
+        };
+        let options = CsvWriterOptions {
+            include_header: self.include_header,
+            serialize_options: Arc::new(serialize),
+            ..Default::default()
+        };
+        lf.sink(
+            SinkDestination::File {
+                target: SinkTarget::Path(PlRefPath::new(&self.path)),
+            },
+            FileWriteFormat::Csv(options),
+            UnifiedSinkArgs::default(),
+        )
+    }
+}
+
 /// Writes each value of a column to a file of its own on every Run, replacing a file that is there.
 ///
 /// The file of a row is folder/directories/name.extension, and folders that are missing are made.
