@@ -17,6 +17,9 @@ const USAGE: &str = "usage:
 
 a <pipeline.json> of `-` is read from stdin";
 
+/// Room for Polars to walk the plan of a deep pipeline, which it does by recursion.
+const STACK: usize = 256 << 20;
+
 /// Set for the commands that the editor runs, which add to its log.
 pub(crate) const CHILD: &str = "POLAROID_CHILD";
 
@@ -69,8 +72,21 @@ pub fn cli(registry: Registry) -> PolarsResult<()> {
     }
     log::info!("polaroid {}", args.join(" "));
 
-    command(registry, &args)
-        .inspect(|()| log::info!("done"))
+    let is_window = args
+        .first()
+        .is_some_and(|command| command == "gui");
+    let done = match is_window {
+        // a window belongs to the first thread
+        true => command(registry, &args),
+        false => std::thread::scope(|scope| {
+            let deep = std::thread::Builder::new()
+                .stack_size(STACK)
+                .spawn_scoped(scope, || command(registry, &args))?;
+            deep.join()
+                .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+        }),
+    };
+    done.inspect(|()| log::info!("done"))
         .inspect_err(|e| log::error!("{e}"))
 }
 
