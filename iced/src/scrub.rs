@@ -92,10 +92,13 @@ impl<'a, Message> Scrub<'a, Message> {
 
 #[derive(Default)]
 struct State {
+    is_pressed: bool,
     /// How far along the press was, or its drag at the latest frame.
-    pressed: Option<f32>,
-    /// How far along the drag is now.
-    along: f32,
+    from: Option<f32>,
+    /// How far along the cursor was last seen, in the window as every move tells it.
+    ///
+    /// The cursor itself is told as what holds the field sees it, panned, zoomed or scrolled.
+    along: Option<f32>,
     is_dragged: bool,
     /// The part of a step that is not asked for yet.
     carried: f32,
@@ -163,7 +166,10 @@ impl<Message> Widget<Message, Theme, Renderer> for Scrub<'_, Message> {
             .downcast_mut::<State>();
         // the field sees the release that ends a drag, as it saw the press
         if let Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) = event {
-            *state = State::default();
+            *state = State {
+                along: state.along,
+                ..State::default()
+            };
         }
         // and nothing of the drag itself
         if !state.is_dragged {
@@ -180,20 +186,23 @@ impl<Message> Widget<Message, Theme, Renderer> for Scrub<'_, Message> {
             .downcast_mut::<State>();
         match event {
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
-                state.pressed = cursor
-                    .position_over(layout.bounds())
-                    .map(|point| self.along(point));
+                state.is_pressed = cursor.is_over(layout.bounds());
+                state.from = state.along;
             }
             Event::Mouse(mouse::Event::CursorMoved { position }) => {
-                let Some(from) = state.pressed else {
-                    return;
-                };
                 let along = self.along(*position);
+                state.along = Some(along);
+                if !state.is_pressed {
+                    return;
+                }
+                // a press before any move is dragged from where it is first moved to
+                let from = *state
+                    .from
+                    .get_or_insert(along);
                 if !state.is_dragged && (along - from).abs() < START {
                     return;
                 }
                 state.is_dragged = true;
-                state.along = along;
                 shell.capture_event();
                 shell.request_redraw();
             }
@@ -202,14 +211,12 @@ impl<Message> Widget<Message, Theme, Renderer> for Scrub<'_, Message> {
                     .frame
                     .replace(*now)
                     .map(|frame| (*now - frame).as_secs_f32());
-                let Some(from) = state
-                    .pressed
-                    .filter(|_| state.is_dragged)
+                let (true, Some(from), Some(along)) = (state.is_dragged, state.from, state.along)
                 else {
                     return;
                 };
-                let moved = state.along - from;
-                state.pressed = Some(state.along);
+                let moved = along - from;
+                state.from = Some(along);
                 // the first frame of a drag tells no speed, and steps as a slow one
                 let speed = since
                     .filter(|since| *since > 0.0)
