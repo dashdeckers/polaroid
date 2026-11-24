@@ -227,18 +227,28 @@ fn write_files_nests_the_folders_of_a_list_and_takes_none_that_leaves_its_folder
             .join("a.txt")
             .exists()
     );
-    // what is no single part of a path on some platform is none here
+    // what is no valid file name on some platform is none here
     for (folders, name) in [
         (&[".."][..], "a"),
         (&["x/y"], "a"),
         (&["C:"], "a"),
         (&[""], "a"),
+        (&["x."], "a"),
+        (&["x"], ""),
         (&["x"], "a?"),
         (&["x"], "nul"),
+        (&["x"], "CON"),
         (&["x"], "a."),
     ] {
         assert!(write(folders, name).is_err(), "{folders:?} {name}");
     }
+    let error = write(&["x"], "CON")
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("row 0: 'CON' is an invalid file name"),
+        "{error}"
+    );
     std::fs::remove_dir_all(&folder).unwrap();
 }
 
