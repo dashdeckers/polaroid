@@ -1,6 +1,7 @@
 //! Expression nodes read as method calls, the way Python Polars writes them.
 
 mod derive;
+mod docs;
 mod namespaces;
 mod render;
 
@@ -9,6 +10,7 @@ use std::sync::LazyLock;
 
 use serde_json::Value;
 
+pub use self::docs::Doc;
 use self::namespaces::rows;
 pub use self::render::{arguments, literal, literal_of, text, typed};
 
@@ -28,6 +30,8 @@ pub struct Method {
     pub options: Vec<Arg>,
     /// The node at its defaults: its receiver null, a variadic input empty.
     node: Value,
+    /// What Polars says of it, if Python has it under this name.
+    pub doc: Option<&'static Doc>,
 }
 
 /// An argument of a [`Method`].
@@ -41,6 +45,18 @@ pub struct Arg {
 }
 
 impl Method {
+    /// What Polars says the argument of a name is for.
+    pub fn says_of(
+        &self,
+        argument: &str,
+    ) -> Option<&'static str> {
+        self.doc?
+            .args
+            .iter()
+            .find(|(name, _)| *name == argument)
+            .map(|(_, says)| *says)
+    }
+
     /// The node of this method called on `receiver`, its arguments at their defaults.
     pub fn call(
         &self,
@@ -125,6 +141,19 @@ pub fn methods() -> &'static [Method] {
         rows()
             .into_iter()
             .map(|method| method.unwrap_or_else(|problem| panic!("{problem}")))
+            .map(|method| Method {
+                doc: docs::DOCS
+                    .iter()
+                    .find(|doc| {
+                        doc.namespace == method.namespace
+                            && doc.name == method.name
+                            && doc.is_function
+                                == method
+                                    .receiver
+                                    .is_none()
+                    }),
+                ..method
+            })
             .collect()
     });
     &METHODS
