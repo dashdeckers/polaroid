@@ -10,6 +10,42 @@ pub fn number(typed: &str) -> Option<Number> {
         .filter(|number| number.to_string() == typed)
 }
 
+/// The number `value` moved by `steps`, within what its schema takes; none yet is moved from 0.
+///
+/// A step is 1 for an integer, and else a tenth of the power of ten that the number is at.
+pub fn nudged(
+    schema: &Value,
+    value: &Value,
+    steps: i32,
+) -> Value {
+    let within = |number: f64| {
+        let least = schema["minimum"]
+            .as_f64()
+            .unwrap_or(f64::MIN);
+        let most = schema["maximum"]
+            .as_f64()
+            .unwrap_or(f64::MAX);
+        number.clamp(least, most)
+    };
+    let from = value
+        .as_f64()
+        .unwrap_or_default();
+    if json_type(schema) == "integer" {
+        return Value::from(within(from + f64::from(steps)) as i64);
+    }
+    // below 1 a step is a tenth too, so that a drag comes through 0
+    let step = 10f64.powf(
+        from.abs()
+            .max(1.0)
+            .log10()
+            .floor()
+            - 1.0,
+    );
+    // a whole number of steps, which a sum of them is not quite
+    let moved = (from / step).round() + f64::from(steps);
+    Value::from(within((moved * step * 10.0).round() / 10.0))
+}
+
 /// A value to start from: the default, else null if nullable, else [`blank`].
 pub fn default(
     defs: &Value,
