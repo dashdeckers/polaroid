@@ -149,6 +149,7 @@ impl Namespace {
             inputs: args,
             options,
             node,
+            doc: None,
         })
     }
 }

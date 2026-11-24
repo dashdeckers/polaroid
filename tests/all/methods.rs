@@ -351,3 +351,47 @@ fn a_chain_reads_from_its_last_call_back_to_its_root() {
     assert_eq!(*arg(contains, &method.options, "literal"), json!(false));
     assert_eq!(*arg(contains, &method.options, "strict"), json!(false));
 }
+
+#[test]
+fn a_method_says_what_polars_says_of_it_and_of_its_arguments() {
+    let contains = method(methods(), "str", "contains");
+    let doc = contains
+        .doc
+        .expect("Python has it");
+    assert_eq!(
+        doc.says,
+        "Check if the string contains a substring that matches a pattern."
+    );
+    assert_eq!(
+        contains.says_of("literal"),
+        Some("Treat `pattern` as a literal string, not as a regular expression.")
+    );
+    assert_eq!(contains.says_of("none"), None);
+
+    // the function of a name is another than the method of it
+    let says = |is_function: bool| {
+        methods()
+            .iter()
+            .find(|method| {
+                method
+                    .namespace
+                    .is_empty()
+                    && method.name == "len"
+                    && method
+                        .receiver
+                        .is_none()
+                        == is_function
+            })
+            .and_then(|method| method.doc)
+            .map(|doc| doc.says)
+    };
+    assert!(says(true).is_some());
+    assert_ne!(says(true), says(false));
+
+    // all but a few, which Python has under another name or not at all
+    let untold = methods()
+        .iter()
+        .filter(|method| method.doc.is_none())
+        .count();
+    assert!(untold <= 13, "{untold} methods say nothing");
+}
