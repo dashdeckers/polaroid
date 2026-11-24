@@ -5,13 +5,20 @@ use polars::prelude::*;
 use crate::methods::Method;
 use crate::methods::derive::Payload::{Fields, Named};
 use crate::methods::derive::{Namespace, WithDefault};
+use crate::methods::namespaces::function::WEEK;
 
 #[rustfmt::skip]
 pub(super) fn methods() -> Vec<Result<Method, String>> {
     let dt = Namespace { name: "dt", at: "/Function/function/TemporalExpr" };
     let temporal = Namespace { name: "", at: "/Function/function/TemporalExpr" };
+    let business = Namespace { name: "dt", at: "/Function/function/Business" };
 
     vec![
+        business.method("add_business_days", ["n", "holidays"], Fields,
+            |s, [n, holidays]| s.dt().add_business_days(n, WEEK, holidays, Roll::Raise)),
+        business.method("is_business_day",   ["holidays"],      Fields,
+            |s, [holidays]| s.dt().is_business_day(WEEK, holidays)),
+
         dt.method("base_utc_offset",    [],            Fields,                |s, []| s.dt().base_utc_offset()),
         dt.method("cast_time_unit",     [],            Named(&["time_unit"]), |s, []| s.dt().cast_time_unit(TimeUnit::Microseconds)),
         dt.method("century",            [],            Fields,                |s, []| s.dt().century()),
@@ -31,6 +38,9 @@ pub(super) fn methods() -> Vec<Result<Method, String>> {
         dt.method("minute",             [],            Fields,                |s, []| s.dt().minute()),
         dt.method("month",              [],            Fields,                |s, []| s.dt().month()),
         dt.method("nanosecond",         [],            Fields,                |s, []| s.dt().nanosecond()),
+        dt.method("month_end",          [],            Fields,                |s, []| s.dt().month_end()),
+        dt.method("month_start",        [],            Fields,                |s, []| s.dt().month_start()),
+        dt.method("offset_by",          ["by"],        Fields,                |s, [by]| s.dt().offset_by(by)),
         dt.method("ordinal_day",        [],            Fields,                |s, []| s.dt().ordinal_day()),
         dt.method("quarter",            [],            Fields,                |s, []| s.dt().quarter()),
         dt.method("replace",            ["year", "month", "day", "hour", "minute", "second", "microsecond", "ambiguous"], Fields,

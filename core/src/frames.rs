@@ -334,3 +334,25 @@ impl Block for Limit {
         Ok(lf.limit(self.n))
     }
 }
+
+/// Gets `n` rows picked at random, in the order they have in the frame.
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Sample {
+    /// Number of rows to return. A frame of fewer rows is returned whole.
+    pub n: IdxSize,
+    /// Seed of the random pick: the same seed picks the same rows, and another seed others.
+    #[serde(default)]
+    pub seed: u64,
+}
+
+impl Block for Sample {
+    fn apply(
+        self,
+        [lf]: [LazyFrame; 1],
+    ) -> PolarsResult<LazyFrame> {
+        // the rows that a shuffle of the row numbers gives one of the first `n` numbers
+        let shuffled = int_range(lit(0), len(), 1, IDX_DTYPE).shuffle(Some(self.seed));
+        Ok(lf.filter(shuffled.lt(lit(self.n))))
+    }
+}
