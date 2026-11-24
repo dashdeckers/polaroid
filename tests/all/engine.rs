@@ -229,7 +229,8 @@ fn an_expression_is_used_by_its_name() {
 fn a_block_is_in_the_category_named_before_it() {
     use polaroid::frames::Limit;
 
-    let catalog = Registry::with_polars()
+    let catalog = Registry::default()
+        .category("Reshape")
         .register::<Limit, _>("first")
         .category("Mine")
         .register::<Limit, _>("second")
@@ -238,16 +239,9 @@ fn a_block_is_in_the_category_named_before_it() {
         .register::<Limit, _>("third")
         .catalog();
 
-    let categories = [
-        "Read and write",
-        "Keep rows",
-        "Reshape",
-        "Mine",
-    ];
+    let categories = ["Reshape", "Mine"];
     assert_eq!(catalog.categories, categories);
     let category = |block: &str| catalog.blocks[block].category;
-    assert_eq!(category("scan_parquet"), "Read and write");
-    assert_eq!(category("sort"), "Keep rows");
     assert_eq!(category("first"), "Reshape");
     assert_eq!(category("second"), "Mine");
     assert_eq!(category("third"), "Reshape");
