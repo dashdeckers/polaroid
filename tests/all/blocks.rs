@@ -307,3 +307,321 @@ fn view_images_gives_its_frame_and_tells_the_column_of_the_images_to_show() {
     assert!(apply("view_images", json!({ "column": "name" }), frame.clone()).is_err());
     assert!(apply("view_images", json!({ "column": "none" }), frame).is_err());
 }
+
+#[test]
+fn slice_and_tail_get_the_rows_from_an_offset_and_from_the_end() {
+    let frame = df!("a" => [1, 2, 3, 4]).unwrap();
+    let rows = |block: &str, args: Value| {
+        let frame = apply(block, args, frame.clone()).unwrap();
+        let rows = frame
+            .column("a")
+            .unwrap()
+            .i32()
+            .unwrap();
+        rows.into_no_null_iter()
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(rows("slice", json!({ "offset": 1, "length": 2 })), [2, 3]);
+    // a negative offset counts from the end, and fewer rows than asked for are all there are
+    assert_eq!(rows("slice", json!({ "offset": -1, "length": 2 })), [4]);
+    assert_eq!(rows("tail", json!({ "n": 3 })), [2, 3, 4]);
+    assert_eq!(rows("tail", json!({ "n": 9 })), [1, 2, 3, 4]);
+}
+
+#[test]
+fn top_k_and_bottom_k_get_the_rows_at_either_end_in_order_and_no_nulls() {
+    let frame = df!("a" => [Some(2), None, Some(3), Some(1)]).unwrap();
+    let rows = |block: &str| {
+        let by = serde_json::to_value(col("a")).unwrap();
+        let frame = apply(block, json!({ "k": 2, "by": [by] }), frame.clone()).unwrap();
+        let rows = frame
+            .column("a")
+            .unwrap()
+            .i32()
+            .unwrap();
+        rows.iter()
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(rows("top_k"), [Some(3), Some(2)]);
+    assert_eq!(rows("bottom_k"), [Some(1), Some(2)]);
+}
+
+#[test]
+fn with_row_index_numbers_the_rows_in_a_first_column() {
+    let frame = df!("a" => ["x", "y"]).unwrap();
+    let indexed = apply("with_row_index", json!({}), frame.clone()).unwrap();
+    assert_eq!(indexed.get_column_names(), ["index", "a"]);
+
+    let args = json!({ "name": "row", "offset": 5 });
+    let indexed = apply("with_row_index", args, frame.clone()).unwrap();
+    let rows = indexed
+        .column("row")
+        .unwrap()
+        .idx()
+        .unwrap();
+    assert_eq!(
+        rows.into_no_null_iter()
+            .collect::<Vec<_>>(),
+        [5, 6]
+    );
+    // a name that is taken is none for the column
+    assert!(apply("with_row_index", json!({ "name": "a" }), frame).is_err());
+}
+
+#[test]
+fn unnest_puts_the_fields_of_a_struct_in_its_place() {
+    let frame = df!("a" => [1], "b" => [2], "c" => [3])
+        .unwrap()
+        .lazy()
+        .select([
+            col("a"),
+            as_struct(vec![col("b"), col("c")]).alias("both"),
+        ])
+        .collect()
+        .unwrap();
+    let args = json!({ "columns": ["both"] });
+    let flat = apply("unnest", args, frame.clone()).unwrap();
+    assert_eq!(flat.get_column_names(), ["a", "b", "c"]);
+
+    let args = json!({ "columns": ["both"], "separator": "." });
+    let flat = apply("unnest", args, frame.clone()).unwrap();
+    assert_eq!(flat.get_column_names(), ["a", "both.b", "both.c"]);
+    assert!(apply("unnest", json!({ "columns": [] }), frame).is_err());
+}
+
+/// What a node of `block` with `args` makes of these two frames.
+fn both(
+    block: &str,
+    args: Value,
+    first: DataFrame,
+    second: DataFrame,
+) -> PolarsResult<DataFrame> {
+    let pipeline = json!({
+        "polars": polars::VERSION,
+        "nodes": [
+            { "id": "first", "block": "scan_parquet", "args": { "path": "" } },
+            { "id": "second", "block": "scan_parquet", "args": { "path": "" } },
+            { "id": "out", "block": block, "inputs": ["first", "second"], "args": args },
+        ],
+        "outputs": ["out"],
+    });
+    let pipeline: Pipeline = serde_json::from_value(pipeline).unwrap();
+    let known = HashMap::from([
+        ("first".to_owned(), first),
+        ("second".to_owned(), second),
+    ]);
+    let mut frames = pipeline.run_from(&Registry::with_polars(), &known)?;
+    Ok(frames.remove(0))
+}
+
+#[test]
+fn concat_takes_the_columns_of_both_frames_if_it_is_diagonal() {
+    let top = df!("a" => [1], "b" => ["x"]).unwrap();
+    let bottom = df!("a" => [2], "c" => [true]).unwrap();
+    assert!(both("concat", json!({}), top.clone(), bottom.clone()).is_err());
+
+    let all = both("concat", json!({ "diagonal": true }), top, bottom).unwrap();
+    assert_eq!(all.get_column_names(), ["a", "b", "c"]);
+    assert_eq!(all.height(), 2);
+    assert_eq!(
+        all.column("c")
+            .unwrap()
+            .null_count(),
+        1
+    );
+}
+
+#[test]
+fn concat_horizontal_puts_the_columns_side_by_side_and_fills_the_shorter_frame() {
+    let left = df!("a" => [1, 2]).unwrap();
+    let right = df!("b" => ["x"]).unwrap();
+    let all = both("concat_horizontal", json!({}), left.clone(), right).unwrap();
+    assert_eq!(all.get_column_names(), ["a", "b"]);
+    assert_eq!(
+        all.column("b")
+            .unwrap()
+            .null_count(),
+        1
+    );
+    // a name is that of one column
+    assert!(both("concat_horizontal", json!({}), left.clone(), left).is_err());
+}
+
+#[test]
+fn a_frame_is_written_to_a_csv_file_and_read_from_it_again() {
+    let folder = folder("csv");
+    std::fs::create_dir_all(&folder).unwrap();
+    let path = folder.join("frame.csv");
+    let frame = df!("a" => [1i64, 2], "b" => ["x", "y"]).unwrap();
+    let args = json!({ "path": path, "separator": ";" });
+    apply("write_csv", args.clone(), frame.clone()).unwrap();
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "a;b\n1;x\n2;y\n");
+
+    let pipeline = json!({
+        "polars": polars::VERSION,
+        "nodes": [{ "id": "in", "block": "scan_csv", "args": args }],
+        "outputs": ["in"],
+    });
+    let pipeline: Pipeline = serde_json::from_value(pipeline).unwrap();
+    let read = pipeline
+        .run(&Registry::with_polars())
+        .unwrap()
+        .remove(0);
+    assert!(read.equals(&frame));
+
+    // a separator is one byte
+    let args = json!({ "path": path, "separator": "é" });
+    assert!(apply("write_csv", args, frame).is_err());
+    std::fs::remove_dir_all(&folder).unwrap();
+}
+
+#[test]
+fn pivot_makes_a_column_of_each_value_that_is_named() {
+    let frame = df!(
+        "day" => [1, 1, 2, 2, 2],
+        "kind" => [10, 20, 10, 20, 30],
+        "n" => [1, 2, 3, 4, 5],
+    )
+    .unwrap();
+    let args = |extra: Value| {
+        let mut args = json!({ "on": "kind", "on_columns": ["20", "10"], "index": ["day"] });
+        args.as_object_mut()
+            .unwrap()
+            .extend(
+                extra
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            );
+        args
+    };
+    let wide = apply("pivot", args(json!({ "values": ["n"] })), frame.clone()).unwrap();
+    // in the order they are named, and without the values that are not
+    assert_eq!(wide.get_column_names(), ["day", "20", "10"]);
+    let expected = df!("day" => [1, 2], "20" => [2, 4], "10" => [1, 3]).unwrap();
+    assert!(wide.equals(&expected));
+
+    // the columns are known before the frame is computed
+    let pipeline = json!({
+        "polars": polars::VERSION,
+        "nodes": [
+            { "id": "in", "block": "scan_parquet", "args": { "path": "" } },
+            { "id": "out", "block": "pivot", "inputs": ["in"],
+              "args": args(json!({ "values": ["n"], "aggregate": "Len" })) },
+        ],
+        "outputs": [],
+    });
+    let pipeline: Pipeline = serde_json::from_value(pipeline).unwrap();
+    let known = HashMap::from([("in".to_owned(), frame.clear())]);
+    let schemas = pipeline
+        .schemas_from(&Registry::with_polars(), &known)
+        .unwrap();
+    let schema = schemas["out"]
+        .as_ref()
+        .unwrap();
+    assert_eq!(schema.len(), 3);
+
+    assert!(apply("pivot", args(json!({ "values": [] })), frame).is_err());
+}
+
+#[test]
+fn join_asof_matches_each_row_to_the_one_before_it_within_a_tolerance() {
+    let left = df!("t" => [1, 5, 10], "a" => ["x", "y", "z"]).unwrap();
+    let right = df!("t" => [1, 4, 6], "b" => [1, 4, 6]).unwrap();
+    let on = serde_json::to_value(col("t")).unwrap();
+    let matched = |extra: Value| {
+        let mut args = json!({ "left_on": on, "right_on": on });
+        args.as_object_mut()
+            .unwrap()
+            .extend(
+                extra
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            );
+        let joined = both("join_asof", args, left.clone(), right.clone())?;
+        let matched = joined
+            .column("b")?
+            .i32()?
+            .iter()
+            .collect::<Vec<_>>();
+        PolarsResult::Ok(matched)
+    };
+    assert_eq!(matched(json!({})).unwrap(), [Some(1), Some(4), Some(6)]);
+    assert_eq!(
+        matched(json!({ "strategy": "Forward" })).unwrap(),
+        [Some(1), Some(6), None]
+    );
+    assert_eq!(
+        matched(json!({ "tolerance": 1.0 })).unwrap(),
+        [Some(1), Some(4), None]
+    );
+    let apart = json!({ "allow_exact_matches": false });
+    assert_eq!(matched(apart).unwrap(), [None, Some(4), Some(6)]);
+    // a tolerance of time is none for a key of numbers, nor are two tolerances one
+    assert!(matched(json!({ "tolerance_time": "5m" })).is_err());
+    assert!(matched(json!({ "tolerance": 1.0, "tolerance_time": "5m" })).is_err());
+}
+
+#[test]
+fn join_takes_no_join_that_is_a_block_of_its_own() {
+    let frame = df!("a" => [1]).unwrap();
+    let on = serde_json::to_value(col("a")).unwrap();
+    let args = |how: Value| json!({ "left_on": [on], "right_on": [on], "how": how });
+    assert!(both("join", args(json!("Semi")), frame.clone(), frame.clone()).is_ok());
+    let asof = json!({ "AsOf": {} });
+    assert!(both("join", args(asof), frame.clone(), frame).is_err());
+}
+
+#[test]
+fn rows_are_grouped_into_windows_of_an_index_and_rolled_over() {
+    let frame = df!("t" => [0i64, 1, 2, 3, 4], "n" => [1, 1, 1, 1, 1]).unwrap();
+    let sum = serde_json::to_value(col("n").sum()).unwrap();
+    let sums = |block: &str, args: Value| {
+        let frame = apply(block, args, frame.clone())?;
+        let sums = frame
+            .column("n")?
+            .i32()?
+            .into_no_null_iter()
+            .collect::<Vec<_>>();
+        PolarsResult::Ok(sums)
+    };
+
+    // windows of two rows, and then of three that start every two
+    let args = json!({ "index_column": "t", "every": "2i", "aggs": [sum] });
+    assert_eq!(sums("group_by_dynamic", args).unwrap(), [2, 2, 1]);
+    let args = json!({ "index_column": "t", "every": "2i", "period": "3i", "aggs": [sum] });
+    assert_eq!(sums("group_by_dynamic", args).unwrap(), [3, 3, 1]);
+
+    // the window of a row ends at it
+    let args = json!({ "index_column": "t", "period": "2i", "aggs": [sum] });
+    assert_eq!(sums("rolling", args).unwrap(), [1, 2, 2, 2, 2]);
+
+    // what is no length of time is found before a run
+    let args = json!({ "index_column": "t", "period": "soon", "aggs": [sum] });
+    assert!(sums("rolling", args).is_err());
+}
+
+#[test]
+fn a_window_block_is_planned_without_a_look_at_the_columns_it_reads() {
+    let sum = serde_json::to_value(col("n").sum()).unwrap();
+    let pipeline = json!({
+        "polars": polars::VERSION,
+        "nodes": [
+            { "id": "in", "block": "scan_parquet", "args": { "path": "" } },
+            { "id": "grouped", "block": "group_by_dynamic", "inputs": ["in"],
+              "args": { "index_column": "t", "every": "1h", "aggs": [sum] } },
+            { "id": "rolled", "block": "rolling", "inputs": ["in"],
+              "args": { "index_column": "t", "period": "1h", "aggs": [sum] } },
+        ],
+        "outputs": [],
+    });
+    let pipeline: Pipeline = serde_json::from_value(pipeline).unwrap();
+    // an editor wires the nodes over a frame of no columns in the place of each file
+    let known = HashMap::from([("in".to_owned(), DataFrame::empty())]);
+    let frames = pipeline
+        .frames_from(&Registry::with_polars(), &known)
+        .unwrap();
+    assert!(frames["grouped"].is_ok());
+    assert!(frames["rolled"].is_ok());
+}

@@ -256,14 +256,14 @@ fn a_right_click_on_the_background_adds_a_node_there() {
     }
     let (_, point) = editor.menu.unwrap();
 
-    // the menu is where was pressed: its third group is Filter, whose fourth block is limit
+    // the menu is where was pressed: its third group is Filter, whose fifth block is limit
     let mut ui = simulator(editor.view());
     let position = Point::new(410.0, 300.0 + 4.0 + 2.5 * 26.0);
     ui.point_at(position);
     ui.simulate([iced::Event::Mouse(
         mouse::Event::CursorMoved { position },
     )]);
-    ui.point_at(Point::new(580.0, 352.0 + 4.0 + 3.5 * 26.0));
+    ui.point_at(Point::new(580.0, 352.0 + 4.0 + 4.5 * 26.0));
     ui.simulate(iced_test::simulator::click());
     for message in ui
         .into_messages()

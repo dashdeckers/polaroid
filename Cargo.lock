@@ -4318,6 +4318,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b59262210ac41f3b30f49f46855501206eba27baaa6bd919545703bc706dd617"
 dependencies = [
  "bitflags",
+ "chrono-tz",
  "hashbrown 0.17.2",
  "num-traits",
  "polars-arrow",

@@ -35,6 +35,9 @@ pub(super) fn methods() -> Vec<Result<Method, String>> {
         expr.method("len",     [],                   Fields,                      |_, []| len()),
         expr.method("lit",     [],                   Named(&["value"]),           |_, []| lit(0)),
         expr.method("over",    ["*partition_by"],    Fields,                      |s, [partition_by]| s.over([partition_by])),
+        // a window of a day that ends at its row, as Python has it
+        expr.method("rolling", ["index_column"],     Fields,
+            |s, [index_column]| s.rolling(index_column, Duration::parse("1d"), Duration::parse("-1d"), ClosedWindow::Right)),
         expr.method("slice",   ["offset", "length"], Fields,                      |s, [offset, length]| s.slice(offset, length))
             .with_default(["length"], lit(NULL)),
         expr.method("sort",    [],                   Fields,                      |s, []| s.sort(SortOptions::default())),
