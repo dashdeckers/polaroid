@@ -147,3 +147,29 @@ fn one_that_is_dragged_upward_steps_up_for_more() {
         .collect();
     assert_eq!(asked, [2, -2]);
 }
+
+#[test]
+fn a_handle_is_dragged_from_where_it_is() {
+    use iced::widget::row;
+    use polaroid_iced::{HANDLE, handle};
+
+    let field = text_input("", "5").width(100);
+    let start = Instant::now();
+    let mut simulator = simulator(row![
+        field,
+        handle().on_scrub(|steps| steps)
+    ]);
+    let at = simulator
+        .find(HANDLE)
+        .expect("the handle is shown")
+        .bounds()
+        .center();
+    press(&mut simulator, at);
+    // up for more
+    move_to(&mut simulator, Point::new(at.x, at.y - 30.0));
+    frame(&mut simulator, start, Duration::ZERO);
+    let asked: Vec<i32> = simulator
+        .into_messages()
+        .collect();
+    assert_eq!(asked, [5]);
+}

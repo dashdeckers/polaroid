@@ -2,19 +2,9 @@
 
 mod chain;
 
-use iced::widget::{
-    button,
-    checkbox,
-    column,
-    container,
-    pick_list,
-    row,
-    text,
-    text_input,
-    tooltip,
-};
+use iced::widget::{button, checkbox, column, container, row, text, text_input, tooltip};
 use iced::{Center, Element, Fill, Font, Function, Theme, Widget};
-use polaroid_iced::{scrub, width_of};
+use polaroid_iced::{handle, pick_list, width_of};
 use serde_json::{Map, Value, json};
 
 use super::{NOTE, TEXT};
@@ -304,7 +294,8 @@ fn name<'a>(
             .placeholder("expression…")
             .text_size(TEXT)
             .padding(4)
-            .style(picked(tone)),
+            .style(picked(tone))
+            .stepped(),
         // in what room is left, cut short
         text(written)
             .size(NOTE)
@@ -335,7 +326,7 @@ fn column_of<'a>(
         .text_size(TEXT)
         .padding(4)
         .style(picked(tone))
-        .boxed()
+        .stepped()
 }
 
 impl<'a> Form<'a, '_> {
@@ -467,7 +458,8 @@ impl<'a> Form<'a, '_> {
             .placeholder("pick…")
             .text_size(TEXT)
             .padding(4)
-            .style(picked(tone));
+            .style(picked(tone))
+            .stepped();
 
         match selected {
             Some((name, Some(payload))) => column![
@@ -476,7 +468,7 @@ impl<'a> Form<'a, '_> {
             ]
             .spacing(5)
             .boxed(),
-            _ => pick.boxed(),
+            _ => pick,
         }
     }
 
@@ -541,7 +533,7 @@ impl<'a> Form<'a, '_> {
 
     /// A field for a number: as it is being typed there, or else as the number that it is.
     ///
-    /// A drag across it moves the number, as a slider would.
+    /// It is as wide as its text, beside a handle that moves the number as a slider would.
     fn typed(
         self,
         schema: &'a Value,
@@ -565,16 +557,30 @@ impl<'a> Form<'a, '_> {
             Value::Null => String::new(),
             number => number.to_string(),
         });
+        let width = fitted(&typed, TEXT);
         let field = text_input("", typed)
             .on_input(Message::Type.with(at.clone()))
-            .width(Fill.max(100))
+            .width(width)
             .size(TEXT)
             .padding(4)
             .style(typed_in(tone));
-        scrub(field)
-            .on_scrub(move |steps| Message::Put(at.clone(), nudged(schema, value, steps)))
-            .boxed()
+        let moved = move |steps| Message::Put(at.clone(), nudged(schema, value, steps));
+        row![
+            field,
+            handle().on_scrub(moved)
+        ]
+        .spacing(2)
+        .align_y(Center)
+        .boxed()
     }
+}
+
+/// The width of a field to type in that holds `typed` at this size, with room for a few more.
+fn fitted(
+    typed: &str,
+    size: f32,
+) -> f32 {
+    (width_of(typed, size, Font::DEFAULT) + 24.0).max(48.0)
 }
 
 /// Puts `new` at the pointer `at`, or removes the element there; a missing field or end is added.

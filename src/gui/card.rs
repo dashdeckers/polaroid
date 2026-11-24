@@ -9,11 +9,9 @@ use iced::widget::{
     column,
     container,
     markdown,
-    pick_list,
     row,
     space,
     text,
-    text_input,
 };
 use iced::{
     Center,
@@ -29,12 +27,12 @@ use iced::{
     border,
     mouse,
 };
-use polaroid_iced::{Asked, Heading, width_of};
+use polaroid_iced::{Asked, Heading, pick_list, width_of};
 use serde_json::{Map, Value};
 
 use super::form::{Expressions, Tone};
 use super::known::Status;
-use super::{Editor, Message, NOTE, TEXT, TITLE, cross, error, form, layout, toggle};
+use super::{Editor, Message, NOTE, TEXT, TITLE, cross, error, form, layout, name_field, toggle};
 use crate::polars::prelude::{AnyValue, DataFrame, DataType};
 use crate::{Described, Node, schema};
 
@@ -290,10 +288,12 @@ impl<'a> Component<'a, Message> for Card<'a> {
             .map_or(&Value::Null, |block| &block.args);
         let schema = schema::resolve(self.defs, args);
 
-        let name = state
+        let typed = state
             .name
-            .clone()
-            .unwrap_or_else(|| node.id.clone());
+            .as_deref();
+        let name = typed
+            .unwrap_or(&node.id)
+            .to_owned();
         // as wide as it was made, and as the line of its id with all of the id in view
         let made = match is_open {
             true => layout::size(node).width,
@@ -312,15 +312,15 @@ impl<'a> Component<'a, Message> for Card<'a> {
             .copied();
         let names = form::names(reads.chain(args));
 
-        let head = self.head(name, is_open);
+        let head = self.head(typed, is_open);
         let inputs = self.inputs(names, is_open);
         let wrong = match self.found {
-            Some(Err(e)) => Some(error(e).width(Fill)),
+            Some(Err(e)) => Some(error(e)),
             _ => None,
         };
         let failed = self
             .failed
-            .map(|failed| error(failed).width(Fill));
+            .map(error);
         // the errors last: a line that comes and goes takes the state of all below it
         let lines = match is_open {
             true => {
@@ -377,7 +377,7 @@ impl<'a> Card<'a> {
     /// The line of its id: room for the handle, its toggle, the small table, the id and the cross.
     fn head(
         &self,
-        name: String,
+        typed: Option<&str>,
         is_open: bool,
     ) -> impl Widget<Event> + use<'a> {
         let save = match self.is_output {
@@ -395,7 +395,7 @@ impl<'a> Card<'a> {
                 .style(save)
                 .padding(AROUND_ICON)
                 .on_press(Event::Edit(Edit::Output(!self.is_output))),
-            text_input("id", name)
+            name_field("id", typed, &self.node.id)
                 .on_input(Event::Name)
                 .on_submit(Event::Rename)
                 .size(TITLE)

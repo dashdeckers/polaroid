@@ -6,6 +6,7 @@ use iced::advanced::layout::{self, Layout};
 use iced::advanced::widget::{self, Tree, tree};
 use iced::advanced::{Shell, Widget, mouse, overlay, renderer};
 use iced::time::Instant;
+use iced::widget::{container, text};
 use iced::{Element, Event, Length, Point, Rectangle, Renderer, Size, Theme, Vector, window};
 
 /// How far a press is dragged before it adjusts, and how far then for each step.
@@ -26,6 +27,14 @@ fn gain(speed: f32) -> f32 {
         .min(MOST)
 }
 
+/// What a handle shows: arrows up and down.
+pub const HANDLE: &str = "↕";
+
+/// A small handle to set beside a field, which a drag up or down from the handle is to adjust.
+pub fn handle<'a, Message: 'a>() -> Scrub<'a, Message> {
+    scrub(container(text(HANDLE).size(14)).padding([0, 3])).upward()
+}
+
 /// A field that nothing adjusts until it is told what a drag asks for.
 pub fn scrub<'a, Message>(field: impl Widget<Message, Theme, Renderer> + 'a) -> Scrub<'a, Message> {
     Scrub {
@@ -38,7 +47,7 @@ pub fn scrub<'a, Message>(field: impl Widget<Message, Theme, Renderer> + 'a) -> 
 /// A field, and what a drag across it asks for.
 pub struct Scrub<'a, Message> {
     field: Element<'a, Message>,
-    on_scrub: Option<Box<dyn Fn(i32) -> Message + 'a>>,
+    on_scrub: Option<Box<dyn Fn(i32) -> Option<Message> + 'a>>,
     /// Whether it is dragged up for more, and not to the right.
     is_upward: bool,
 }
@@ -65,8 +74,16 @@ impl<'a, Message> Scrub<'a, Message> {
     ///
     /// It is asked once a frame at the most, so that what is built of the answer is there to see.
     pub fn on_scrub(
-        mut self,
+        self,
         on_scrub: impl Fn(i32) -> Message + 'a,
+    ) -> Self {
+        self.on_scrub_maybe(move |steps| Some(on_scrub(steps)))
+    }
+
+    /// As [`Self::on_scrub`], but there may be nothing to ask for, as at the end of a range.
+    pub fn on_scrub_maybe(
+        mut self,
+        on_scrub: impl Fn(i32) -> Option<Message> + 'a,
     ) -> Self {
         self.on_scrub = Some(Box::new(on_scrub));
         self
@@ -203,7 +220,9 @@ impl<Message> Widget<Message, Theme, Renderer> for Scrub<'_, Message> {
                     .trunc();
                 if steps != 0.0 {
                     state.carried -= steps;
-                    shell.publish(on_scrub(steps as i32));
+                    if let Some(message) = on_scrub(steps as i32) {
+                        shell.publish(message);
+                    }
                 }
             }
             _ => {}
@@ -226,8 +245,23 @@ impl<Message> Widget<Message, Theme, Renderer> for Scrub<'_, Message> {
             (true, false) => return mouse::Interaction::ResizingHorizontally,
             (false, _) => {}
         }
-        self.field
-            .mouse_interaction(&tree.children[0], layout, cursor, viewport, renderer)
+        let shown = self
+            .field
+            .mouse_interaction(&tree.children[0], layout, cursor, viewport, renderer);
+        // what shows no cursor of its own, as a handle, shows that it is to be dragged
+        let is_plain = shown == mouse::Interaction::default();
+        match self.is_upward {
+            _ if !is_plain
+                || self
+                    .on_scrub
+                    .is_none()
+                || !cursor.is_over(layout.bounds()) =>
+            {
+                shown
+            }
+            true => mouse::Interaction::ResizingVertically,
+            false => mouse::Interaction::ResizingHorizontally,
+        }
     }
 
     fn draw(
