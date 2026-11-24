@@ -1,7 +1,9 @@
 use std::collections::HashSet;
+use std::num::NonZeroUsize;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
+use file_format::FileFormat;
 use polars::io::path_utils::expand_paths;
 use polars::prelude::*;
 use schemars::JsonSchema;
@@ -192,8 +194,9 @@ pub struct WriteFiles {
     pub directories: Option<ColumnName>,
     /// Column of the names of the files without their extension, of strings.
     pub name: ColumnName,
-    /// Column of the extensions of the files, of strings such as svg.
-    pub extension: ColumnName,
+    /// Column of the extensions of the files, such as svg; where it is none, the bytes tell it.
+    #[serde(default)]
+    pub extension: Option<ColumnName>,
 }
 
 impl WriteFiles {
@@ -214,7 +217,9 @@ impl WriteFiles {
         };
         holds(&self.column, &[&DataType::Binary])?;
         holds(&self.name, &[&DataType::String])?;
-        holds(&self.extension, &[&DataType::String])?;
+        if let Some(extension) = &self.extension {
+            holds(extension, &[&DataType::String])?;
+        }
         match &self.directories {
             Some(directories) => holds(directories, &[&DataType::String, &strings]),
             None => Ok(()),
@@ -232,8 +237,6 @@ impl Block for WriteFiles {
         let block = this.clone();
         let lf = checked(lf, move |schema| block.check(schema));
 
-        // the files written, to find two rows that write the same one
-        let written = Mutex::new(HashSet::new());
         let write = move |frame: DataFrame| {
             let text = |column: &ColumnName| {
                 frame
@@ -243,7 +246,12 @@ impl Block for WriteFiles {
             let values = frame
                 .column(&this.column.0)?
                 .binary()?;
-            let (names, extensions) = (text(&this.name)?, text(&this.extension)?);
+            let names = text(&this.name)?;
+            let extensions = this
+                .extension
+                .as_ref()
+                .map(text)
+                .transpose()?;
             // a single folder is a list of one
             let folders = this
                 .directories
@@ -254,12 +262,21 @@ impl Block for WriteFiles {
                         .cast(&strings)
                 })
                 .transpose()?;
+            // the files written, to find two rows that write the same one
+            let mut written = HashSet::new();
             for row in 0..frame.height() {
                 let Some(value) = values.get(row) else {
                     continue;
                 };
-                let (Some(name), Some(extension)) = (names.get(row), extensions.get(row)) else {
-                    polars_bail!(ComputeError: "a file to write has no name or no extension");
+                let Some(name) = names.get(row) else {
+                    polars_bail!(ComputeError: "row {row}: the file has no name");
+                };
+                let extension = match extensions.and_then(|extensions| extensions.get(row)) {
+                    Some(extension) => extension
+                        .strip_prefix('.')
+                        .unwrap_or(extension)
+                        .to_owned(),
+                    None => extension_of(value, row)?,
                 };
                 let mut path = PathBuf::from(&this.folder);
                 let folders = match &folders {
@@ -276,10 +293,7 @@ impl Block for WriteFiles {
                         path.push(part(folder.unwrap_or_default())?);
                     }
                 }
-                let extension = extension
-                    .strip_prefix('.')
-                    .unwrap_or(extension);
-                let file = format!("{}.{}", part(name)?, part(extension)?);
+                let file = format!("{}.{}", part(name)?, part(&extension)?);
                 let told = |e| polars_err!(ComputeError: "{}: {e}", path.display());
                 std::fs::create_dir_all(&path).map_err(told)?;
                 path.push(file);
@@ -287,19 +301,33 @@ impl Block for WriteFiles {
                 let key = path
                     .to_string_lossy()
                     .to_lowercase();
-                let is_new = written
-                    .lock()
-                    .unwrap()
-                    .insert(key);
+                let is_new = written.insert(key);
                 polars_ensure!(is_new, ComputeError: "two rows write '{}'", path.display());
                 let told = |e| polars_err!(ComputeError: "{}: {e}", path.display());
                 std::fs::write(&path, value).map_err(told)?;
             }
-            // more is to come
             Ok(false)
         };
-        lf.sink_batches(PlanCallback::new(write), true, None)
+        // every row in one batch, so that a row is numbered as in the frame
+        lf.sink_batches(PlanCallback::new(write), true, Some(NonZeroUsize::MAX))
     }
+}
+
+/// The extension of a file of `bytes`, as file-format tells it; an error of `row` if it cannot.
+fn extension_of(
+    bytes: &[u8],
+    row: usize,
+) -> PolarsResult<String> {
+    let extension = FileFormat::from_bytes(bytes)
+        .extension()
+        .to_owned();
+    // what it answers for bytes or text it does not know
+    let is_told = !matches!(extension.as_str(), "bin" | "txt" | "empty");
+    polars_ensure!(
+        is_told,
+        ComputeError: "row {row}: its bytes do not tell the type of the file: give an extension"
+    );
+    Ok(extension)
 }
 
 /// `text`, if it names one file or folder on every platform: Windows takes the least.

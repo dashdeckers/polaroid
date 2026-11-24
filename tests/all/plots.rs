@@ -219,6 +219,21 @@ fn the_plots_of_a_frame_are_written_to_files_of_the_names_of_a_column() {
 }
 
 #[test]
+fn the_plots_of_each_format_are_written_to_files_of_its_extension_without_one_given() {
+    let folder = std::env::temp_dir().join(format!("polaroid-formats-{}", std::process::id()));
+    for format in ["Png", "Svg", "Pdf"] {
+        let after = json!([
+            { "id": "formats", "block": "write_files", "inputs": ["drawn"],
+              "args": { "column": "plot", "folder": folder, "name": "name" } },
+        ]);
+        run(json!({ "by": ["name"], "format": format }), rows(), after).unwrap();
+        let file = folder.join(format!("a.{}", format.to_lowercase()));
+        assert!(file.exists(), "{format}");
+    }
+    std::fs::remove_dir_all(&folder).unwrap();
+}
+
+#[test]
 fn a_plot_is_built_without_a_look_at_its_columns_which_a_check_takes() {
     let pipeline = json!({
         "polars": polars::VERSION,

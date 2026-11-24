@@ -264,6 +264,117 @@ fn write_files_writes_no_file_twice_and_none_without_a_name() {
     std::fs::remove_dir_all(&folder).unwrap();
 }
 
+/// A zip of one empty file of this name, stored as it is.
+fn zip(name: &str) -> Vec<u8> {
+    let named = |mut header: Vec<u8>, zeros: usize| {
+        header.extend([0; 20]);
+        header.extend((name.len() as u16).to_le_bytes());
+        header.extend(vec![0; zeros]);
+        header.extend(name.as_bytes());
+        header
+    };
+    let local = named(b"PK\x03\x04\x14\0".to_vec(), 2);
+    let central = named(b"PK\x01\x02\x14\0\x14\0".to_vec(), 16);
+    let mut zip = [local.clone(), central.clone()].concat();
+    zip.extend(b"PK\x05\x06\0\0\0\0\x01\0\x01\0");
+    zip.extend((central.len() as u32).to_le_bytes());
+    zip.extend((local.len() as u32).to_le_bytes());
+    zip.extend([0, 0]);
+    zip
+}
+
+#[test]
+fn write_files_without_an_extension_takes_the_one_that_the_bytes_tell() {
+    let folder = folder("kinds");
+    let files: [(&str, &str, Vec<u8>); 11] = [
+        ("a", "png", b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR".to_vec()),
+        ("b", "jpg", b"\xff\xd8\xff\xe0".to_vec()),
+        ("c", "gif", b"GIF89a".to_vec()),
+        ("d", "webp", b"RIFF\x1a\0\0\0WEBPVP8 ".to_vec()),
+        (
+            "e",
+            "svg",
+            br#"<svg xmlns="http://www.w3.org/2000/svg"/>"#.to_vec(),
+        ),
+        ("f", "svg", b"<?xml version=\"1.0\"?>\n<svg/>".to_vec()),
+        ("g", "pdf", b"%PDF-1.7".to_vec()),
+        ("h", "parquet", b"PAR1".to_vec()),
+        ("i", "gz", b"\x1f\x8b\x08".to_vec()),
+        ("j", "zip", zip("a.txt")),
+        ("k", "xlsx", zip("xl/workbook.xml")),
+    ];
+    // of every type in one column
+    let frame = df!(
+        "bytes" => files.clone().map(|(_, _, bytes)| bytes),
+        "name" => files.clone().map(|(name, _, _)| name),
+    )
+    .unwrap();
+    let args = json!({ "column": "bytes", "folder": folder, "name": "name" });
+    apply("write_files", args, frame).unwrap();
+    for (name, extension, bytes) in files {
+        let file = folder.join(format!("{name}.{extension}"));
+        assert_eq!(std::fs::read(&file).ok(), Some(bytes), "{}", file.display());
+    }
+    std::fs::remove_dir_all(&folder).unwrap();
+}
+
+#[test]
+fn write_files_names_the_row_of_a_file_whose_type_its_bytes_do_not_tell() {
+    let folder = folder("untold");
+    for bytes in [
+        b"some text".to_vec(),
+        vec![0, 1, 2, 3],
+        Vec::new(),
+    ] {
+        let frame = df!(
+            "bytes" => [b"GIF89a".to_vec(), bytes],
+            "name" => ["a", "b"],
+        )
+        .unwrap();
+        let args = json!({ "column": "bytes", "folder": folder, "name": "name" });
+        let error = apply("write_files", args, frame)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("row 1"), "{error}");
+        assert!(error.contains("extension"), "{error}");
+    }
+    let _ = std::fs::remove_dir_all(&folder);
+}
+
+#[test]
+fn write_files_takes_the_extension_that_is_given_over_the_one_that_the_bytes_tell() {
+    let folder = folder("given");
+    let png = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR".to_vec();
+    let frame = df!(
+        "bytes" => [png.clone(), png],
+        "name" => ["a", "b"],
+        "type" => [Some("bin"), None],
+    )
+    .unwrap();
+    let args = json!({ "column": "bytes", "folder": folder, "name": "name", "extension": "type" });
+    apply("write_files", args, frame).unwrap();
+    // and in a row where it is null, the bytes tell it
+    for (file, is_there) in [
+        ("a.bin", true),
+        ("a.png", false),
+        ("b.png", true),
+    ] {
+        assert_eq!(
+            folder
+                .join(file)
+                .exists(),
+            is_there,
+            "{file}"
+        );
+    }
+
+    // which the editor shows as an argument that may be left out
+    let catalog = Registry::with_polars().catalog();
+    let args = polaroid::schema::resolve(&catalog.defs, &catalog.blocks["write_files"].args);
+    assert!(polaroid::schema::optional(&args["properties"]["extension"]).is_some());
+    std::fs::remove_dir_all(&folder).unwrap();
+}
+
 #[test]
 fn write_files_is_planned_without_a_look_at_the_columns_it_reads() {
     let pipeline = json!({
