@@ -159,8 +159,17 @@ impl Pipeline {
         &self,
         registry: &Registry,
     ) -> PolarsResult<BTreeMap<&str, PolarsResult<SchemaRef>>> {
+        self.schemas_from(registry, &HashMap::new())
+    }
+
+    /// As [`Self::schemas`], but a Node in `known` has the columns of that frame, unlooked at.
+    pub fn schemas_from(
+        &self,
+        registry: &Registry,
+        known: &HashMap<String, DataFrame>,
+    ) -> PolarsResult<BTreeMap<&str, PolarsResult<SchemaRef>>> {
         Ok(self
-            .frames(registry)?
+            .frames_from(registry, known)?
             .into_iter()
             .map(|(id, frame)| {
                 let schema = frame.and_then(|frame| {
