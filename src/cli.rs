@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::ffi::OsStr;
 use std::fs::{File, OpenOptions};
 use std::io::{IsTerminal, Write};
@@ -74,12 +74,13 @@ pub fn cli(registry: Registry) -> PolarsResult<()> {
         .inspect_err(|e| log::error!("{e}"))
 }
 
-/// Every node's columns and types, or error, as JSON.
+/// Every node's columns and types, or error, as JSON; a node in `known` has those of that frame.
 fn checked(
     registry: &Registry,
     pipeline: &Pipeline,
+    known: &HashMap<String, DataFrame>,
 ) -> PolarsResult<String> {
-    let schemas = pipeline.schemas(registry)?;
+    let schemas = pipeline.schemas_from(registry, known)?;
     let checks: BTreeMap<_, _> = schemas
         .iter()
         .map(|(id, schema)| {
@@ -98,7 +99,8 @@ fn checked(
 
 /// What the editor asked for: a `check` of a pipeline, or to `collect` its outputs.
 ///
-/// It asks with a pipeline and then the frames it has saved, which stand in for their nodes.
+/// It asks with a pipeline and then frames that stand in for their nodes: those it has saved, or
+/// to a check empty ones of the columns it has found.
 fn answered(
     registry: &Registry,
     mut asked: &[u8],
@@ -107,13 +109,13 @@ fn answered(
     let pipeline: Pipeline = serde_json::from_slice(stream::part(&mut asked)?)
         .map_err(|e| polars_err!(ComputeError: "the pipeline: {e}"))?;
     log::info!("asked to {}", String::from_utf8_lossy(what));
+    let known = stream::read(asked)?
+        .into_iter()
+        .collect();
     let mut answer = Vec::new();
     match what {
-        b"check" => answer.extend(checked(registry, &pipeline)?.into_bytes()),
+        b"check" => answer.extend(checked(registry, &pipeline, &known)?.into_bytes()),
         b"collect" => {
-            let known = stream::read(asked)?
-                .into_iter()
-                .collect();
             for (id, mut frame) in pipeline
                 .outputs
                 .iter()
@@ -207,7 +209,10 @@ fn command(
             }
         }
 
-        ["check", path] => println!("{}", checked(&registry, &Pipeline::load(path)?)?),
+        ["check", path] => {
+            let checks = checked(&registry, &Pipeline::load(path)?, &HashMap::new())?;
+            println!("{checks}");
+        }
 
         ["catalog"] => println!(
             "{}",

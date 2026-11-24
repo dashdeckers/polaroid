@@ -795,3 +795,37 @@ fn help_has_everything_say_what_it_is_for_until_it_is_pressed_again() {
     let _ = editor.update(Message::Help);
     assert_eq!(said(&editor), [false, false, false]);
 }
+
+#[test]
+fn a_check_that_follows_a_change_looks_at_the_nodes_alone_whose_columns_are_not_found() {
+    let mut editor = chain(3);
+    let columns = vec![("x".to_owned(), DataType::Int64)];
+    let checks = [
+        ("n0".to_owned(), Ok(columns.clone())),
+        ("n1".to_owned(), Ok(columns)),
+        ("n2".to_owned(), Err("no such column".to_owned())),
+    ]
+    .into();
+    let _ = editor.update(Message::Checked(Ok(checks)));
+
+    // an empty frame of its columns stands in for each node that has some
+    let found = editor.known.found();
+    let mut ids: Vec<&String> = found
+        .keys()
+        .collect();
+    ids.sort();
+    assert_eq!(ids, ["n0", "n1"]);
+    assert_eq!(found["n1"].get_column_names(), ["x"]);
+    assert_eq!(found["n1"].height(), 0);
+
+    // an edit lets go of what was found of the node and of those that read it
+    let args = serde_json::json!({ "n": 6 });
+    let _ = editor.update(Message::Edit("n1".to_owned(), Edit::Args(args)));
+    let found = editor.known.found();
+    assert_eq!(
+        found
+            .keys()
+            .collect::<Vec<_>>(),
+        ["n0"]
+    );
+}
