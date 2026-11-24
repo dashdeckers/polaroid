@@ -289,3 +289,21 @@ fn write_files_is_planned_without_a_look_at_the_columns_it_reads() {
         .unwrap();
     assert!(schemas["out"].is_err());
 }
+
+#[test]
+fn view_images_gives_its_frame_and_tells_the_column_of_the_images_to_show() {
+    let frame = df!("image" => [b"one".to_vec()], "name" => ["a"]).unwrap();
+    let args = json!({ "column": "image" });
+    let viewed = apply("view_images", args.clone(), frame.clone()).unwrap();
+    assert!(viewed.equals(&frame));
+
+    let registry = Registry::with_polars();
+    let images = registry.images("view_images", args);
+    assert_eq!(images.as_deref(), Some("image"));
+    // a block that shows no images tells of none
+    assert_eq!(registry.images("limit", json!({ "n": 1 })), None);
+
+    // a column that holds no images, or is not there, is found before a run
+    assert!(apply("view_images", json!({ "column": "name" }), frame.clone()).is_err());
+    assert!(apply("view_images", json!({ "column": "none" }), frame).is_err());
+}
