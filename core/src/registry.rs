@@ -74,6 +74,7 @@ impl Registry {
             .category("Source / Sink")
             .register::<io::ScanParquet, _>("scan_parquet")
             .register::<io::WriteParquet, _>("write_parquet")
+            .register::<io::WriteFiles, _>("write_files")
             // as many rows out as in, with other columns
             .category("Transform")
             .register::<frames::WithColumns, _>("with_columns")

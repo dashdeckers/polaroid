@@ -1,5 +1,6 @@
 use polars::prelude::*;
 use schemars::JsonSchema;
+use serde::Deserialize;
 use serde::de::DeserializeOwned;
 
 /// A Block is a frame-level operation, with its fields as its parameters.
@@ -12,3 +13,7 @@ pub trait Block<const N: usize = 1>: DeserializeOwned + JsonSchema {
         inputs: [LazyFrame; N],
     ) -> PolarsResult<LazyFrame>;
 }
+
+/// The name of a column of the frame that a Block reads.
+#[derive(Deserialize, JsonSchema)]
+pub struct ColumnName(pub String);
