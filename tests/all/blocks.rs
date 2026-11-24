@@ -172,9 +172,9 @@ fn write_files_writes_each_value_to_the_file_of_its_row_and_gives_its_frame() {
         "in" => [Some("x"), Some("y"), None],
     )
     .unwrap();
-    let args = |directories: &str| {
+    let args = |subfolder: &str| {
         json!({
-            "column": "bytes", "folder": folder, "directories": directories,
+            "column": "bytes", "folder": folder, "subfolders": [{ "Column": subfolder }],
             "name": "name", "extension": "type",
         })
     };
@@ -201,25 +201,25 @@ fn write_files_writes_each_value_to_the_file_of_its_row_and_gives_its_frame() {
 }
 
 #[test]
-fn write_files_nests_the_folders_of_a_list_and_takes_none_that_leaves_its_folder() {
+fn write_files_nests_its_subfolders_of_text_and_of_columns_and_takes_no_invalid_name() {
     let folder = folder("nested");
-    let write = |folders: &[&str], name: &str| {
-        let folders = Series::new("".into(), folders);
+    let write = |typed: &str, named: &str, name: &str| {
         let frame = df!(
             "bytes" => [b"one".to_vec()],
             "name" => [name],
             "type" => ["txt"],
-            "in" => [folders],
+            "in" => [named],
         )
         .unwrap();
         let args = json!({
-            "column": "bytes", "folder": folder, "directories": "in",
+            "column": "bytes", "folder": folder,
+            "subfolders": [{ "Text": typed }, { "Column": "in" }],
             "name": "name", "extension": "type",
         });
         apply("write_files", args, frame)
     };
 
-    write(&["x", "y"], "a").unwrap();
+    write("x", "y", "a").unwrap();
     assert!(
         folder
             .join("x")
@@ -228,21 +228,21 @@ fn write_files_nests_the_folders_of_a_list_and_takes_none_that_leaves_its_folder
             .exists()
     );
     // what is no valid file name on some platform is none here
-    for (folders, name) in [
-        (&[".."][..], "a"),
-        (&["x/y"], "a"),
-        (&["C:"], "a"),
-        (&[""], "a"),
-        (&["x."], "a"),
-        (&["x"], ""),
-        (&["x"], "a?"),
-        (&["x"], "nul"),
-        (&["x"], "CON"),
-        (&["x"], "a."),
+    for (typed, named, name) in [
+        ("..", "y", "a"),
+        ("x", "x/y", "a"),
+        ("x", "C:", "a"),
+        ("", "y", "a"),
+        ("x", "y.", "a"),
+        ("x", "y", ""),
+        ("x", "y", "a?"),
+        ("x", "y", "nul"),
+        ("x", "y", "CON"),
+        ("x", "y", "a."),
     ] {
-        assert!(write(folders, name).is_err(), "{folders:?} {name}");
+        assert!(write(typed, named, name).is_err(), "{typed} {named} {name}");
     }
-    let error = write(&["x"], "CON")
+    let error = write("x", "y", "CON")
         .unwrap_err()
         .to_string();
     assert!(

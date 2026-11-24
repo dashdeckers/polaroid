@@ -176,28 +176,31 @@ impl Block for WriteCsv {
     }
 }
 
-/// Writes each value of a column to a file of its own on every Run, replacing a file that is there.
-///
-/// The file of a row is folder/directories/name.extension, and folders that are missing are made.
-/// Each directory, name and extension is to name one file or folder on every platform, and no
-/// two rows the same file. The nodes that read this one get the frame it writes.
+/// Writes each value of a column to its own file, folder/subfolders/name.extension, on every Run.
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct WriteFiles {
-    /// Column of what to write, of binary values such as the images of a plot. A row where it is
-    /// null writes no file.
+    /// Column of what to write, of binary values such as the images of a plot; null writes none.
     pub column: ColumnName,
-    /// Folder under which every file is written.
+    /// Folder under which every file is written, and made if it is missing.
     pub folder: String,
-    /// Column of the folders of each file under folder: of strings, or of lists of strings with
-    /// the outermost first. With none, and in a row where it is null, the file is in folder.
+    /// Folders under folder, the outermost first: each a text, or a column that names it per row.
     #[serde(default)]
-    pub directories: Option<ColumnName>,
+    pub subfolders: Vec<Subfolder>,
     /// Column of the names of the files without their extension, of strings.
     pub name: ColumnName,
     /// Column of the extensions of the files, such as svg; where it is none, the bytes tell it.
     #[serde(default)]
     pub extension: Option<ColumnName>,
+}
+
+/// A folder in the path of every file.
+#[derive(Deserialize, JsonSchema)]
+pub enum Subfolder {
+    /// This folder for every file.
+    Text(String),
+    /// The folder that this column of strings names in each row, and none where it is null.
+    Column(ColumnName),
 }
 
 impl WriteFiles {
@@ -206,7 +209,6 @@ impl WriteFiles {
         &self,
         schema: &Schema,
     ) -> PolarsResult<()> {
-        let strings = DataType::List(Box::new(DataType::String));
         let holds = |column: &ColumnName, types: &[&DataType]| {
             let dtype = schema.try_get(&column.0)?;
             polars_ensure!(
@@ -218,13 +220,21 @@ impl WriteFiles {
         };
         holds(&self.column, &[&DataType::Binary])?;
         holds(&self.name, &[&DataType::String])?;
-        if let Some(extension) = &self.extension {
-            holds(extension, &[&DataType::String])?;
+        let subfolders = self
+            .subfolders
+            .iter()
+            .filter_map(|subfolder| match subfolder {
+                Subfolder::Text(_) => None,
+                Subfolder::Column(column) => Some(column),
+            });
+        for column in self
+            .extension
+            .iter()
+            .chain(subfolders)
+        {
+            holds(column, &[&DataType::String])?;
         }
-        match &self.directories {
-            Some(directories) => holds(directories, &[&DataType::String, &strings]),
-            None => Ok(()),
-        }
+        Ok(())
     }
 }
 
@@ -234,7 +244,7 @@ impl Block for WriteFiles {
         self,
         [lf]: [LazyFrame; 1],
     ) -> PolarsResult<LazyFrame> {
-        let (this, strings) = (Arc::new(self), DataType::List(Box::new(DataType::String)));
+        let this = Arc::new(self);
         let block = this.clone();
         let lf = checked(lf, move |schema| block.check(schema));
 
@@ -253,16 +263,19 @@ impl Block for WriteFiles {
                 .as_ref()
                 .map(text)
                 .transpose()?;
-            // a single folder is a list of one
-            let folders = this
-                .directories
-                .as_ref()
-                .map(|directories| {
-                    frame
-                        .column(&directories.0)?
-                        .cast(&strings)
+            // a text is a column of it in every row
+            let subfolders = this
+                .subfolders
+                .iter()
+                .map(|subfolder| match subfolder {
+                    Subfolder::Text(folder) => Ok(StringChunked::full(
+                        PlSmallStr::EMPTY,
+                        folder,
+                        frame.height(),
+                    )),
+                    Subfolder::Column(column) => text(column).cloned(),
                 })
-                .transpose()?;
+                .collect::<PolarsResult<Vec<_>>>()?;
             // the files written, to find two rows that write the same one
             let mut written = HashSet::new();
             for row in 0..frame.height() {
@@ -280,18 +293,9 @@ impl Block for WriteFiles {
                     None => extension_of(value, row)?,
                 };
                 let mut path = PathBuf::from(&this.folder);
-                let folders = match &folders {
-                    Some(folders) => folders
-                        .list()?
-                        .get_as_series(row),
-                    None => None,
-                };
-                if let Some(folders) = folders {
-                    for folder in folders
-                        .str()?
-                        .iter()
-                    {
-                        path.push(valid(folder.unwrap_or_default(), row)?);
+                for subfolder in &subfolders {
+                    if let Some(folder) = subfolder.get(row) {
+                        path.push(valid(folder, row)?);
                     }
                 }
                 let file = format!("{}.{extension}", valid(name, row)?);
