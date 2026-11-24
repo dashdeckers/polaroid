@@ -284,28 +284,27 @@ impl State {
 }
 
 impl Gallery {
-    /// The images of the first column of `frame` that holds any, with the plain columns beside it.
-    pub fn of(frame: &DataFrame) -> Self {
-        let images = frame
-            .columns()
-            .iter()
-            .filter_map(|column| {
-                let cells = column
-                    .binary()
-                    .ok()?;
-                let pictures: Vec<_> = cells
-                    .iter()
-                    .map(|cell| cell.and_then(Picture::of))
-                    .collect();
-                pictures
-                    .iter()
-                    .any(Option::is_some)
-                    .then_some((column.name(), pictures))
-            })
-            .next();
-        let Some((column, pictures)) = images else {
+    /// The images of `column` of `frame`, if it holds any, with the plain columns beside it.
+    pub fn of(
+        frame: &DataFrame,
+        column: &str,
+    ) -> Self {
+        let cells = frame
+            .column(column)
+            .and_then(|cells| cells.binary());
+        let Ok(cells) = cells else {
             return Self::default();
         };
+        let pictures: Vec<_> = cells
+            .iter()
+            .map(|cell| cell.and_then(Picture::of))
+            .collect();
+        if pictures
+            .iter()
+            .all(Option::is_none)
+        {
+            return Self::default();
+        }
         // what an image was drawn of is no attribute of it, nor are the images
         let attributes = frame
             .columns()
@@ -317,7 +316,7 @@ impl Gallery {
             .filter_map(Attribute::of)
             .collect();
         Gallery {
-            column: column.to_string(),
+            column: column.to_owned(),
             pictures,
             attributes,
             #[cfg(feature = "plot")]
