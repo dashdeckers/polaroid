@@ -88,6 +88,50 @@ fn drop_nulls_of_no_columns_drops_no_row() {
 }
 
 #[test]
+fn sample_picks_other_rows_by_another_seed_and_keeps_their_order() {
+    let rows: Vec<u32> = (0..1000).collect();
+    let frame = df!("a" => &rows, "b" => &rows).unwrap();
+    let picked = |n: u32, seed: Option<u64>| -> Vec<u32> {
+        let args = match seed {
+            Some(seed) => json!({ "n": n, "seed": seed }),
+            None => json!({ "n": n }),
+        };
+        let sampled = apply("sample", args, frame.clone()).unwrap();
+        // whole rows are picked
+        assert!(
+            sampled
+                .column("a")
+                .unwrap()
+                .equals(
+                    sampled
+                        .column("b")
+                        .unwrap()
+                )
+        );
+        let a = sampled
+            .column("a")
+            .unwrap()
+            .u32()
+            .unwrap();
+        a.into_no_null_iter()
+            .collect()
+    };
+
+    let first = picked(5, Some(1));
+    assert_eq!(first.len(), 5);
+    assert!(first.is_sorted());
+    // the same rows by the same seed, others by another, and no seed is seed 0
+    assert_eq!(picked(5, Some(1)), first);
+    assert_ne!(picked(5, Some(2)), first);
+    assert_eq!(picked(5, None), picked(5, Some(0)));
+    // not the first rows, as limit gives
+    assert_ne!(first, [0, 1, 2, 3, 4]);
+    // and all of a frame of fewer rows
+    assert_eq!(picked(2000, Some(1)), rows);
+    assert!(picked(0, Some(1)).is_empty());
+}
+
+#[test]
 fn a_column_that_is_not_there_is_an_error_to_drop_and_to_rename() {
     let frame = df!("a" => [1]).unwrap();
     assert!(apply("drop", json!({ "columns": ["b"] }), frame.clone()).is_err());

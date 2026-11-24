@@ -85,6 +85,7 @@ impl Registry {
             .register::<frames::Filter, _>("filter")
             .register::<frames::Drop, _>("drop")
             .register::<frames::Limit, _>("limit")
+            .register::<frames::Sample, _>("sample")
             .register::<frames::Unique, _>("unique")
             .register::<frames::DropNulls, _>("drop_nulls")
             // other rows out than in

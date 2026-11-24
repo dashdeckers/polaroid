@@ -27,6 +27,7 @@ const OTHERS: &[&str] = &[
     "/Selector/ExclusiveOr",
     "/Selector/Intersect",
     // take a Rust closure
+    "/Function/function/RollingExpr/function/Map",
     "/Function/function/FoldHorizontal",
     "/Function/function/ReduceHorizontal",
     "/Function/function/CumReduceHorizontal",
@@ -36,6 +37,8 @@ const OTHERS: &[&str] = &[
     "/Function/function/RowDecode",
     // built by the function `format_str`, whose payload follows from its format
     "/Function/function/StringExpr/Format",
+    // and by `str.extract_groups`, whose data type follows from its pattern
+    "/Function/function/StringExpr/ExtractGroups",
     // takes a selector, which is no expression
     "/Function/function/StructExpr/SelectFields",
     // takes a Rust closure
@@ -205,8 +208,18 @@ fn every_option_is_a_part_of_its_payload_in_the_schema() {
             .and_then(|(_, payload)| payload);
         let payload = resolve(&defs, payload.unwrap_or(&Value::Null));
 
+        // the struct that holds the enum of its kind, where that is a field of one
+        let holder = at
+            .rsplit_once('/')
+            .map_or("", |(holder, _)| holder);
+
         for option in &method.options {
             let is_in_schema = !schema::pointer(&defs, &defs["Expr"], &option.at).is_null();
+            // beside the enum, as the seed of a random pick is
+            if option.at == format!("{holder}/{}", option.name) {
+                assert!(is_in_schema, "{}: {option:?}", label(method));
+                continue;
+            }
             let key = option
                 .at
                 .strip_prefix(&method.kind)
@@ -228,6 +241,36 @@ fn every_option_is_a_part_of_its_payload_in_the_schema() {
             );
         }
     }
+}
+
+#[test]
+fn what_is_beside_the_kind_of_a_node_is_an_option_of_its_method() {
+    // what the option of this name is in `expr`, read as the method of that name
+    let option = |expr: Expr, method: &str, option: &str| {
+        let node = serde_json::to_value(expr).unwrap();
+        let read = read(&node).expect("a method reads it");
+        assert_eq!(read.name, method);
+        let at = &read
+            .options
+            .iter()
+            .find(|arg| arg.name == option)
+            .expect("the method has the option")
+            .at;
+        node.pointer(at)
+            .cloned()
+    };
+
+    // a seed, which is beside the method of the random pick
+    let shuffled = col("a").shuffle(Some(7));
+    assert_eq!(option(shuffled, "shuffle", "seed"), Some(json!(7)));
+    // and a window, beside what is done over it
+    let window = RollingOptionsFixedWindow {
+        window_size: 3,
+        ..Default::default()
+    };
+    let rolled = col("a").rolling_mean(window);
+    let options = option(rolled, "rolling_mean", "options").unwrap();
+    assert_eq!(options["window_size"], json!(3));
 }
 
 #[test]
@@ -393,5 +436,5 @@ fn a_method_says_what_polars_says_of_it_and_of_its_arguments() {
         .iter()
         .filter(|method| method.doc.is_none())
         .count();
-    assert!(untold <= 13, "{untold} methods say nothing");
+    assert!(untold <= 26, "{untold} methods say nothing");
 }

@@ -15,6 +15,7 @@ pub(super) fn methods() -> Vec<Result<Method, String>> {
         arr.method("arg_max",  [],            Fields,                       |s, []| s.arr().arg_max()),
         arr.method("arg_min",  [],            Fields,                       |s, []| s.arr().arg_min()),
         arr.method("contains", ["item"],      Fields,                       |s, [item]| s.arr().contains(item, true)),
+        arr.method("count_matches", ["element"], Fields,                  |s, [element]| s.arr().count_matches(element)),
         arr.method("explode",  [],            Fields,
             |s, []| s.arr().explode(ExplodeOptions { empty_as_null: true, keep_nulls: true })),
         arr.method("get",      ["index"],     Named(&["null_on_oob"]),      |s, [index]| s.arr().get(index, false)),
@@ -31,6 +32,7 @@ pub(super) fn methods() -> Vec<Result<Method, String>> {
         arr.method("std",      [],            Named(&["ddof"]),             |s, []| s.arr().std(1)),
         arr.method("sum",      [],            Fields,                       |s, []| s.arr().sum()),
         arr.method("to_list",  [],            Fields,                       |s, []| s.arr().to_list()),
+        arr.method("to_struct", [],           Named(&["fields"]),           |s, []| s.arr().to_struct(None)),
         arr.method("var",      [],            Named(&["ddof"]),             |s, []| s.arr().var(1)),
 
         concat.method("concat_arr", ["*exprs"], Fields, |_, [exprs]| concat_arr(vec![exprs])),

@@ -138,9 +138,17 @@ impl Method {
 /// Every Method, derived once; panics if a row cannot be, which the tests rule out.
 pub fn methods() -> &'static [Method] {
     static METHODS: LazyLock<Vec<Method>> = LazyLock::new(|| {
-        rows()
+        let (methods, problems): (Vec<_>, Vec<_>) = rows()
             .into_iter()
-            .map(|method| method.unwrap_or_else(|problem| panic!("{problem}")))
+            .partition(Result::is_ok);
+        let problems: Vec<String> = problems
+            .into_iter()
+            .filter_map(Result::err)
+            .collect();
+        assert!(problems.is_empty(), "{}", problems.join("\n"));
+        methods
+            .into_iter()
+            .flatten()
             .map(|method| Method {
                 doc: docs::DOCS
                     .iter()

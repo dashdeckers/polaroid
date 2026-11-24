@@ -76,6 +76,52 @@ impl WithDefault for Result<Method, String> {
     }
 }
 
+/// A row may have options beside the enum that tells its kind, as the seed of a random pick.
+pub(super) trait Beside {
+    /// Makes options of these fields of the struct that holds the enum; `Err` if it lacks one.
+    fn beside<const N: usize>(
+        self,
+        fields: [&str; N],
+    ) -> Self;
+}
+
+impl Beside for Result<Method, String> {
+    fn beside<const N: usize>(
+        self,
+        fields: [&str; N],
+    ) -> Self {
+        let mut method = self?;
+        // `/Function/function/Random` of the kind `/Function/function/Random/method/Shuffle`
+        let holder = method
+            .kind
+            .rsplitn(3, '/')
+            .last()
+            .unwrap_or_default()
+            .to_owned();
+        for name in fields {
+            let at = format!("{holder}/{name}");
+            if method
+                .node
+                .pointer(&at)
+                .is_none()
+            {
+                return Err(format!(
+                    "{}.{}: no `{name}` beside its kind",
+                    method.namespace, method.name
+                ));
+            }
+            method
+                .options
+                .push(Arg {
+                    name: name.to_owned(),
+                    at,
+                    is_variadic: false,
+                });
+        }
+        Ok(method)
+    }
+}
+
 impl Namespace {
     /// Derives the Method `name` from `call`, whose other arguments are the options' defaults.
     pub(super) fn method<const N: usize, B: Built>(
