@@ -685,7 +685,7 @@ fn a_cell_of_bytes_shows_their_number() {
 }
 
 #[test]
-fn a_card_shows_the_images_of_its_frame_and_browses_them_when_open() {
+fn a_card_shows_the_images_that_its_block_has_shown_and_browses_them_when_open() {
     use crate::polars::prelude::df;
 
     let image = |width: u32| {
@@ -701,11 +701,26 @@ fn a_card_shows_the_images_of_its_frame_and_browses_them_when_open() {
     editor
         .pipeline
         .outputs = vec!["n1".to_owned()];
-    let ran = vec![
-        ("n1".to_owned(), frame),
-        ("n0".to_owned(), DataFrame::empty()),
-    ];
-    let _ = editor.update(Message::Ran(vec!["n1".to_owned()], Ok(ran)));
+    let ran = |editor: &mut Editor| {
+        let ran = vec![("n1".to_owned(), frame.clone())];
+        let _ = editor.update(Message::Ran(vec!["n1".to_owned()], Ok(ran)));
+    };
+    let _ = editor.update(Message::Edit("n1".to_owned(), Edit::Toggle));
+
+    // a limit passes the images on, and shows none
+    ran(&mut editor);
+    assert!(
+        simulator(editor.view())
+            .find("1 of 3")
+            .is_err()
+    );
+    let _ = editor.update(Message::Edit("n1".to_owned(), Edit::Toggle));
+    let node = &mut editor
+        .pipeline
+        .nodes[1];
+    node.block = "view_images".to_owned();
+    node.args = serde_json::json!({ "column": "plot" });
+    ran(&mut editor);
 
     // a closed card shows one, and an open one says which of how many
     assert!(

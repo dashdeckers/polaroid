@@ -212,6 +212,10 @@ impl<P: Plot> Block for P {
         });
         Ok(frame.pipe_with_schema(drawn))
     }
+
+    fn images(&self) -> Option<&str> {
+        Some("plot")
+    }
 }
 
 /// `frame` with the images of `plot` beside the lists of values they are drawn of.

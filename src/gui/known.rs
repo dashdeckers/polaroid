@@ -241,20 +241,22 @@ impl Known {
             }
             // in one chunk, a cell is found in constant time
             frame.rechunk_mut();
-            let gallery = Gallery::of(&frame);
-            // a plot draws the figure of a row over again, to zoom and pan
-            #[cfg(feature = "plot")]
-            let gallery = match pipeline
+            let node = pipeline
                 .nodes
                 .iter()
-                .find(|node| node.id == id)
-                .and_then(|node| registry.drawer(&node.block, node.args.clone()))
-            {
-                Some(Ok(drawer)) => gallery.live(&frame, drawer),
-                _ => gallery,
-            };
-            #[cfg(not(feature = "plot"))]
-            let _ = registry;
+                .find(|node| node.id == id);
+            // the images of the column that its block has shown, and of no other
+            let gallery = node
+                .and_then(|node| registry.images(&node.block, node.args.clone()))
+                .map(|column| Gallery::of(&frame, &column))
+                .unwrap_or_default();
+            // a plot draws the figure of a row over again, to zoom and pan
+            #[cfg(feature = "plot")]
+            let gallery =
+                match node.and_then(|node| registry.drawer(&node.block, node.args.clone())) {
+                    Some(Ok(drawer)) => gallery.live(&frame, drawer),
+                    _ => gallery,
+                };
             self.of(id).frame = Some((frame, gallery));
         }
     }

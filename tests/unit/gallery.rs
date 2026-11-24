@@ -25,13 +25,13 @@ fn gallery() -> Gallery {
     .unwrap()
     .hstack(&[lists.into()])
     .unwrap();
-    Gallery::of(&frame)
+    Gallery::of(&frame, "plot")
 }
 
 #[test]
 fn a_frame_without_images_is_no_gallery() {
     let frame = df!("name" => ["a"], "bytes" => [Some(b"abc".to_vec())]).unwrap();
-    let gallery = Gallery::of(&frame);
+    let gallery = Gallery::of(&frame, "bytes");
     assert!(
         gallery
             .view(&State::default(), 300.0, true, 1.0, Help::default())
@@ -151,7 +151,7 @@ fn a_row_is_shown_whatever_was_picked_and_the_rows_left_are_stepped_through_in_a
 #[test]
 fn the_image_shown_is_exported_as_it_lies_in_the_frame() {
     let frame = df!("name" => ["a", "b"], "plot" => [image(4), image(5)]).unwrap();
-    let gallery = Gallery::of(&frame);
+    let gallery = Gallery::of(&frame, "plot");
     let mut state = State::default();
     state.update(Message::Row(1), &gallery);
     let (bytes, kind) = gallery
@@ -189,7 +189,7 @@ fn drawn() -> Gallery {
         .drawer("line", serde_json::json!({ "x": "t", "y": "v" }))
         .expect("a line is a plot")
         .unwrap();
-    Gallery::of(&frame).live(&frame, drawer)
+    Gallery::of(&frame, "plot").live(&frame, drawer)
 }
 
 #[cfg(feature = "plot")]
