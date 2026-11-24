@@ -36,6 +36,37 @@ fn a_known_frame_is_not_computed() {
 }
 
 #[test]
+fn a_known_frame_gives_its_columns_to_a_check_and_is_not_looked_at() {
+    let registry = Registry::with_polars();
+    let pipeline = pipeline("no such file.parquet");
+    let columns = |known: &HashMap<String, DataFrame>| -> Vec<Option<Vec<String>>> {
+        let schemas = pipeline
+            .schemas_from(&registry, known)
+            .unwrap();
+        ["all", "some"]
+            .map(|id| {
+                let schema = schemas[id]
+                    .as_ref()
+                    .ok()?;
+                Some(
+                    schema
+                        .iter_names()
+                        .map(ToString::to_string)
+                        .collect(),
+                )
+            })
+            .to_vec()
+    };
+
+    // the file is not there, so neither the node that reads it nor the next has columns
+    assert_eq!(columns(&HashMap::new()), [None, None]);
+    // an empty frame of its columns stands in for the first, and the next has them of it
+    let known = HashMap::from([("all".to_owned(), df!("x" => [0; 0]).unwrap())]);
+    let x = Some(vec!["x".to_owned()]);
+    assert_eq!(columns(&known), [x.clone(), x]);
+}
+
+#[test]
 fn a_write_runs_and_gives_its_frame() {
     let registry = Registry::with_polars();
     let path = std::env::temp_dir().join(format!("polaroid-write-{}.parquet", std::process::id()));
