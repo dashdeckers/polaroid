@@ -4,6 +4,7 @@ mod card;
 mod child;
 mod drawer;
 mod form;
+mod gallery;
 mod known;
 mod layout;
 
@@ -93,6 +94,8 @@ const NOTE: f32 = 12.0;
 /// How long Delay waits at the least for a change to be the last, and a step of a drag on it.
 const STILL: Duration = Duration::from_millis(500);
 const LONGER: Duration = Duration::from_millis(100);
+/// How long a gallery that is played shows each image.
+const FRAME: Duration = Duration::from_millis(200);
 
 /// When a Check and a Run follow a change.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -175,6 +178,8 @@ struct Editor {
     mode: Mode,
     /// How long Delay waits for a change to be the last, before a Check and a Run follow it.
     still: Duration,
+    /// Which of the images of its frame the card of a node shows, by its id.
+    shown: BTreeMap<String, gallery::State>,
     drawer: Drawer,
     is_drawer_shown: bool,
     help: Help,
@@ -215,6 +220,12 @@ enum Message {
     Mode(Mode),
     /// Delay is to wait this many steps longer, or shorter if they are fewer than none.
     Wait(i32),
+    /// What is asked of the gallery of a node.
+    Gallery(String, gallery::Message),
+    /// The galleries that are played show their next image.
+    Tick,
+    /// Why the image of a gallery was not written to a file, if it was not.
+    Exported(Option<String>),
     /// What a Run made of the nodes it was to save or have write.
     Ran(Vec<String>, Result<Vec<(String, DataFrame)>, String>),
     Stop,
@@ -261,6 +272,7 @@ impl Editor {
             job: None,
             mode: Mode::Manual,
             still: STILL,
+            shown: BTreeMap::new(),
             is_drawer_shown: true,
             help: Help::default(),
             docs,
@@ -284,8 +296,17 @@ impl Editor {
             } => Some(Message::CloseMenu),
             _ => None,
         });
+        let is_played = self
+            .shown
+            .values()
+            .any(|shown| shown.is_played);
+        let tick = match is_played {
+            true => iced::time::every(FRAME).map(|_| Message::Tick),
+            false => Subscription::none(),
+        };
         Subscription::batch([
             escape,
+            tick,
             system::theme_changes().map(Message::Tone),
         ])
     }
@@ -369,6 +390,22 @@ impl Editor {
                         .max(STILL),
                 };
             }
+            Message::Gallery(id, message) => return self.browse(id, message),
+            Message::Tick => {
+                for (id, shown) in &mut self.shown {
+                    match self
+                        .known
+                        .gallery(id)
+                    {
+                        Some(gallery) if shown.is_played => {
+                            shown.update(gallery::Message::Step, gallery)
+                        }
+                        // one whose frame is gone has nothing to play
+                        _ => shown.is_played = false,
+                    }
+                }
+            }
+            Message::Exported(problem) => self.problem = problem.or(self.problem.take()),
             Message::Ran(targets, Ok(frames)) => {
                 self.job = None;
                 self.known
@@ -526,6 +563,54 @@ impl Editor {
             Mode::Delay => self.check(self.still, false),
             Mode::Manual => Task::none(),
         }
+    }
+
+    /// Does what is asked of the gallery of node `id`: shows another image, or writes the one shown.
+    fn browse(
+        &mut self,
+        id: String,
+        message: gallery::Message,
+    ) -> Task<Message> {
+        let saved = self
+            .known
+            .frame(&id)
+            .zip(
+                self.known
+                    .gallery(&id),
+            );
+        let Some((frame, gallery)) = saved else {
+            return Task::none();
+        };
+        let shown = self
+            .shown
+            .entry(id.clone())
+            .or_default();
+        let gallery::Message::Save = message else {
+            shown.update(message, gallery);
+            return Task::none();
+        };
+        let Some((image, kind)) = gallery.export(shown, frame) else {
+            return Task::none();
+        };
+        let image = image.to_vec();
+        let write = async move {
+            let file = rfd::AsyncFileDialog::new()
+                .add_filter("image", &[kind])
+                .set_file_name(format!("{id}.{kind}"))
+                .save_file()
+                .await?;
+            let written = std::fs::write(file.path(), image);
+            written
+                .err()
+                .map(|e| {
+                    format!(
+                        "{}: {e}",
+                        file.path()
+                            .display()
+                    )
+                })
+        };
+        Task::perform(write, Message::Exported)
     }
 
     /// Starts a Run of what is not saved yet, or of everything if it is a Reload.

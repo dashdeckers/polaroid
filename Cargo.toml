@@ -29,9 +29,13 @@ serde_json = "1"
 iced = { optional = true, workspace = true, features = [
     "advanced",
     "canvas",
+    "image-without-codecs",
     "markdown",
+    "svg",
     "tokio",
 ] }
+# the codec of the images that a plot draws
+image = { optional = true, version = "0.25", default-features = false, features = ["png"] }
 tokio = { optional = true, version = "1", features = [
     "io-util",
     "process",
@@ -43,6 +47,7 @@ rfd = { optional = true, version = "0.18.0" }
 plot = ["polaroid_core/plot"]
 gui = [
     "dep:iced",
+    "dep:image",
     "dep:polaroid_iced",
     "dep:rfd",
     "dep:tokio",

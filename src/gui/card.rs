@@ -31,6 +31,7 @@ use polaroid_iced::{Asked, Heading, pick_list, width_of};
 use serde_json::{Map, Value};
 
 use super::form::{Expressions, Tone};
+use super::gallery::{self, Gallery};
 use super::known::Status;
 use super::{
     Editor,
@@ -114,6 +115,13 @@ impl Editor {
                 // what was known of it was known by its old id
                 self.known
                     .remove(id);
+                if let Some(shown) = self
+                    .shown
+                    .remove(id)
+                {
+                    self.shown
+                        .insert(new.clone(), shown);
+                }
                 self.forget(|node| node.id == new);
             }
             Edit::Wire(slot, source) => {
@@ -144,6 +152,8 @@ impl Editor {
             }
             Edit::Toggle => layout::toggle(&mut nodes[index]),
             Edit::Delete => {
+                self.shown
+                    .remove(id);
                 self.forget(|node| node.id == id);
                 self.pipeline
                     .remove(id);
@@ -185,6 +195,13 @@ impl Editor {
             frame: self
                 .known
                 .frame(&node.id),
+            gallery: self
+                .known
+                .gallery(&node.id),
+            shown: self
+                .shown
+                .get(&node.id)
+                .unwrap_or(&gallery::UNTOUCHED),
             doc: self
                 .docs
                 .get(&node.block),
@@ -226,6 +243,10 @@ pub struct Card<'a> {
     columns: Vec<String>,
     failed: Option<&'a str>,
     frame: Option<&'a DataFrame>,
+    /// The images in its frame, if a Run saved it.
+    gallery: Option<&'a Gallery>,
+    /// Which of those images is shown.
+    shown: &'a gallery::State,
     /// What its block does, as Markdown, and the theme to lay that out in.
     doc: Option<&'a markdown::Content>,
     theme: &'a Theme,
@@ -245,6 +266,7 @@ pub enum Event {
     Name(String),
     Rename,
     Form(form::Message),
+    Gallery(gallery::Message),
     Edit(Edit),
     Table(Asked),
     /// A link in what a block does was pressed, which leads nowhere.
@@ -267,6 +289,15 @@ impl<'a> Component<'a, Message> for Card<'a> {
                 return None;
             }
             Event::Rename => Edit::Rename(state.name.take()?),
+            Event::Gallery(message) => {
+                return Some(Message::Gallery(self.node.id.clone(), message));
+            }
+            // the image of a row that is pressed is the one to show
+            Event::Table(Asked::Row(row)) => {
+                self.gallery?;
+                let show = gallery::Message::Show(row);
+                return Some(Message::Gallery(self.node.id.clone(), show));
+            }
             Event::Form(message) => {
                 let mut args = self
                     .node
@@ -283,8 +314,6 @@ impl<'a> Component<'a, Message> for Card<'a> {
             }
             Event::Edit(edit) => edit,
             Event::Table(Asked::Copy(text)) => return Some(Message::Copy(text)),
-            // nothing follows a row that is pressed
-            Event::Table(Asked::Row(_)) => return None,
             Event::Link => return None,
         };
         let id = self.node.id.clone();
@@ -361,6 +390,7 @@ impl<'a> Component<'a, Message> for Card<'a> {
                     does,
                     inputs,
                     form,
+                    self.gallery(width, true),
                     self.table(),
                     wrong,
                     failed
@@ -372,8 +402,14 @@ impl<'a> Component<'a, Message> for Card<'a> {
                     .size(NOTE)
                     .font(Font::MONOSPACE)
                     .style(text::secondary);
+                // and of its images one, small
                 column![
-                    head, inputs, block, wrong, failed
+                    head,
+                    inputs,
+                    block,
+                    self.gallery(width, false),
+                    wrong,
+                    failed
                 ]
             }
         };
@@ -490,6 +526,19 @@ impl<'a> Card<'a> {
                     .boxed()
             });
         column(inputs).spacing(5)
+    }
+
+    /// An image of its frame; to browse, with what picks the rows and steps through them.
+    fn gallery(
+        &self,
+        width: f32,
+        is_browsed: bool,
+    ) -> Option<impl Widget<Event> + use<'a>> {
+        let gallery = self
+            .gallery?
+            // within the padding of the card
+            .view(self.shown, width - 2.0 * PAD, is_browsed, self.help)?;
+        Some(gallery.map(Event::Gallery))
     }
 
     /// A saved frame, or else the columns that a Check found, to select cells in and copy them.

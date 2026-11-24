@@ -685,6 +685,43 @@ fn a_cell_of_bytes_shows_their_number() {
 }
 
 #[test]
+fn a_card_shows_the_images_of_its_frame_and_browses_them_when_open() {
+    use crate::polars::prelude::df;
+
+    let image = |width: u32| {
+        format!(r#"<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="3"/>"#)
+    };
+    let images = [
+        Some(image(4).into_bytes()),
+        None,
+        Some(image(5).into_bytes()),
+    ];
+    let frame = df!("name" => ["a", "b", "c"], "plot" => images).unwrap();
+    let mut editor = chain(2);
+    editor
+        .pipeline
+        .outputs = vec!["n1".to_owned()];
+    let ran = vec![
+        ("n1".to_owned(), frame),
+        ("n0".to_owned(), DataFrame::empty()),
+    ];
+    let _ = editor.update(Message::Ran(vec!["n1".to_owned()], Ok(ran)));
+
+    // a closed card shows one, and an open one says which of how many
+    assert!(
+        simulator(editor.view())
+            .find("1 of 3")
+            .is_err()
+    );
+    let _ = editor.update(Message::Edit("n1".to_owned(), Edit::Toggle));
+    assert!(
+        simulator(editor.view())
+            .find("1 of 3")
+            .is_ok()
+    );
+}
+
+#[test]
 fn delay_waits_longer_as_it_is_dragged_up_and_half_a_second_at_the_least() {
     let mut editor = chain(1);
     assert_eq!(editor.still, Duration::from_millis(500));
