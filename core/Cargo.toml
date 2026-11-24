@@ -8,6 +8,19 @@ log = "0.4"
 schemars = "1.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
+# plots
+rustd3-core = { optional = true, workspace = true }
+rustd3-figure = { optional = true, workspace = true, features = [
+    "helpers",
+    "pdf",
+    "png",
+] }
+
+[features]
+plot = [
+    "dep:rustd3-core",
+    "dep:rustd3-figure",
+]
 
 [dependencies.polars-async]
 version = "=0.55.2"
