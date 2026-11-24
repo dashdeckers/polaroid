@@ -32,7 +32,20 @@ use serde_json::{Map, Value};
 
 use super::form::{Expressions, Tone};
 use super::known::Status;
-use super::{Editor, Message, NOTE, TEXT, TITLE, cross, error, form, layout, name_field, toggle};
+use super::{
+    Editor,
+    Help,
+    Message,
+    NOTE,
+    TEXT,
+    TITLE,
+    cross,
+    error,
+    form,
+    layout,
+    name_field,
+    toggle,
+};
 use crate::polars::prelude::{AnyValue, DataFrame, DataType};
 use crate::{Described, Node, schema};
 
@@ -176,6 +189,7 @@ impl Editor {
                 .docs
                 .get(&node.block),
             theme: &self.theme,
+            help: self.help,
         }
     }
 }
@@ -215,6 +229,7 @@ pub struct Card<'a> {
     /// What its block does, as Markdown, and the theme to lay that out in.
     doc: Option<&'a markdown::Content>,
     theme: &'a Theme,
+    help: Help,
 }
 
 /// What a card shows that its node does not hold.
@@ -331,8 +346,16 @@ impl<'a> Component<'a, Message> for Card<'a> {
                 });
                 // an expression is picked by its name, and edited in the drawer
                 let named = Expressions::Named(self.expressions, &self.columns);
-                let form = form::view(&state.form, self.defs, schema, &node.args, named, names)
-                    .map(Event::Form);
+                let form = form::view(
+                    &state.form,
+                    self.defs,
+                    schema,
+                    &node.args,
+                    named,
+                    names,
+                    self.help,
+                )
+                .map(Event::Form);
                 column![
                     head,
                     does,
@@ -390,17 +413,34 @@ impl<'a> Card<'a> {
         row![
             // where the surface draws the handle that drags the card
             space().width(GRAB),
-            toggle(is_open, Event::Edit(Edit::Toggle)).width(BUTTON),
-            button(icon)
-                .style(save)
-                .padding(AROUND_ICON)
-                .on_press(Event::Edit(Edit::Output(!self.is_output))),
-            name_field("id", typed, &self.node.id)
-                .on_input(Event::Name)
-                .on_submit(Event::Rename)
-                .size(TITLE)
-                .padding(FIELD),
-            cross(Event::Edit(Edit::Delete)).width(BUTTON),
+            self.help.of(
+                toggle(is_open, Event::Edit(Edit::Toggle)).width(BUTTON),
+                "Lays the card open to edit its args and see its table, or closes it. A \
+                     double-click on a closed card opens it too. Drag the corner of an open \
+                     card to resize it.",
+            ),
+            self.help.of(
+                button(icon)
+                    .style(save)
+                    .padding(AROUND_ICON)
+                    .on_press(Event::Edit(Edit::Output(!self.is_output))),
+                "Keeps the frame of this node at the next Run, to show it on the open \
+                     card. Scroll over the table, with Shift for sideways; drag across cells \
+                     and press Ctrl+C to copy them.",
+            ),
+            self.help.of(
+                name_field("id", typed, &self.node.id)
+                    .on_input(Event::Name)
+                    .on_submit(Event::Rename)
+                    .size(TITLE)
+                    .padding(FIELD),
+                "The id of the node. Type another and press Enter to rename it; the border \
+                     is orange until then.",
+            ),
+            self.help.of(
+                cross(Event::Edit(Edit::Delete)).width(BUTTON),
+                "Deletes the node, and unwires those that read it.",
+            ),
         ]
         .spacing(GAP)
         .align_y(Center)

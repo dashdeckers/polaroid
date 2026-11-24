@@ -1,10 +1,13 @@
 //! A surface to pan and zoom, with keyed cards to drag about on it and wires between their ports.
 
+use std::time::Duration;
+
 use iced::advanced::graphics::geometry::Renderer as _;
 use iced::advanced::layout::{self, Layout};
 use iced::advanced::widget::{self, Tree, tree};
 use iced::advanced::{Overlay, Renderer as _, Shell, Widget, mouse, overlay, renderer};
 use iced::mouse::ScrollDelta;
+use iced::time::Instant;
 use iced::widget::canvas::{Frame, Path, Stroke};
 use iced::{
     Color,
@@ -20,6 +23,7 @@ use iced::{
     Transformation,
     Vector,
     border,
+    window,
 };
 
 use crate::seen::Seen;
@@ -32,6 +36,12 @@ const ZOOM: (f32, f32) = (0.25, 2.5);
 const PORT: f32 = 5.0;
 /// The corner of a card that resizes it.
 const GRIP: f32 = 14.0;
+/// How much of the smaller of two cards lies on the other for a drop to swap them.
+const OVERLAP: f32 = 0.5;
+/// How long a dragged card lies on another before a drop swaps them, which a halo then shows.
+const HOVER: Duration = Duration::from_millis(400);
+/// How thick the halo is around a card that a drop swaps the dragged one with.
+const HALO: f32 = 4.0;
 
 /// An empty surface.
 pub fn surface<'a, Key, Message>() -> Surface<'a, Key, Message> {
@@ -44,6 +54,7 @@ pub fn surface<'a, Key, Message>() -> Surface<'a, Key, Message> {
         on_unwire: None,
         on_menu: None,
         on_open: None,
+        on_swap: None,
     }
 }
 
@@ -143,7 +154,7 @@ impl<Key, Message> Card<'_, Key, Message> {
     }
 }
 
-/// Cards at their points, the last on top; what a card keeps follows its key.
+/// Cards at their points, the last pressed on top; what a card keeps follows its key.
 pub struct Surface<'a, Key, Message> {
     cards: Vec<Card<'a, Key, Message>>,
     /// From the output of a card to an input of another, by its slot.
@@ -154,10 +165,11 @@ pub struct Surface<'a, Key, Message> {
     on_unwire: Option<Box<dyn Fn(Key, usize) -> Message + 'a>>,
     on_menu: Option<Box<dyn Fn(Point, Point) -> Message + 'a>>,
     on_open: Option<Box<dyn Fn(Key) -> Message + 'a>>,
+    on_swap: Option<OnSwap<'a, Key, Message>>,
 }
 
 impl<'a, Key, Message> Surface<'a, Key, Message> {
-    /// Adds a card on top.
+    /// Adds a card, on top of those before it until one of them is pressed.
     pub fn push(
         mut self,
         card: Card<'a, Key, Message>,
@@ -234,6 +246,23 @@ impl<'a, Key, Message> Surface<'a, Key, Message> {
     }
 }
 
+impl<'a, Key, Message> Surface<'a, Key, Message> {
+    /// The message for a card dropped on another after it lay there, if they can swap places.
+    ///
+    /// It is given the card that was dragged, the one under it, and where the drag started from;
+    /// if there is none to give, the card goes back there.
+    pub fn on_swap(
+        mut self,
+        on_swap: impl Fn(Key, Key, Point) -> Option<Message> + 'a,
+    ) -> Self {
+        self.on_swap = Some(Box::new(on_swap));
+        self
+    }
+}
+
+/// What makes the message for a card dropped on another, if there is one to make.
+type OnSwap<'a, Key, Message> = Box<dyn Fn(Key, Key, Point) -> Option<Message> + 'a>;
+
 /// What makes the message for a wire from a card to an input of another.
 type OnWire<'a, Key, Message> = Box<dyn Fn(Key, Key, usize) -> Message + 'a>;
 
@@ -245,13 +274,25 @@ struct State<Key> {
     drag: Option<Drag<Key>>,
     /// The latest press on a loose card, which tells a double one.
     pressed: Option<mouse::Click>,
+    /// The card that the dragged one lies on.
+    swap: Option<Swap<Key>>,
+}
+
+/// A card that the dragged one lies on, which a drop swaps it with once it lay there a while.
+struct Swap<Key> {
+    target: Key,
+    /// The first frame it lay there.
+    since: Option<Instant>,
+    is_armed: bool,
+    /// Whether there is a message for the swap, or else the drag is undone.
+    is_possible: bool,
 }
 
 enum Drag<Key> {
     /// The view, from where the cursor last was.
     Pan(Point),
-    /// A card, held this far from its corner.
-    Card(Key, Vector),
+    /// A card, held this far from its corner, and where it was.
+    Card(Key, Vector, Point),
     /// The grip of a card, held this far from its lower right corner.
     Grip(Key, Vector),
     /// A wire from the output of a card to where the cursor is, as the cards see it.
@@ -266,6 +307,19 @@ enum Hit {
     Grip(usize),
     Handle(usize),
     Card(usize),
+}
+
+impl Hit {
+    /// The index of the card that it is of.
+    fn card(self) -> usize {
+        match self {
+            Self::Input(index, _)
+            | Self::Output(index)
+            | Self::Grip(index)
+            | Self::Handle(index)
+            | Self::Card(index) => index,
+        }
+    }
 }
 
 /// Where the cards are on screen: a card's bounds times `scale` are its pixels.
@@ -362,6 +416,37 @@ impl<'a, Key: PartialEq, Message> Surface<'a, Key, Message> {
             })
     }
 
+    /// The card that most of the card of a key lies on, or most of which lies under it, at `at`.
+    fn under(
+        &self,
+        children: &[Tree],
+        view: View,
+        key: &Key,
+        at: Point,
+    ) -> Option<&Key> {
+        let cards = || {
+            self.cards
+                .iter()
+                .zip(children)
+        };
+        let area = |size: Size| size.width * size.height;
+        let (_, dragged) = cards().find(|(card, _)| card.key == *key)?;
+        let dragged = Rectangle::new(at + view.origin, dragged.size);
+        cards()
+            .filter(|(card, _)| card.key != *key)
+            .filter_map(|(card, tree)| {
+                let bounds = view
+                    .layout(card.at, tree)
+                    .bounds();
+                let shared = dragged.intersection(&bounds)?;
+                let smaller = area(dragged.size()).min(area(bounds.size()));
+                let share = area(shared.size()) / smaller;
+                (share >= OVERLAP).then_some((share, &card.key))
+            })
+            .max_by(|(a, _), (b, _)| a.total_cmp(b))
+            .map(|(_, key)| key)
+    }
+
     /// The cursor that the card of an index shows for what it holds under a cursor it sees.
     fn interaction(
         &self,
@@ -424,6 +509,7 @@ where
             scale: 1.0,
             drag: None,
             pressed: None,
+            swap: None,
         })
     }
 
@@ -434,6 +520,16 @@ where
         let state = tree
             .state
             .downcast_mut::<State<Key>>();
+        // in the order they were, which a press changes, and those that are new on top
+        let place = |key: &Key| {
+            state
+                .keys
+                .iter()
+                .position(|old| old == key)
+                .unwrap_or(usize::MAX)
+        };
+        self.cards
+            .sort_by_cached_key(|card| place(&card.key));
         let mut old: Vec<(Key, Tree)> = state
             .keys
             .drain(..)
@@ -558,6 +654,22 @@ where
             .downcast_ref::<State<Key>>();
         let view = View::new(state, bounds);
         let local = cursor * view.inverse();
+        // a card that is pressed comes to the top, before anything else is made of the press
+        if let Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) = event
+            && cursor.is_over(bounds)
+            && let Some(hit) = self.hit(tree, view, local)
+        {
+            let index = hit.card();
+            self.cards[index..].rotate_left(1);
+            tree.children[index..].rotate_left(1);
+            let state = tree
+                .state
+                .downcast_mut::<State<Key>>();
+            state.keys[index..].rotate_left(1);
+        }
+        let state = tree
+            .state
+            .downcast_ref::<State<Key>>();
         let hit = self
             .hit(tree, view, local)
             .filter(|_| cursor.is_over(bounds));
@@ -580,9 +692,6 @@ where
                 .update(tree, event, layout, cursor, renderer, shell, &viewport);
         }
 
-        let Event::Mouse(event) = event else {
-            return;
-        };
         let key = |index: usize| {
             self.cards[index]
                 .key
@@ -591,14 +700,46 @@ where
         let state = tree
             .state
             .downcast_mut::<State<Key>>();
+        // a card that lay on another for a while is to swap with it, which a halo shows
+        if let Event::Window(window::Event::RedrawRequested(now)) = event
+            && let Some(swap) = &mut state.swap
+            && !swap.is_armed
+        {
+            let since = *swap
+                .since
+                .get_or_insert(*now);
+            swap.is_armed = *now >= since + HOVER;
+            shell.request_redraw_at(since + HOVER);
+        }
+        let Event::Mouse(event) = event else {
+            return;
+        };
         match event {
             // a drag ends wherever the cursor is, and whoever took the release
             mouse::Event::ButtonReleased(mouse::Button::Left) => {
-                let drag = state.drag.take();
-                if let (Some(Drag::Wire(from, _)), Some(Hit::Input(to, slot))) = (drag, hit)
-                    && let Some(on_wire) = &self.on_wire
-                {
-                    shell.publish(on_wire(from, key(to), slot));
+                let swap = state
+                    .swap
+                    .take()
+                    .filter(|swap| swap.is_armed);
+                let message = match (state.drag.take(), hit, swap) {
+                    (Some(Drag::Wire(from, _)), Some(Hit::Input(to, slot)), _) => self
+                        .on_wire
+                        .as_ref()
+                        .map(|on_wire| on_wire(from, key(to), slot)),
+                    // the two swap places, or the one that was dragged goes back to its own
+                    (Some(Drag::Card(key, _, from)), _, Some(swap)) => self
+                        .on_swap
+                        .as_ref()
+                        .and_then(|on_swap| on_swap(key.clone(), swap.target, from))
+                        .or_else(|| {
+                            self.on_move
+                                .as_ref()
+                                .map(|on_move| on_move(key, from))
+                        }),
+                    _ => None,
+                };
+                if let Some(message) = message {
+                    shell.publish(message);
                 }
                 shell.request_redraw();
             }
@@ -640,8 +781,8 @@ where
                         return;
                     }
                     Some(Hit::Handle(index) | Hit::Card(index) | Hit::Input(index, _)) => {
-                        let corner = Point::ORIGIN + view.origin + self.cards[index].at;
-                        Drag::Card(key(index), point - corner)
+                        let at = Point::ORIGIN + self.cards[index].at;
+                        Drag::Card(key(index), point - (at + view.origin), at)
                     }
                     None => Drag::Pan(at),
                 });
@@ -674,9 +815,30 @@ where
                         state.pan += *position - *from;
                         *from = *position;
                     }
-                    Some(Drag::Card(key, held)) => {
+                    Some(Drag::Card(key, held, from)) => {
+                        let at = point - view.origin - *held;
                         if let Some(on_move) = &self.on_move {
-                            shell.publish(on_move(key.clone(), point - view.origin - *held));
+                            shell.publish(on_move(key.clone(), at));
+                        }
+                        // the card it lies on now, if that is another than before
+                        let under = self.under(&tree.children, view, key, at);
+                        let is_same = match (&state.swap, under) {
+                            (Some(swap), Some(under)) => swap.target == *under,
+                            (None, None) => true,
+                            _ => false,
+                        };
+                        if !is_same {
+                            state.swap = under.map(|under| Swap {
+                                target: under.clone(),
+                                since: None,
+                                is_armed: false,
+                                is_possible: self
+                                    .on_swap
+                                    .as_ref()
+                                    .is_some_and(|on_swap| {
+                                        on_swap(key.clone(), under.clone(), *from).is_some()
+                                    }),
+                            });
                         }
                     }
                     Some(Drag::Grip(key, held)) => {
@@ -857,6 +1019,43 @@ where
                                 renderer.fill_quad(quad(dot, 1.5), muted);
                             }
                         }
+                    });
+                }
+                // around the card that a drop swaps the dragged one with, or cannot
+                let halo = state
+                    .swap
+                    .as_ref()
+                    .filter(|swap| swap.is_armed)
+                    .and_then(|swap| {
+                        let (_, _, _, layout) = self
+                            .laid_out(tree, view)
+                            .find(|(_, card, ..)| card.key == swap.target)?;
+                        let color = match swap.is_possible {
+                            true => {
+                                palette
+                                    .primary
+                                    .base
+                                    .color
+                            }
+                            false => {
+                                palette
+                                    .danger
+                                    .base
+                                    .color
+                            }
+                        };
+                        Some((layout.bounds(), color))
+                    });
+                if let Some((bounds, color)) = halo {
+                    let halo = renderer::Quad {
+                        bounds: bounds.expand(HALO),
+                        border: border::rounded(HALO + 5.0)
+                            .color(color)
+                            .width(HALO),
+                        ..renderer::Quad::default()
+                    };
+                    renderer.with_layer(seen, |renderer| {
+                        renderer.fill_quad(halo, Color::TRANSPARENT);
                     });
                 }
             });

@@ -7,7 +7,7 @@ use iced::{Center, Element, Fill, Font, Function, Theme, Widget};
 use polaroid_iced::{handle, pick_list, width_of};
 use serde_json::{Map, Value, json};
 
-use super::{NOTE, TEXT};
+use super::{Help, NOTE, TEXT};
 use crate::schema::{blank, default, json_type, nudged, number, optional, resolve, variants};
 use crate::{marked, marker, methods};
 
@@ -100,12 +100,14 @@ pub fn view<'a>(
     value: &'a Value,
     expressions: Expressions<'a, '_>,
     names: f32,
+    help: Help,
 ) -> impl Widget<Message> + use<'a> {
     let form = Form {
         state,
         defs,
         expressions,
         names,
+        help,
     };
     form.value(schema, value, String::new())
 }
@@ -118,7 +120,11 @@ struct Form<'a, 'c> {
     expressions: Expressions<'a, 'c>,
     /// The least width of the column of the names of the arguments.
     names: f32,
+    help: Help,
 }
+
+/// What the handle beside a number says it is for.
+const DRAG: &str = "Drag up for more and down for less; faster moves it by more.";
 
 /// The height of a line that holds a field.
 const LINE: f32 = 26.0;
@@ -235,6 +241,32 @@ fn flowed(described: &str) -> String {
         .join("\n\n")
 }
 
+/// `content`, which tells what Polars `says` of it when hovered, if it says anything.
+pub fn told<'a, Message: 'a>(
+    content: impl Widget<Message> + 'a,
+    says: Option<String>,
+) -> Element<'a, Message> {
+    told_at(content, says, tooltip::Position::Top)
+}
+
+/// `content`, which tells what is said of it when hovered, on this side of it.
+pub fn told_at<'a, Message: 'a>(
+    content: impl Widget<Message> + 'a,
+    says: Option<String>,
+    side: tooltip::Position,
+) -> Element<'a, Message> {
+    let Some(says) = says else {
+        return content.boxed();
+    };
+    let says = container(text(says).size(NOTE))
+        .width(280)
+        .padding(6)
+        .style(container::bordered_box);
+    tooltip(content, says)
+        .position(side)
+        .boxed()
+}
+
 /// An argument on a line: its name in a column of the width `names`, then its value.
 ///
 /// Its name tells what it is for when hovered.
@@ -253,18 +285,7 @@ pub fn labelled<'a, Message: 'a>(
         .width(names)
         .height(LINE)
         .align_y(Center);
-    let name = match described {
-        Some(described) => {
-            let described = container(text(flowed(described)).size(NOTE))
-                .width(280)
-                .padding(6)
-                .style(container::bordered_box);
-            tooltip(name, described)
-                .position(tooltip::Position::Top)
-                .boxed()
-        }
-        None => name.boxed(),
-    };
+    let name = told(name, described.map(flowed));
     row![name, value]
         .spacing(8)
         .boxed()
@@ -342,8 +363,11 @@ impl<'a> Form<'a, '_> {
         let schema = resolve(self.defs, schema);
         let default = default.or(schema.get("default"));
         let inner = optional(schema).map(|inner| resolve(self.defs, inner));
-        let clear = (inner.is_some() && !value.is_null())
-            .then(|| small("×", Message::Put(at.clone(), Value::Null)));
+        let clear = (inner.is_some() && !value.is_null()).then(|| {
+            let clear = small("×", Message::Put(at.clone(), Value::Null));
+            self.help
+                .of(clear, "Clears the value: it may be left out.")
+        });
         let tone = Tone::of(value, default, inner.is_some());
 
         let shown = inner.unwrap_or(schema);
@@ -382,7 +406,9 @@ impl<'a> Form<'a, '_> {
         if value.is_null() {
             let blank = blank(self.defs, schema);
             if !blank.is_null() {
-                return small("set", put(blank)).boxed();
+                return self
+                    .help
+                    .of(small("set", put(blank)), "Gives it a value, to fill in.");
             }
         }
         let variants = variants(schema);
@@ -519,14 +545,20 @@ impl<'a> Form<'a, '_> {
             .map(|(i, element)| {
                 let at = format!("{at}/{i}");
                 row![
-                    small("×", Message::Drop(at.clone())),
+                    self.help.of(
+                        small("×", Message::Drop(at.clone())),
+                        "Takes this one out of the list."
+                    ),
                     self.value(items, element, at)
                 ]
                 .spacing(5)
                 .boxed()
             });
         column(lines)
-            .push(small("+", add).boxed())
+            .push(
+                self.help
+                    .of(small("+", add), "Adds one to the list."),
+            )
             .spacing(5)
             .boxed()
     }
@@ -567,7 +599,8 @@ impl<'a> Form<'a, '_> {
         let moved = move |steps| Message::Put(at.clone(), nudged(schema, value, steps));
         row![
             field,
-            handle().on_scrub(moved)
+            self.help
+                .of(handle().on_scrub(moved), DRAG)
         ]
         .spacing(2)
         .align_y(Center)

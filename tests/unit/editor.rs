@@ -728,3 +728,70 @@ fn a_name_is_marked_while_what_is_typed_for_it_is_another() {
             .contains_key("few")
     );
 }
+
+#[test]
+fn a_node_dropped_on_another_swaps_wiring_and_place_with_it() {
+    // a scan, then two limits
+    let mut editor = chain(3);
+    let place = |editor: &Editor, id: &str| {
+        let node = editor
+            .pipeline
+            .nodes
+            .iter()
+            .find(|node| node.id == id)
+            .unwrap();
+        (layout::position(node), node.inputs.clone())
+    };
+    let (first, _) = place(&editor, "n1");
+    let (second, _) = place(&editor, "n2");
+
+    // the card was dragged about before it was dropped
+    let _ = editor.update(Message::Move("n1".to_owned(), Point::new(5.0, 5.0)));
+    let swap = Message::Swap("n1".to_owned(), "n2".to_owned(), first);
+    let _ = editor.update(swap);
+    assert_eq!(place(&editor, "n1"), (second, vec!["n2".to_owned()]));
+    assert_eq!(place(&editor, "n2"), (first, vec!["n0".to_owned()]));
+    assert!(editor.is_dirty);
+
+    // a node that reads a frame does not swap with one that reads none
+    assert!(editor.swaps("n1", "n2"));
+    assert!(!editor.swaps("n0", "n1"));
+    assert!(!editor.swaps("n1", "n1"));
+    let _ = editor.update(Message::Swap("n0".to_owned(), "n1".to_owned(), first));
+    assert_eq!(place(&editor, "n2"), (first, vec!["n0".to_owned()]));
+}
+
+#[test]
+fn help_has_everything_say_what_it_is_for_until_it_is_pressed_again() {
+    let mut editor = chain(2);
+    let hint = "Runs everything again from the files on disk, whatever was kept before.";
+    // whether the editor says this with the cursor over the button of a label
+    let says = |editor: &Editor, label: &str, said: &str| {
+        let mut ui = simulator(editor.view());
+        let position = ui
+            .find(label)
+            .expect("the button is there")
+            .bounds()
+            .center();
+        ui.point_at(position);
+        ui.simulate([iced::Event::Mouse(
+            iced::mouse::Event::CursorMoved { position },
+        )]);
+        ui.find(said)
+            .is_ok()
+    };
+    // the introduction is what the Help button says, and nowhere until it is hovered
+    let said = |editor: &Editor| {
+        [
+            says(editor, "Reload", hint),
+            says(editor, "Help", INTRO),
+            says(editor, "Reload", INTRO),
+        ]
+    };
+
+    assert_eq!(said(&editor), [false, false, false]);
+    let _ = editor.update(Message::Help);
+    assert_eq!(said(&editor), [true, true, false]);
+    let _ = editor.update(Message::Help);
+    assert_eq!(said(&editor), [false, false, false]);
+}
