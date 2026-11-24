@@ -1,6 +1,6 @@
 //! What is known of the nodes of a pipeline: their wiring, and what a Check and the Runs found.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use super::Columns;
 use crate::polars::prelude::{DataFrame, DataType};
@@ -141,18 +141,18 @@ impl Known {
 
     /// What a Run is to compute: the pipeline to run, its targets, and the saved frames it reads.
     ///
-    /// A Rerun first lets go of every frame, so that it computes everything.
+    /// A Reload first lets go of every frame, so that it computes everything.
     pub fn plan(
         &mut self,
         pipeline: &Pipeline,
-        is_rerun: bool,
+        is_reload: bool,
     ) -> (Pipeline, Vec<String>, HashMap<String, DataFrame>) {
         for found in self
             .found
             .values_mut()
         {
             found.failed = None;
-            if is_rerun {
+            if is_reload {
                 found.frame = None;
                 found.is_run = false;
             }
@@ -301,17 +301,36 @@ impl Known {
         }
     }
 
-    /// Whether a Check is behind every node that a Run computes: until then it goes before a Run.
-    pub fn is_checked(
-        &self,
-        pipeline: &Pipeline,
-    ) -> bool {
+    /// The nodes that a Run computes: those it saves or has write, and all that they read.
+    fn reached<'a>(
+        &'a self,
+        pipeline: &'a Pipeline,
+    ) -> HashSet<&'a str> {
         let targets = pipeline
             .outputs
             .iter()
             .chain(&self.writes)
             .map(String::as_str);
-        let reached = pipeline.upstream(targets);
+        pipeline.upstream(targets)
+    }
+
+    /// Whether every node that a Run computes is wired well, with args that its block takes.
+    pub fn is_wired(
+        &self,
+        pipeline: &Pipeline,
+    ) -> bool {
+        let reached = self.reached(pipeline);
+        self.wiring
+            .keys()
+            .all(|id| !reached.contains(id.as_str()))
+    }
+
+    /// Whether a Check is behind every node that a Run computes: until then it goes before a Run.
+    pub fn is_checked(
+        &self,
+        pipeline: &Pipeline,
+    ) -> bool {
+        let reached = self.reached(pipeline);
         pipeline
             .nodes
             .iter()
@@ -326,17 +345,16 @@ impl Known {
             })
     }
 
-    /// The names of every column that a Check found of the nodes of `pipeline`, once each.
-    pub fn names(
+    /// The names of every column that a Check found of the nodes of these ids, once each.
+    pub fn names<'a>(
         &self,
-        pipeline: &Pipeline,
+        ids: impl IntoIterator<Item = &'a String>,
     ) -> Vec<String> {
         let mut names = Vec::new();
-        let found = pipeline
-            .nodes
-            .iter()
-            .filter_map(|node| {
-                self.columns(&node.id)?
+        let found = ids
+            .into_iter()
+            .filter_map(|id| {
+                self.columns(id)?
                     .ok()
             })
             .flatten();

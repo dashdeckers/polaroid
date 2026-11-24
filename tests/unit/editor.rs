@@ -162,7 +162,7 @@ fn a_deleted_node_leaves_its_readers_unwired() {
 }
 
 #[test]
-fn a_run_keeps_the_saved_frames_and_a_rerun_does_not() {
+fn a_run_keeps_the_saved_frames_and_a_reload_does_not() {
     let mut editor = chain(2);
     editor
         .pipeline
@@ -181,7 +181,7 @@ fn a_run_keeps_the_saved_frames_and_a_rerun_does_not() {
     );
     assert_eq!(status(&editor), [Status::Ran, Status::Ran]);
 
-    let _ = editor.update(Message::Rerun);
+    let _ = editor.update(Message::Reload);
     assert!(
         editor
             .known
@@ -342,7 +342,7 @@ fn press(
 }
 
 #[test]
-fn a_check_covers_the_runs_until_every_node_is_sound() {
+fn the_button_is_a_check_until_every_node_is_sound_and_a_run_from_then_on() {
     let mut editor = chain(2);
     let checked = |editor: &mut Editor, first: Columns| {
         let checks = [
@@ -352,7 +352,8 @@ fn a_check_covers_the_runs_until_every_node_is_sound() {
         .into();
         let _ = editor.update(Message::Checked(Ok(checks)));
     };
-    let is_covered = |editor: &Editor| matches!(press(editor, "Run")[..], [Message::Check]);
+    let is_run = |editor: &Editor| matches!(press(editor, "Run")[..], [Message::Run]);
+    let is_covered = |editor: &Editor| matches!(press(editor, "Check")[..], [Message::Check]);
 
     // whether or not a Run would compute anything
     assert!(is_covered(&editor));
@@ -363,12 +364,12 @@ fn a_check_covers_the_runs_until_every_node_is_sound() {
     checked(&mut editor, Err("no such file".to_owned()));
     assert!(is_covered(&editor));
     checked(&mut editor, Ok(vec![]));
-    assert!(matches!(press(&editor, "Run")[..], [Message::Run]));
-    assert!(matches!(press(&editor, "Rerun")[..], [Message::Rerun]));
+    assert!(is_run(&editor));
+    assert!(matches!(press(&editor, "Reload")[..], [Message::Reload]));
 
     // a node that no Run computes may be wired badly, which no Check would mend
     let _ = editor.update(Message::Add("limit".to_owned(), Point::ORIGIN));
-    assert!(!is_covered(&editor));
+    assert!(is_run(&editor));
 
     let args = Edit::Args(serde_json::json!({ "n": 6 }));
     let _ = editor.update(Message::Edit("n1".to_owned(), args));
@@ -379,7 +380,57 @@ fn a_check_covers_the_runs_until_every_node_is_sound() {
     let _ = editor.update(Message::Ran(vec!["n1".to_owned()], Err("no".to_owned())));
     assert!(is_covered(&editor));
     checked(&mut editor, Ok(vec![]));
-    assert!(!is_covered(&editor));
+    assert!(is_run(&editor));
+}
+
+#[test]
+fn a_change_is_followed_by_a_check_and_a_run_unless_their_button_is_pressed() {
+    let mut editor = chain(2);
+    let edit = |editor: &mut Editor, n: u32| {
+        let args = Edit::Args(serde_json::json!({ "n": n }));
+        let _ = editor.update(Message::Edit("n1".to_owned(), args));
+    };
+    let checks = || {
+        [
+            ("n0".to_owned(), Ok(vec![])),
+            ("n1".to_owned(), Ok(vec![])),
+        ]
+        .into()
+    };
+
+    // nothing is under way after a change, until a mode has one follow it
+    edit(&mut editor, 6);
+    assert!(editor.job.is_none());
+    for mode in [Mode::Live, Mode::Delay] {
+        let _ = editor.update(Message::Mode(mode));
+        assert!(editor.job.is_some());
+        edit(&mut editor, 7);
+        assert!(editor.job.is_some());
+        // a Check that finds all sound is followed by a Run
+        let _ = editor.update(Message::Checked(Ok(checks())));
+        assert!(editor.job.is_some());
+        // and a card laid open is no change
+        let _ = editor.update(Message::Ran(vec![], Ok(vec![])));
+        let _ = editor.update(Message::Edit("n1".to_owned(), Edit::Toggle));
+        assert!(editor.job.is_none());
+    }
+
+    // nor does any follow a change that leaves a node unsound, as a number half typed does
+    let _ = editor.update(Message::Mode(Mode::Live));
+    let _ = editor.update(Message::Ran(vec![], Ok(vec![])));
+    let _ = editor.update(Message::Edit("n1".to_owned(), Edit::Output(true)));
+    let _ = editor.update(Message::Ran(vec![], Ok(vec![])));
+    let args = Edit::Args(serde_json::json!({ "n": null }));
+    let _ = editor.update(Message::Edit("n1".to_owned(), args));
+    assert!(editor.job.is_none());
+
+    // their button is pressed for a Check alone
+    let _ = editor.update(Message::Check);
+    assert_eq!(editor.mode, Mode::Manual);
+    let _ = editor.update(Message::Checked(Ok(checks())));
+    assert!(editor.job.is_none());
+    edit(&mut editor, 8);
+    assert!(editor.job.is_none());
 }
 
 #[test]
@@ -622,4 +673,13 @@ fn selected(is_open: bool) -> String {
 fn the_text_of_a_card_is_selected_by_a_drag_across_it() {
     assert_eq!(selected(true), "no such file");
     assert_eq!(selected(false), "no such file");
+}
+
+#[test]
+fn a_cell_of_bytes_shows_their_number() {
+    use crate::polars::prelude::AnyValue;
+
+    assert_eq!(card::shown(AnyValue::Binary(b"abcd")), "4 bytes");
+    assert_eq!(card::shown(AnyValue::Int32(4)), "4");
+    assert_eq!(card::shown(AnyValue::String("4 bytes")), "4 bytes");
 }

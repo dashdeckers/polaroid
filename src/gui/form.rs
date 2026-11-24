@@ -14,11 +14,11 @@ use iced::widget::{
     tooltip,
 };
 use iced::{Center, Element, Fill, Font, Function, Theme, Widget};
-use polaroid_iced::width_of;
+use polaroid_iced::{scrub, width_of};
 use serde_json::{Map, Value, json};
 
 use super::{NOTE, TEXT};
-use crate::schema::{blank, default, json_type, number, optional, resolve, variants};
+use crate::schema::{blank, default, json_type, nudged, number, optional, resolve, variants};
 use crate::{marked, marker, methods};
 
 /// What a form shows that its value does not hold.
@@ -85,10 +85,19 @@ impl State {
 /// How a form shows the expressions in its value.
 #[derive(Clone, Copy)]
 pub enum Expressions<'a, 'c> {
-    /// Each is picked by its name from these, and is not edited here.
-    Named(&'a Map<String, Value>),
+    /// Each is picked by its name from these, and is not edited here; these columns are read.
+    Named(&'a Map<String, Value>, &'c [String]),
     /// Each is edited here as a chain of calls, which may name these columns.
     Chained(&'c [String]),
+}
+
+impl<'c> Expressions<'_, 'c> {
+    /// The columns that are there to name.
+    fn columns(self) -> &'c [String] {
+        match self {
+            Self::Named(_, columns) | Self::Chained(columns) => columns,
+        }
+    }
 }
 
 /// The form for `value`, by `schema`.
@@ -309,6 +318,26 @@ fn name<'a>(
     .boxed()
 }
 
+/// The name of a column at the pointer `at`, to pick another of `columns` by.
+fn column_of<'a>(
+    columns: &[String],
+    value: &Value,
+    at: String,
+    tone: Tone,
+) -> Element<'a, Message> {
+    // one that is not among them is shown all the same
+    let name = value
+        .as_str()
+        .map(str::to_owned);
+    pick_list(name, columns.to_vec(), String::clone)
+        .on_select(move |name: String| Message::Put(at.clone(), name.into()))
+        .placeholder("column…")
+        .text_size(TEXT)
+        .padding(4)
+        .style(picked(tone))
+        .boxed()
+}
+
 impl<'a> Form<'a, '_> {
     /// The form for the value at the pointer `at`: an expression as a chain, a nullable to clear.
     fn value(
@@ -329,9 +358,15 @@ impl<'a> Form<'a, '_> {
         let shown = inner.unwrap_or(schema);
         // a schema that resolves to the one definition of an expression is that very value
         let is_expression = std::ptr::eq(shown, &self.defs["Expr"]);
+        // and to that of the name of a column one of the columns, where they are known
+        let columns = self
+            .expressions
+            .columns();
+        let is_column = std::ptr::eq(shown, &self.defs["ColumnName"]) && !columns.is_empty();
         let form = match (is_expression, self.expressions) {
-            (true, Expressions::Named(named)) => name(named, value, at, tone),
+            (true, Expressions::Named(named, _)) => name(named, value, at, tone),
             (true, Expressions::Chained(_)) => self.chain(value, at),
+            (false, _) if is_column => column_of(columns, value, at, tone),
             (false, _) => self.plain(shown, value, at, tone),
         };
         if inner.is_none() {
@@ -385,7 +420,7 @@ impl<'a> Form<'a, '_> {
                     .style(ticked(tone, is_ticked))
                     .boxed()
             }
-            "integer" | "number" => self.typed(value, at, tone),
+            "integer" | "number" => self.typed(schema, value, at, tone),
             "string" => text_input(
                 "",
                 value
@@ -505,8 +540,11 @@ impl<'a> Form<'a, '_> {
     }
 
     /// A field for a number: as it is being typed there, or else as the number that it is.
+    ///
+    /// A drag across it moves the number, as a slider would.
     fn typed(
         self,
+        schema: &'a Value,
         value: &'a Value,
         at: String,
         tone: Tone,
@@ -527,12 +565,14 @@ impl<'a> Form<'a, '_> {
             Value::Null => String::new(),
             number => number.to_string(),
         });
-        text_input("", typed)
-            .on_input(Message::Type.with(at))
+        let field = text_input("", typed)
+            .on_input(Message::Type.with(at.clone()))
             .width(Fill.max(100))
             .size(TEXT)
             .padding(4)
-            .style(typed_in(tone))
+            .style(typed_in(tone));
+        scrub(field)
+            .on_scrub(move |steps| Message::Put(at.clone(), nudged(schema, value, steps)))
             .boxed()
     }
 }
