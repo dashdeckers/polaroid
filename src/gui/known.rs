@@ -220,6 +220,7 @@ impl Known {
     pub fn ran(
         &mut self,
         pipeline: &Pipeline,
+        registry: &Registry,
         targets: &[String],
         frames: Vec<(String, DataFrame)>,
     ) {
@@ -241,6 +242,19 @@ impl Known {
             // in one chunk, a cell is found in constant time
             frame.rechunk_mut();
             let gallery = Gallery::of(&frame);
+            // a plot draws the figure of a row over again, to zoom and pan
+            #[cfg(feature = "plot")]
+            let gallery = match pipeline
+                .nodes
+                .iter()
+                .find(|node| node.id == id)
+                .and_then(|node| registry.drawer(&node.block, node.args.clone()))
+            {
+                Some(Ok(drawer)) => gallery.live(&frame, drawer),
+                _ => gallery,
+            };
+            #[cfg(not(feature = "plot"))]
+            let _ = registry;
             self.of(id).frame = Some((frame, gallery));
         }
     }

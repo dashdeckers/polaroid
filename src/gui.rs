@@ -183,6 +183,8 @@ struct Editor {
     drawer: Drawer,
     is_drawer_shown: bool,
     help: Help,
+    /// How many times their size the cards are drawn, which a plot draws its pixels for.
+    zoom: f32,
     /// What each block does, as the Markdown its description is written in.
     docs: BTreeMap<String, markdown::Content>,
     theme: Theme,
@@ -234,6 +236,8 @@ enum Message {
     ToggleDrawer,
     /// Help is shown, or no longer if it is.
     Help,
+    /// The cards are drawn this many times their size.
+    Zoom(f32),
     /// The system is light or dark.
     Tone(theme::Mode),
 }
@@ -275,6 +279,7 @@ impl Editor {
             shown: BTreeMap::new(),
             is_drawer_shown: true,
             help: Help::default(),
+            zoom: 1.0,
             docs,
             theme: Theme::Light,
         };
@@ -409,7 +414,7 @@ impl Editor {
             Message::Ran(targets, Ok(frames)) => {
                 self.job = None;
                 self.known
-                    .ran(&self.pipeline, &targets, frames);
+                    .ran(&self.pipeline, &self.registry, &targets, frames);
             }
             Message::Ran(targets, Err(e)) => {
                 self.job = None;
@@ -436,6 +441,7 @@ impl Editor {
             }
             Message::ToggleDrawer => self.is_drawer_shown = !self.is_drawer_shown,
             Message::Help => self.help = Help(!self.help.0),
+            Message::Zoom(zoom) => self.zoom = zoom,
             Message::Tone(mode) => {
                 self.theme = match mode {
                     theme::Mode::Dark => Theme::Dark,
@@ -888,7 +894,8 @@ impl Editor {
             .on_wire(|from, to, slot| Message::Edit(to, Edit::Wire(slot, from)))
             .on_unwire(|to, slot| Message::Edit(to, Edit::Wire(slot, String::new())))
             .on_open(|id| Message::Edit(id, Edit::Toggle))
-            .on_menu(Message::Menu);
+            .on_menu(Message::Menu)
+            .on_zoom(Message::Zoom);
         for node in &self.pipeline.nodes {
             let inputs = self
                 .block(&node.block)

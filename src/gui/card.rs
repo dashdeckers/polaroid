@@ -207,6 +207,7 @@ impl Editor {
                 .get(&node.block),
             theme: &self.theme,
             help: self.help,
+            zoom: self.zoom,
         }
     }
 }
@@ -251,6 +252,8 @@ pub struct Card<'a> {
     doc: Option<&'a markdown::Content>,
     theme: &'a Theme,
     help: Help,
+    /// How many times their size the cards are drawn.
+    zoom: f32,
 }
 
 /// What a card shows that its node does not hold.
@@ -537,7 +540,13 @@ impl<'a> Card<'a> {
         let gallery = self
             .gallery?
             // within the padding of the card
-            .view(self.shown, width - 2.0 * PAD, is_browsed, self.help)?;
+            .view(
+                self.shown,
+                width - 2.0 * PAD,
+                is_browsed,
+                self.zoom,
+                self.help,
+            )?;
         Some(gallery.map(Event::Gallery))
     }
 

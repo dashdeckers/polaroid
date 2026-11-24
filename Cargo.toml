@@ -42,14 +42,20 @@ tokio = { optional = true, version = "1", features = [
     "time",
 ] }
 rfd = { optional = true, version = "0.18.0" }
+# the plot that is zoomed and panned, where a build has both the gui and plots
+rustd3-iced = { optional = true, workspace = true }
 
 [features]
-plot = ["polaroid_core/plot"]
+plot = [
+    "polaroid_core/plot",
+    "rustd3-iced?/figure",
+]
 gui = [
     "dep:iced",
     "dep:image",
     "dep:polaroid_iced",
     "dep:rfd",
+    "dep:rustd3-iced",
     "dep:tokio",
 ]
 
@@ -70,5 +76,6 @@ members = [
 [workspace.dependencies]
 iced = { git = "https://github.com/iced-rs/iced", rev = "98bd48fe011efc0ec5819fee0fa7673a7169ff11" }
 iced_test = { git = "https://github.com/iced-rs/iced", rev = "98bd48fe011efc0ec5819fee0fa7673a7169ff11" }
-rustd3-core = { git = "https://github.com/dashdeckers/rustd3", rev = "2342fca83a44207659bfab98236837edf505273d" }
-rustd3-figure = { git = "https://github.com/dashdeckers/rustd3", rev = "2342fca83a44207659bfab98236837edf505273d" }
+rustd3-core = { git = "https://github.com/dashdeckers/rustd3", rev = "2f008033bece187296e447b491674f406f17e030" }
+rustd3-figure = { git = "https://github.com/dashdeckers/rustd3", rev = "2f008033bece187296e447b491674f406f17e030" }
+rustd3-iced = { git = "https://github.com/dashdeckers/rustd3", rev = "2f008033bece187296e447b491674f406f17e030" }

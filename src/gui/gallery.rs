@@ -1,12 +1,18 @@
 //! The images in the cells of a frame, as a plot leaves them there: a gallery to show on a card.
 
+#[cfg(feature = "plot")]
+use std::cell::OnceCell;
 use std::collections::{BTreeMap, HashMap};
 
 use iced::widget::{button, column, image, row, slider, space, svg, text};
 use iced::{Center, Element, Fill, Widget};
 use polaroid_iced::pick_list;
+#[cfg(feature = "plot")]
+use rustd3_iced::Plot;
 
 use super::{Help, NOTE, TEXT, form};
+#[cfg(feature = "plot")]
+use crate::Drawer;
 use crate::polars::prelude::{Column, DataFrame, SortOptions};
 
 /// The space between the lines of a gallery.
@@ -146,6 +152,38 @@ pub struct Gallery {
     column: String,
     pictures: Vec<Option<Picture>>,
     attributes: Vec<Attribute>,
+    /// What draws the figure of a row over again, to zoom and pan, if a Plot drew the images.
+    #[cfg(feature = "plot")]
+    live: Option<Live>,
+}
+
+/// The Plot that drew the images of a frame, and what it drew them of.
+#[cfg(feature = "plot")]
+#[derive(Debug)]
+struct Live {
+    drawer: Drawer,
+    frame: DataFrame,
+    /// What the image of each row was drawn of, once it is asked for; none if it cannot be told.
+    values: Vec<OnceCell<Option<DataFrame>>>,
+}
+
+#[cfg(feature = "plot")]
+impl Live {
+    /// What the image of `row` was drawn of, which is found once.
+    fn values(
+        &self,
+        row: usize,
+    ) -> Option<&DataFrame> {
+        self.values
+            .get(row)?
+            .get_or_init(|| {
+                self.drawer
+                    .values(&self.frame, row)
+                    .ok()
+                    .flatten()
+            })
+            .as_ref()
+    }
 }
 
 /// What is shown of a gallery: the value picked of an attribute, and a row of those left.
@@ -156,6 +194,10 @@ pub struct State {
     row: usize,
     /// Whether it steps through the rows left by itself.
     pub is_played: bool,
+    /// Whether the row is shown as a plot to zoom and pan, and not as its image.
+    is_live: bool,
+    /// The point of that plot under the cursor: where it is among the values of the row.
+    hovered: Option<usize>,
 }
 
 /// The state of a gallery that nothing was asked of yet.
@@ -163,6 +205,8 @@ pub static UNTOUCHED: State = State {
     picked: BTreeMap::new(),
     row: 0,
     is_played: false,
+    is_live: false,
+    hovered: None,
 };
 
 #[derive(Debug, Clone)]
@@ -179,6 +223,11 @@ pub enum Message {
     Step,
     /// The image shown is to be written to a file.
     Save,
+    /// The row is shown as a plot to zoom and pan, or as its image again if it is.
+    Live,
+    /// The point of the plot that the cursor is over, if it is over one.
+    #[cfg_attr(not(feature = "plot"), allow(dead_code))]
+    Hover(Option<usize>),
 }
 
 impl State {
@@ -188,6 +237,10 @@ impl State {
         message: Message,
         gallery: &Gallery,
     ) {
+        // the point under the cursor is one of the row that was shown
+        if !matches!(message, Message::Hover(_)) {
+            self.hovered = None;
+        }
         match message {
             Message::Row(row) => self.row = row,
             Message::Pick(name, value) => {
@@ -224,6 +277,8 @@ impl State {
                 self.row = (self.row + 1) % left;
             }
             Message::Save => {}
+            Message::Live => self.is_live = !self.is_live,
+            Message::Hover(point) => self.hovered = point,
         }
     }
 }
@@ -265,7 +320,86 @@ impl Gallery {
             column: column.to_string(),
             pictures,
             attributes,
+            #[cfg(feature = "plot")]
+            live: None,
         }
+    }
+
+    /// It, with the rows of `frame` to show as the plots that `drawer` draws of them.
+    #[cfg(feature = "plot")]
+    pub fn live(
+        mut self,
+        frame: &DataFrame,
+        drawer: Drawer,
+    ) -> Self {
+        self.live = Some(Live {
+            drawer,
+            // its columns are shared with the frame, and not copied
+            frame: frame.clone(),
+            values: (0..frame.height())
+                .map(|_| OnceCell::new())
+                .collect(),
+        });
+        self
+    }
+
+    /// The plot of `row` to zoom and pan, as wide as `width`, over what says the point hovered.
+    ///
+    /// The cards are drawn `zoom` times their size, which the plot draws its pixels for.
+    #[cfg(feature = "plot")]
+    fn plot<'a>(
+        &'a self,
+        state: &State,
+        row: usize,
+        width: f32,
+        zoom: f32,
+    ) -> Option<Element<'a, Message>> {
+        let live = self.live.as_ref()?;
+        let values = live.values(row)?;
+        let figure = live
+            .drawer
+            .figure(values)
+            .ok()?;
+        let (wide, tall) = live.drawer.size;
+        let plot = Plot::new(figure)
+            .width(width)
+            .height(width * (tall / wide) as f32)
+            .magnification(zoom)
+            .on_hover(|hover| Message::Hover(hover.map(|hover| hover.index)));
+        // the values of the point, each under the name of its column
+        let point = state
+            .hovered
+            .filter(|point| *point < values.height())
+            .map(|point| {
+                let says: Vec<String> = values
+                    .columns()
+                    .iter()
+                    .filter_map(|column| {
+                        let value = column
+                            .get(point)
+                            .ok()?;
+                        Some(format!("{} = {value}", column.name()))
+                    })
+                    .collect();
+                says.join(",  ")
+            });
+        let says = point.unwrap_or_else(|| "over a point, its values show here".to_owned());
+        Some(
+            column![
+                Element::from(plot),
+                text(says).size(NOTE)
+            ]
+            .spacing(GAP)
+            .boxed(),
+        )
+    }
+
+    /// Whether the rows can be shown as plots to zoom and pan.
+    fn is_drawn(&self) -> bool {
+        #[cfg(feature = "plot")]
+        return self.live.is_some();
+        #[cfg(not(feature = "plot"))]
+        false
     }
 
     /// The value that is picked of an attribute, if it is one of its values.
@@ -331,12 +465,14 @@ impl Gallery {
 
     /// The image of a row that is left, as wide as `width`.
     ///
-    /// To browse, it is under the attributes and over the rows left.
+    /// To browse, it is under the attributes and over the rows left, and a plot to zoom and pan
+    /// if that is asked for, which draws for cards shown `zoom` times their size.
     pub fn view<'a>(
         &'a self,
         state: &State,
         width: f32,
         is_browsed: bool,
+        zoom: f32,
         help: Help,
     ) -> Option<Element<'a, Message>> {
         if self
@@ -352,6 +488,14 @@ impl Gallery {
         if !is_browsed {
             return picture;
         }
+        #[cfg(feature = "plot")]
+        let picture = self
+            .shown(state)
+            .filter(|_| state.is_live)
+            .and_then(|row| self.plot(state, row, width, zoom))
+            .or(picture);
+        #[cfg(not(feature = "plot"))]
+        let _ = zoom;
 
         let names = form::names(
             self.attributes
@@ -377,12 +521,27 @@ impl Gallery {
                     "Writes the image shown to a file.",
                 )
             });
+        let live = (self.is_drawn() && picture.is_some()).then(|| {
+            let label = match state.is_live {
+                true => "Image",
+                false => "Live",
+            };
+            help.of(
+                small(label, Message::Live),
+                "Shows the row as a plot to zoom with the wheel and pan with a drag, or as its \
+                 image again.",
+            )
+        });
         let left = self
             .rows(state)
             .len();
         let browse = match left {
             0 => row![text("no row has these values").size(NOTE)],
-            1 => row![space::horizontal(), save],
+            1 => row![
+                space::horizontal(),
+                live,
+                save
+            ],
             _ => {
                 let at = state
                     .row
@@ -397,6 +556,7 @@ impl Gallery {
                         "Steps through the images of the rows that are left, five a second.",
                     ),
                     stepped(left, at, format!("{} of {left}", at + 1), Message::Row),
+                    live,
                     save,
                 ]
             }

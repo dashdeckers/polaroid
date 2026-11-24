@@ -4078,6 +4078,7 @@ dependencies = [
  "polaroid_core",
  "polaroid_iced",
  "rfd",
+ "rustd3-iced",
  "schemars",
  "serde_json",
  "tokio",
@@ -5485,7 +5486,7 @@ dependencies = [
 [[package]]
 name = "rustd3-core"
 version = "0.1.0"
-source = "git+https://github.com/dashdeckers/rustd3?rev=2342fca83a44207659bfab98236837edf505273d#2342fca83a44207659bfab98236837edf505273d"
+source = "git+https://github.com/dashdeckers/rustd3?rev=2f008033bece187296e447b491674f406f17e030#2f008033bece187296e447b491674f406f17e030"
 dependencies = [
  "jiff",
  "thiserror 2.0.21",
@@ -5495,7 +5496,7 @@ dependencies = [
 [[package]]
 name = "rustd3-figure"
 version = "0.1.0"
-source = "git+https://github.com/dashdeckers/rustd3?rev=2342fca83a44207659bfab98236837edf505273d#2342fca83a44207659bfab98236837edf505273d"
+source = "git+https://github.com/dashdeckers/rustd3?rev=2f008033bece187296e447b491674f406f17e030#2f008033bece187296e447b491674f406f17e030"
 dependencies = [
  "krilla",
  "kurbo",
@@ -5513,7 +5514,19 @@ dependencies = [
 [[package]]
 name = "rustd3-fonts"
 version = "0.1.0"
-source = "git+https://github.com/dashdeckers/rustd3?rev=2342fca83a44207659bfab98236837edf505273d#2342fca83a44207659bfab98236837edf505273d"
+source = "git+https://github.com/dashdeckers/rustd3?rev=2f008033bece187296e447b491674f406f17e030#2f008033bece187296e447b491674f406f17e030"
+
+[[package]]
+name = "rustd3-iced"
+version = "0.1.0"
+source = "git+https://github.com/dashdeckers/rustd3?rev=2f008033bece187296e447b491674f406f17e030#2f008033bece187296e447b491674f406f17e030"
+dependencies = [
+ "iced_core",
+ "iced_widget",
+ "rustd3-core",
+ "rustd3-figure",
+ "thiserror 2.0.21",
+]
 
 [[package]]
 name = "rustix"

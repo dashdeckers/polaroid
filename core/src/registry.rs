@@ -16,6 +16,9 @@ pub(crate) struct Entry {
     schema: fn(&mut SchemaGenerator) -> Schema,
     build: fn(Value, Vec<LazyFrame>) -> PolarsResult<LazyFrame>,
     images: fn(Value) -> Option<String>,
+    /// What draws its figures over again, if it is a Plot.
+    #[cfg(feature = "plot")]
+    drawer: Option<fn(Value) -> PolarsResult<crate::Drawer>>,
 }
 
 impl Entry {
@@ -35,6 +38,8 @@ impl Entry {
                     .images()
                     .map(str::to_owned)
             },
+            #[cfg(feature = "plot")]
+            drawer: None,
         }
     }
 
@@ -109,7 +114,7 @@ impl Registry {
         #[cfg(feature = "plot")]
         let registry = registry
             .category("Plot")
-            .register::<crate::plots::Line, _>("line");
+            .plot::<crate::plots::Line>("line");
         registry
     }
 
@@ -159,6 +164,39 @@ impl Registry {
             .get(block)?
             .images;
         images(args)
+    }
+
+    /// Adds a Plot, as the Block it is and as what draws its figures over again.
+    #[cfg(feature = "plot")]
+    pub fn plot<P: crate::Plot>(
+        mut self,
+        name: &'static str,
+    ) -> Self {
+        self = self.register::<P, 1>(name);
+        let entry = self
+            .blocks
+            .get_mut(name)
+            .expect("it was registered");
+        entry.drawer = Some(|args| {
+            let plot: P =
+                serde_json::from_value(args).map_err(|e| polars_err!(ComputeError: "args: {e}"))?;
+            Ok(crate::Drawer::of(plot))
+        });
+        self
+    }
+
+    /// What draws the figures of the Plot `block` with `args` over again; none if it is no Plot.
+    #[cfg(feature = "plot")]
+    pub fn drawer(
+        &self,
+        block: &str,
+        args: Value,
+    ) -> Option<PolarsResult<crate::Drawer>> {
+        let drawer = self
+            .blocks
+            .get(block)?
+            .drawer?;
+        Some(drawer(args))
     }
 
     pub(crate) fn get(
