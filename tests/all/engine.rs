@@ -396,3 +396,47 @@ fn an_expression_is_renamed_in_its_place_and_where_it_is_used() {
         None
     );
 }
+
+#[test]
+fn two_nodes_swap_places_in_the_wiring() {
+    use serde_json::json;
+
+    let node = |id: &str, block: &str, inputs: &[&str]| json!({ "id": id, "block": block, "inputs": inputs });
+    let pipeline = json!({
+        "polars": polars::VERSION,
+        "nodes": [
+            node("read", "scan_parquet", &[]),
+            node("first", "limit", &["read"]),
+            node("second", "unique", &["first"]),
+            node("last", "drop_nulls", &["second"]),
+        ],
+        "outputs": ["second"],
+    });
+    let mut pipeline: Pipeline = serde_json::from_value(pipeline).unwrap();
+    let inputs = |pipeline: &Pipeline, id: &str| {
+        pipeline
+            .nodes
+            .iter()
+            .find(|node| node.id == id)
+            .unwrap()
+            .inputs
+            .clone()
+    };
+
+    // one that read the other is read by it now, and their readers follow
+    assert!(pipeline.swap("first", "second"));
+    assert_eq!(inputs(&pipeline, "second"), ["read"]);
+    assert_eq!(inputs(&pipeline, "first"), ["second"]);
+    assert_eq!(inputs(&pipeline, "last"), ["first"]);
+    // each is the node it was, and an output if it was one
+    assert_eq!(pipeline.nodes[1].block, "limit");
+    assert_eq!(pipeline.outputs, ["second"]);
+
+    // back again, by the same swap from the other side
+    assert!(pipeline.swap("second", "first"));
+    assert_eq!(inputs(&pipeline, "first"), ["read"]);
+    assert_eq!(inputs(&pipeline, "last"), ["second"]);
+
+    assert!(!pipeline.swap("first", "first"));
+    assert!(!pipeline.swap("first", "none"));
+}
