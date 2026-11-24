@@ -20,7 +20,8 @@ fn press(
     simulator: &mut Simulator<i32>,
     position: Point,
 ) {
-    simulator.point_at(position);
+    // a cursor is moved to where it presses
+    move_to(simulator, position);
     simulator.simulate([Event::Mouse(
         mouse::Event::ButtonPressed(mouse::Button::Left),
     )]);
@@ -146,6 +147,35 @@ fn one_that_is_dragged_upward_steps_up_for_more() {
         .into_messages()
         .collect();
     assert_eq!(asked, [2, -2]);
+}
+
+#[test]
+fn one_that_is_scrolled_is_dragged_from_where_it_is_pressed() {
+    use iced::widget::{column, scrollable, space};
+
+    let start = Instant::now();
+    let field = scrub(text_input("", "5"))
+        .upward()
+        .on_scrub(|steps| steps);
+    let content = column![
+        space::vertical().height(500),
+        field
+    ];
+    // scrolled to its end, the cursor is told further down than the window has it
+    let scrolled = scrollable(content)
+        .height(100)
+        .anchor_bottom();
+    let mut simulator = simulator(scrolled);
+    // which a frame has it do
+    frame(&mut simulator, start, Duration::ZERO);
+    press(&mut simulator, Point::new(50.0, 85.0));
+    frame(&mut simulator, start, Duration::ZERO);
+    move_to(&mut simulator, Point::new(50.0, 73.0));
+    frame(&mut simulator, start, SLOWLY);
+    let asked: Vec<i32> = simulator
+        .into_messages()
+        .collect();
+    assert_eq!(asked, [2]);
 }
 
 #[test]

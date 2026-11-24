@@ -108,9 +108,10 @@ fn a_drag_down_from_its_handle_steps_through_the_options() -> Result<(), Error> 
         .bounds()
         .center();
     simulator.point_at(at);
-    simulator.simulate([Event::Mouse(
-        mouse::Event::ButtonPressed(mouse::Button::Left),
-    )]);
+    simulator.simulate([
+        Event::Mouse(mouse::Event::CursorMoved { position: at }),
+        Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+    ]);
     // from `b`, which it shows until it is built anew: one on, one back, and off the end twice
     for (i, x) in [6.0, 0.0, 60.0, 90.0]
         .into_iter()

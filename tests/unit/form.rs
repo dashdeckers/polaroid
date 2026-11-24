@@ -320,9 +320,10 @@ fn dragged(expr: Expr) -> Result<Value, Error> {
         .center();
     let to = iced::Point::new(from.x, from.y - 60.0);
     ui.point_at(from);
-    ui.simulate([Event::Mouse(
-        mouse::Event::ButtonPressed(mouse::Button::Left),
-    )]);
+    ui.simulate([
+        Event::Mouse(mouse::Event::CursorMoved { position: from }),
+        Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+    ]);
     ui.point_at(to);
     ui.simulate([
         Event::Mouse(mouse::Event::CursorMoved { position: to }),
