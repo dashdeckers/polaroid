@@ -3787,6 +3787,7 @@ dependencies = [
  "polars-utils",
  "rayon",
  "recursive",
+ "serde_json",
  "slotmap",
  "tokio",
  "uuid",

@@ -168,7 +168,9 @@ struct Editor {
     known: Known,
     /// What is wrong with the pipeline as a whole, or with the latest Save.
     problem: Option<String>,
-    /// The Check or Run under way, whose child is killed when this is dropped.
+    /// The process that checks and runs, which is kept between one job and the next.
+    worker: child::Worker,
+    /// The Check or Run under way, which is stopped, and its process killed, when this is dropped.
     job: Option<task::Handle>,
     mode: Mode,
     /// How long Delay waits for a change to be the last, before a Check and a Run follow it.
@@ -255,6 +257,7 @@ impl Editor {
             menu: None,
             known: Known::default(),
             problem: None,
+            worker: child::Worker::default(),
             job: None,
             mode: Mode::Manual,
             still: STILL,
@@ -482,10 +485,13 @@ impl Editor {
         &mut self,
         wait: Duration,
     ) -> Task<Message> {
-        let check = child::check(
-            self.pipeline
-                .clone(),
-        );
+        let check = self
+            .worker
+            .clone()
+            .check(
+                self.pipeline
+                    .clone(),
+            );
         let check = async move {
             tokio::time::sleep(wait).await;
             check.await
@@ -523,7 +529,10 @@ impl Editor {
         let (pipeline, targets, read) = self
             .known
             .plan(&self.pipeline, is_reload);
-        let run = child::run(pipeline, read);
+        let run = self
+            .worker
+            .clone()
+            .run(pipeline, read);
         self.start(Task::perform(run, Message::Ran.with(targets)))
     }
 

@@ -53,6 +53,7 @@ features = [
     "index_of",
     "interpolate",
     "interpolate_by",
+    "ipc",
     "is_between",
     "is_close",
     "is_first_distinct",
