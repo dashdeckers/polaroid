@@ -188,6 +188,10 @@ impl<Message> Widget<Message, Theme, Renderer> for Scrub<'_, Message> {
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
                 state.is_pressed = cursor.is_over(layout.bounds());
                 state.from = state.along;
+                // the window selects text from a press that nothing takes, as far as it is dragged
+                if state.is_pressed {
+                    shell.capture_event();
+                }
             }
             Event::Mouse(mouse::Event::CursorMoved { position }) => {
                 let along = self.along(*position);
