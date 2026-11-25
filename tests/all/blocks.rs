@@ -654,8 +654,10 @@ fn concat_horizontal_puts_the_columns_side_by_side_and_fills_the_shorter_frame()
 #[test]
 fn a_frame_is_written_to_a_csv_file_and_read_from_it_again() {
     let folder = folder("csv");
-    std::fs::create_dir_all(&folder).unwrap();
-    let path = folder.join("frame.csv");
+    // the folders of the path are made
+    let path = folder
+        .join("deep")
+        .join("frame.csv");
     let frame = df!("a" => [1i64, 2], "b" => ["x", "y"]).unwrap();
     let args = json!({ "path": path, "separator": ";" });
     apply("write_csv", args.clone(), frame.clone()).unwrap();
@@ -676,6 +678,18 @@ fn a_frame_is_written_to_a_csv_file_and_read_from_it_again() {
     // a separator is one byte
     let args = json!({ "path": path, "separator": "é" });
     assert!(apply("write_csv", args, frame).is_err());
+    std::fs::remove_dir_all(&folder).unwrap();
+}
+
+#[test]
+fn write_parquet_makes_the_folders_of_its_path() {
+    let folder = folder("parquet");
+    let path = folder
+        .join("deep")
+        .join("frame.parquet");
+    let frame = df!("a" => [1i64, 2]).unwrap();
+    apply("write_parquet", json!({ "path": path }), frame).unwrap();
+    assert!(path.is_file());
     std::fs::remove_dir_all(&folder).unwrap();
 }
 
