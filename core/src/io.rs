@@ -1,9 +1,9 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs::{File, OpenOptions};
 use std::io::{ErrorKind, Write};
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use file_format::FileFormat;
 use polars::io::path_utils::expand_paths;
@@ -197,6 +197,9 @@ pub struct WriteFiles {
     /// Replace the files that are there; without it, one that is there stops every write.
     #[serde(default)]
     pub overwrite_existing: bool,
+    /// Delete first the files of the last run with these settings; those of other settings stay.
+    #[serde(default = "yes")]
+    pub delete_previous: bool,
 }
 
 /// A folder in the path of every file.
@@ -240,6 +243,30 @@ impl WriteFiles {
             holds(column, &[&DataType::String])?;
         }
         Ok(())
+    }
+
+    /// What decides where and what it writes, as JSON: the files it wrote are remembered by it.
+    fn settings(&self) -> String {
+        let subfolders: Vec<_> = self
+            .subfolders
+            .iter()
+            .map(|subfolder| match subfolder {
+                Subfolder::Text(folder) => serde_json::json!({ "Text": folder }),
+                Subfolder::Column(column) => serde_json::json!({ "Column": column.0 }),
+            })
+            .collect();
+        let extension = self
+            .extension
+            .as_ref()
+            .map(|extension| &extension.0);
+        serde_json::json!([
+            self.column.0,
+            self.folder,
+            subfolders,
+            self.name.0,
+            extension
+        ])
+        .to_string()
     }
 
     /// The path and value of the file of each row that has a value: every name valid, none twice.
@@ -315,6 +342,9 @@ impl WriteFiles {
     }
 }
 
+/// The files that write_files wrote in its last run, by its settings, while this process runs.
+static WRITTEN: Mutex<BTreeMap<String, Vec<PathBuf>>> = Mutex::new(BTreeMap::new());
+
 impl Block for WriteFiles {
     /// Plans the writes, which a run of the Pipeline then does.
     fn apply(
@@ -327,6 +357,24 @@ impl Block for WriteFiles {
 
         let write = move |frame: DataFrame| {
             let files = this.files(&frame)?;
+            let mut remembered = WRITTEN
+                .lock()
+                .expect("no holder of the lock panics");
+            let written = remembered
+                .entry(this.settings())
+                .or_default();
+            if this.delete_previous {
+                // one that is gone already is no matter
+                while let Some(path) = written.last() {
+                    match std::fs::remove_file(path) {
+                        Err(e) if e.kind() != ErrorKind::NotFound => {
+                            polars_bail!(ComputeError: "'{}': {e}", path.display())
+                        }
+                        _ => written.pop(),
+                    };
+                }
+            }
+            written.clear();
             if !this.overwrite_existing {
                 let there: Vec<_> = files
                     .iter()
@@ -345,8 +393,11 @@ impl Block for WriteFiles {
                 .iter()
                 .enumerate()
             {
-                let wrote = created(path, !this.overwrite_existing)
-                    .and_then(|mut file| file.write_all(value));
+                let wrote = created(path, !this.overwrite_existing).and_then(|mut file| {
+                    // one that is written in part is written
+                    written.push(path.clone());
+                    file.write_all(value)
+                });
                 if let Err(e) = wrote {
                     let why = match e.kind() {
                         ErrorKind::AlreadyExists => {
