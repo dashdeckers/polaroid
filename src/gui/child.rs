@@ -12,9 +12,7 @@ use crate::cli::CHILD;
 use crate::polars::prelude::{DataFrame, PolarsResult, polars_bail, polars_err};
 use crate::{Pipeline, stream};
 
-/// The process that checks and runs for the editor: started when it is first asked, and kept.
-///
-/// One that is kept has Polars up and running, which a new one takes its first moments for.
+/// The process that checks and runs for the editor, kept from when it is first asked.
 #[derive(Clone, Default)]
 pub struct Worker(Arc<Mutex<Option<Child>>>);
 
