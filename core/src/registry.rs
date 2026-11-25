@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::sync::OnceLock;
 
 use polars::prelude::*;
 use schemars::generate::SchemaSettings;
@@ -15,6 +16,8 @@ pub(crate) struct Entry {
     category: &'static str,
     icon: &'static str,
     schema: fn(&mut SchemaGenerator) -> Schema,
+    /// Its schema and definitions, once they were asked for.
+    generated: OnceLock<(Value, Value)>,
     build: fn(Value, Vec<LazyFrame>) -> PolarsResult<LazyFrame>,
     parse: fn(&Value) -> PolarsResult<()>,
     images: fn(Value) -> Option<String>,
@@ -30,6 +33,7 @@ impl Entry {
             category,
             icon: B::ICON,
             schema: |generator| generator.subschema_for::<B>(),
+            generated: OnceLock::new(),
             build: |args, inputs| {
                 let block: B = serde_json::from_value(args)
                     .map_err(|e| polars_err!(ComputeError: "args: {e}"))?;
@@ -52,11 +56,14 @@ impl Entry {
     }
 
     /// The schema of its args, and the definitions that it refers to.
-    pub(crate) fn schema(&self) -> (Value, Value) {
-        let mut generator = SchemaSettings::draft2020_12().into_generator();
-        let schema = (self.schema)(&mut generator).to_value();
-        let defs = serde_json::to_value(generator.definitions()).unwrap_or_default();
-        (schema, defs)
+    pub(crate) fn schema(&self) -> &(Value, Value) {
+        self.generated
+            .get_or_init(|| {
+                let mut generator = SchemaSettings::draft2020_12().into_generator();
+                let schema = (self.schema)(&mut generator).to_value();
+                let defs = serde_json::to_value(generator.definitions()).unwrap_or_default();
+                (schema, defs)
+            })
     }
 
     /// Fails if its Block does not read `args`, and says why.

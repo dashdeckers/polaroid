@@ -417,7 +417,7 @@ pub(crate) fn resolved(
         return Ok(args);
     }
     let (schema, defs) = entry.schema();
-    numbered(&mut args, "", &schema, &defs, pipeline)?;
+    numbered(&mut args, "", schema, defs, pipeline)?;
     resolve(&mut args, pipeline, Scope::Outside, &mut Vec::new())?;
     Ok(args)
 }
