@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 
 use iced::widget::{button, column, container, row, scrollable, space, text};
 use iced::{Center, Fill, Function, Widget};
+use polaroid_iced::leave;
 use serde_json::{Map, Value};
 
 use super::form::{self, Expressions};
@@ -21,7 +22,7 @@ pub struct Drawer {
 struct Section {
     is_open: bool,
     form: form::State,
-    /// The name as it is being typed, until Enter renames the expression.
+    /// The name as it is being typed, until its field is left.
     name: Option<String>,
 }
 
@@ -34,6 +35,8 @@ pub enum Message {
     Toggle(String),
     Name(String, String),
     Rename(String),
+    /// The field of its name lost the focus.
+    Leave(String),
     Form(String, form::Message),
     Delete(String),
 }
@@ -80,19 +83,26 @@ impl Drawer {
                 let typed = self
                     .section(old.clone())
                     .name
-                    .take();
+                    .clone();
+                // one that is refused stays typed
                 let Some(new) = typed.filter(|new| pipeline.rename_expression(&old, new)) else {
                     return Change::Nothing;
                 };
                 // what is shown of it goes along to its new name
-                if let Some(section) = self
+                if let Some(mut section) = self
                     .sections
                     .remove(&old)
                 {
+                    section.name = None;
                     self.sections
                         .insert(new, section);
                 }
                 Change::Pipeline
+            }
+            Message::Leave(name) => {
+                self.section(name)
+                    .name = None;
+                Change::Nothing
             }
             Message::Form(name, message) => {
                 let Some(expression) = expressions.get_mut(&name) else {
@@ -154,13 +164,20 @@ impl Drawer {
                         "Lays the expression open to edit it, or closes it to its text.",
                     ),
                     help.of(
-                        name_field("name", typed, name)
+                        leave(
+                            name_field("name", typed, name, |name| {
+                                expressions.contains_key(name)
+                            })
                             .on_input(Message::Name.with(name.clone()))
                             .on_submit(Message::Rename(name.clone()))
                             .size(TITLE)
                             .padding(4),
+                            Message::Leave(name.clone()),
+                        ),
                         "The name that cards pick the expression by. Type another and press \
-                         Enter to rename it, wherever it is used.",
+                         Enter to rename it, wherever it is used; the border is orange until \
+                         then, and red while the name is empty or another's. Leaving the field \
+                         shows the name again.",
                     ),
                     help.of(
                         cross(Message::Delete(name.clone())),

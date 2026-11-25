@@ -760,6 +760,12 @@ fn a_name_is_marked_while_what_is_typed_for_it_is_another() {
     assert!(!is_unsaved(Some("n1"), "n1"));
     assert!(is_unsaved(Some("n"), "n1"));
     assert!(is_unsaved(Some(""), "n1"));
+    // and red while it is empty or taken
+    let is_taken = |name: &str| name == "n0";
+    assert!(!is_refused(Some("n1"), "n1", is_taken));
+    assert!(!is_refused(Some("n2"), "n1", is_taken));
+    assert!(is_refused(Some("n0"), "n1", is_taken));
+    assert!(is_refused(Some(""), "n1", is_taken));
 
     // typed in the drawer, it is marked until Enter gives it
     let mut editor = chain(1);
@@ -778,6 +784,98 @@ fn a_name_is_marked_while_what_is_typed_for_it_is_another() {
             .pipeline
             .expressions
             .contains_key("few")
+    );
+
+    // one that is taken stays typed on Enter, until its field is left
+    drawer(&mut editor, drawer::Message::New);
+    drawer(&mut editor, drawer::Message::Name(name(), "few".to_owned()));
+    drawer(&mut editor, drawer::Message::Rename(name()));
+    let shows_its_name = |editor: &Editor| {
+        simulator(editor.view())
+            .find("expression_1")
+            .is_ok()
+    };
+    assert!(!shows_its_name(&editor));
+    drawer(&mut editor, drawer::Message::Leave(name()));
+    assert!(shows_its_name(&editor));
+    assert_eq!(
+        editor
+            .pipeline
+            .expressions
+            .len(),
+        2
+    );
+}
+
+#[test]
+fn an_id_is_given_on_enter_and_shown_again_when_its_field_is_left() {
+    use iced::keyboard::key::Named;
+
+    let mut editor = chain(2);
+    let id = |editor: &Editor| {
+        editor
+            .pipeline
+            .nodes[1]
+            .id
+            .clone()
+    };
+    let mut ui = simulator(editor.view());
+    ui.click("n1")
+        .unwrap();
+    ui.tap_key(Named::End);
+    ui.typewrite("x");
+    ui.tap_key(Named::Enter);
+    for message in ui
+        .into_messages()
+        .collect::<Vec<_>>()
+    {
+        let _ = editor.update(message);
+    }
+    assert_eq!(id(&editor), "n1x");
+
+    // another node's id stays typed, and Enter does not give it
+    let mut ui = simulator(editor.view());
+    ui.click("n1x")
+        .unwrap();
+    ui.tap_key(Named::End);
+    for _ in 0..2 {
+        ui.tap_key(Named::Backspace);
+    }
+    ui.typewrite("0");
+    ui.tap_key(Named::Enter);
+    assert!(
+        ui.find("n1x")
+            .is_err()
+    );
+    // until the field is left, which shows the id again
+    ui.point_at(Point::new(700.0, 600.0));
+    ui.simulate(iced_test::simulator::click());
+    assert!(
+        ui.find("n1x")
+            .is_ok()
+    );
+    for message in ui
+        .into_messages()
+        .collect::<Vec<_>>()
+    {
+        let _ = editor.update(message);
+    }
+    assert_eq!(id(&editor), "n1x");
+
+    // and so is what was typed and never given
+    let mut ui = simulator(editor.view());
+    ui.click("n1x")
+        .unwrap();
+    ui.typewrite("yz");
+    assert!(
+        ui.find("n1x")
+            .is_err()
+    );
+    ui.point_at(Point::new(700.0, 600.0));
+    ui.simulate(iced_test::simulator::click());
+    assert!(
+        ui.find("n1x")
+            .is_ok()
     );
 }
 
