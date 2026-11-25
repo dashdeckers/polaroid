@@ -198,6 +198,65 @@ fn a_run_keeps_the_saved_frames_and_a_reload_does_not() {
 }
 
 #[test]
+fn clear_says_how_much_the_saved_frames_take_and_lets_them_go() {
+    use crate::polars::prelude::df;
+
+    let mut editor = chain(2);
+    editor
+        .pipeline
+        .outputs = vec!["n1".to_owned()];
+    // two thousand numbers of eight bytes each
+    let frame = df!("x" => (0..2000i64).collect::<Vec<_>>()).unwrap();
+    let ran = vec![("n1".to_owned(), frame)];
+    let _ = editor.update(Message::Ran(vec!["n1".to_owned()], Ok(ran)));
+    assert!(
+        simulator(editor.view())
+            .find("16 KB")
+            .is_ok()
+    );
+
+    for message in press(&editor, "Clear") {
+        let _ = editor.update(message);
+    }
+    assert!(
+        editor
+            .known
+            .frame("n1")
+            .is_none()
+    );
+    assert!(
+        simulator(editor.view())
+            .find("0 B")
+            .is_ok()
+    );
+    // with nothing left to let go of, it does nothing
+    assert!(press(&editor, "Clear").is_empty());
+}
+
+#[test]
+fn a_size_is_to_a_tenth_below_ten_of_its_unit_and_else_to_a_whole_one() {
+    let sizes = [
+        0,
+        999,
+        1_000,
+        9_949,
+        9_960,
+        340_400,
+        999_499,
+        999_500,
+        12_345_678,
+        1_234_567_890,
+    ];
+    assert_eq!(
+        sizes.map(bytes),
+        [
+            "0 B", "999 B", "1.0 KB", "9.9 KB", "10 KB", "340 KB", "999 KB", "1.0 MB", "12 MB",
+            "1.2 GB",
+        ]
+    );
+}
+
+#[test]
 fn a_run_has_the_writes_done() {
     use Status::*;
 
@@ -216,7 +275,7 @@ fn a_run_has_the_writes_done() {
     // a Run is to have it write, though it is no output
     let (_, targets, _) = editor
         .known
-        .plan(&editor.pipeline, false);
+        .plan(&editor.pipeline);
     assert_eq!(targets, ["written"]);
 
     let _ = editor.update(Message::Run);
