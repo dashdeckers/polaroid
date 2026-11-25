@@ -317,3 +317,11 @@ fn the_figure_of_a_row_is_drawn_over_again_of_the_values_beside_its_image() {
             .is_some_and(|drawer| drawer.is_err())
     );
 }
+
+#[test]
+fn a_plot_has_the_default_icon_unless_it_draws_its_own() {
+    let icons: HashMap<_, _> = Registry::with_polars()
+        .icons()
+        .collect();
+    assert_eq!(icons["line"], icons["limit"]);
+}

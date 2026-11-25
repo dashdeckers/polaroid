@@ -23,7 +23,7 @@ pub trait Block<const N: usize = 1>: DeserializeOwned + JsonSchema {
 }
 
 /// The icon of a Block that has none of its own: an outlined block on a wire, 20 by 14 pt.
-const ICON: &str = r#"#box(width: 20pt, height: 14pt, {
+pub(crate) const ICON: &str = r#"#box(width: 20pt, height: 14pt, {
   place(line(start: (0pt, 7pt), end: (5pt, 7pt), stroke: 0.9pt + ink))
   place(line(start: (15pt, 7pt), end: (20pt, 7pt), stroke: 0.9pt + ink))
   place(dx: 5pt, dy: 2pt, rect(width: 10pt, height: 10pt, radius: 1.5pt, stroke: 0.9pt + ink))

@@ -17,6 +17,9 @@ const SCALE: f64 = 2.0;
 /// As a Block it adds a column `plot` of images: of every row, if the columns hold lists, or of
 /// every group of `by` otherwise, whose values it gathers into lists.
 pub trait Plot: DeserializeOwned + JsonSchema + Send + Sync + 'static {
+    /// Its icon, as that of a Block.
+    const ICON: &'static str = crate::block::ICON;
+
     /// The columns whose values it draws.
     fn columns(&self) -> Vec<&str>;
 
@@ -195,6 +198,8 @@ impl Format {
 }
 
 impl<P: Plot> Block for P {
+    const ICON: &'static str = P::ICON;
+
     fn apply(
         self,
         [frame]: [LazyFrame; 1],
