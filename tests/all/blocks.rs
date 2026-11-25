@@ -312,6 +312,51 @@ fn write_files_writes_none_of_its_files_where_one_is_there_unless_it_overwrites(
     std::fs::remove_dir_all(&folder).unwrap();
 }
 
+#[test]
+fn write_files_deletes_the_files_of_its_last_run_with_the_same_settings_and_no_other() {
+    let folder = folder("previous");
+    let write = |names: &[&str], named_by: &str, delete: bool| {
+        let frame = df!(
+            "bytes" => names.iter().map(|_| b"one".to_vec()).collect::<Vec<_>>(),
+            "name" => names,
+            "label" => names,
+            "type" => names.iter().map(|_| "txt").collect::<Vec<_>>(),
+        )
+        .unwrap();
+        let args = json!({
+            "column": "bytes", "folder": folder, "name": named_by, "extension": "type",
+            "delete_previous": delete,
+        });
+        apply("write_files", args, frame)
+    };
+    let there = |names: &[&str]| -> Vec<bool> {
+        names
+            .iter()
+            .map(|name| {
+                folder
+                    .join(format!("{name}.txt"))
+                    .exists()
+            })
+            .collect()
+    };
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::write(folder.join("other.txt"), "of no write").unwrap();
+
+    write(&["a", "b"], "name", true).unwrap();
+    // b is written again, and a is gone, but not the file that it did not write
+    write(&["b", "c"], "name", true).unwrap();
+    assert_eq!(there(&["a", "b", "c", "other"]), [false, true, true, true]);
+    // other settings into the same folder delete none of those, nor do they the other's
+    write(&["d"], "label", true).unwrap();
+    write(&["e"], "name", true).unwrap();
+    assert_eq!(there(&["b", "c", "d", "e"]), [false, false, true, true]);
+    // a run without it writes nothing over them, which its next run then has not written
+    assert!(write(&["e"], "name", false).is_err());
+    write(&["f"], "name", true).unwrap();
+    assert_eq!(there(&["e", "f"]), [true, true]);
+    std::fs::remove_dir_all(&folder).unwrap();
+}
+
 /// A zip of one empty file of this name, stored as it is.
 fn zip(name: &str) -> Vec<u8> {
     let named = |mut header: Vec<u8>, zeros: usize| {
