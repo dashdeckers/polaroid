@@ -15,6 +15,7 @@ pub(crate) struct Entry {
     category: &'static str,
     schema: fn(&mut SchemaGenerator) -> Schema,
     build: fn(Value, Vec<LazyFrame>) -> PolarsResult<LazyFrame>,
+    parse: fn(&Value) -> PolarsResult<()>,
     images: fn(Value) -> Option<String>,
     /// What draws its figures over again, if it is a Plot.
     #[cfg(feature = "plot")]
@@ -32,6 +33,11 @@ impl Entry {
                     .map_err(|e| polars_err!(ComputeError: "args: {e}"))?;
                 block.apply(take(inputs)?)
             },
+            parse: |args| {
+                B::deserialize(args)
+                    .map(drop)
+                    .map_err(|e| polars_err!(ComputeError: "args: {e}"))
+            },
             images: |args| {
                 let block: B = serde_json::from_value(args).ok()?;
                 block
@@ -41,6 +47,22 @@ impl Entry {
             #[cfg(feature = "plot")]
             drawer: None,
         }
+    }
+
+    /// The schema of its args, and the definitions that it refers to.
+    pub(crate) fn schema(&self) -> (Value, Value) {
+        let mut generator = SchemaSettings::draft2020_12().into_generator();
+        let schema = (self.schema)(&mut generator).to_value();
+        let defs = serde_json::to_value(generator.definitions()).unwrap_or_default();
+        (schema, defs)
+    }
+
+    /// Fails if its Block does not read `args`, and says why.
+    pub(crate) fn parse(
+        &self,
+        args: &Value,
+    ) -> PolarsResult<()> {
+        (self.parse)(args)
     }
 
     /// Builds the plan for one Node from its Block.

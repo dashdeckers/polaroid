@@ -440,7 +440,15 @@ impl Editor {
                     drawer::Change::Nothing => return Task::none(),
                     drawer::Change::Pipeline => {}
                     // what is known of a node holds for the expressions it was computed with
-                    drawer::Change::Expression(name) => self.forget(|node| node.uses(&name)),
+                    drawer::Change::Expression(name) => {
+                        let users: Vec<String> = self
+                            .pipeline
+                            .users(&name)
+                            .into_iter()
+                            .map(str::to_owned)
+                            .collect();
+                        self.forget(|node| users.contains(&node.id));
+                    }
                 }
                 self.is_dirty = true;
                 self.check_wiring();

@@ -18,7 +18,7 @@ pub struct Pipeline {
     pub nodes: Vec<Node>,
     /// The Nodes that provide the output frames.
     pub outputs: Vec<String>,
-    /// Expressions by name: `{"$expr": name}` in a Node's args stands for the one of that name.
+    /// Expressions by name: `{"$expr": name}` in args or in an expression stands for one.
     #[serde(default, skip_serializing_if = "Map::is_empty")]
     pub expressions: Map<String, Value>,
 }
@@ -54,16 +54,6 @@ impl Default for Pipeline {
             outputs: Vec::new(),
             expressions: Map::new(),
         }
-    }
-}
-
-impl Node {
-    /// Whether its args use the expression of a name.
-    pub fn uses(
-        &self,
-        name: &str,
-    ) -> bool {
-        uses(&self.args, name)
     }
 }
 
@@ -131,7 +121,7 @@ impl Pipeline {
                         !ids.contains(input.as_str()) || frames.contains_key(input.as_str())
                     });
                 if !is_built && has_inputs {
-                    let frame = build(registry, node, &self.expressions, &frames)
+                    let frame = build(registry, node, self, &frames)
                         .map_err(|e| e.context(format!("node '{}'", node.id).into()));
                     frames.insert(node.id.as_str(), frame);
                 }
@@ -404,91 +394,13 @@ impl Pipeline {
         }
         true
     }
-
-    /// Calls the expression `old` `new`, in its place and where it is used; false if it cannot.
-    pub fn rename_expression(
-        &mut self,
-        old: &str,
-        new: &str,
-    ) -> bool {
-        let expressions = &mut self.expressions;
-        // an empty or taken name would have its users take another expression
-        if !expressions.contains_key(old) || new.is_empty() || expressions.contains_key(new) {
-            return false;
-        }
-        *expressions = std::mem::take(expressions)
-            .into_iter()
-            .map(|(name, expression)| match name == old {
-                true => (new.to_owned(), expression),
-                false => (name, expression),
-            })
-            .collect();
-        for node in &mut self.nodes {
-            swap(&mut node.args, &mut |name| {
-                (name == old).then(|| marker(new))
-            });
-        }
-        true
-    }
-}
-
-/// What stands for the expression of a name in the args of a Node.
-pub fn marker(name: &str) -> Value {
-    serde_json::json!({ "$expr": name })
-}
-
-/// The name of the expression that `value` stands for, if it is a marker.
-pub fn marked(value: &Value) -> Option<&str> {
-    value
-        .as_object()
-        .filter(|marker| marker.len() == 1)?
-        .get("$expr")?
-        .as_str()
-}
-
-/// Whether `args` hold the marker of a name.
-fn uses(
-    args: &Value,
-    name: &str,
-) -> bool {
-    match args {
-        _ if marked(args) == Some(name) => true,
-        Value::Array(items) => items
-            .iter()
-            .any(|item| uses(item, name)),
-        Value::Object(fields) => fields
-            .values()
-            .any(|field| uses(field, name)),
-        _ => false,
-    }
-}
-
-/// Puts what `with` makes of its name in the place of each marker in `args`, if it makes anything.
-fn swap(
-    args: &mut Value,
-    with: &mut impl FnMut(&str) -> Option<Value>,
-) {
-    if let Some(name) = marked(args) {
-        if let Some(new) = with(name) {
-            *args = new;
-        }
-        return;
-    }
-    let parts: Box<dyn Iterator<Item = &mut Value>> = match args {
-        Value::Array(items) => Box::new(items.iter_mut()),
-        Value::Object(fields) => Box::new(fields.values_mut()),
-        _ => Box::new(std::iter::empty()),
-    };
-    for part in parts {
-        swap(part, with);
-    }
 }
 
 /// The plan of one Node, from its Block, args and input plans.
 fn build(
     registry: &Registry,
     node: &Node,
-    expressions: &Map<String, Value>,
+    pipeline: &Pipeline,
     frames: &HashMap<&str, PolarsResult<LazyFrame>>,
 ) -> PolarsResult<LazyFrame> {
     let entry = registry
@@ -511,29 +423,8 @@ fn build(
         })
         .collect::<PolarsResult<_>>()?;
 
-    let args = named(node.args.clone(), expressions)?;
+    let args = crate::names::resolved(entry, node.args.clone(), pipeline)?;
     guard(|| entry.build(args, inputs))
-}
-
-/// `args` with each marker in them replaced by the expression of its name.
-fn named(
-    mut args: Value,
-    expressions: &Map<String, Value>,
-) -> PolarsResult<Value> {
-    let mut unnamed = None;
-    swap(&mut args, &mut |name| {
-        let expression = expressions
-            .get(name)
-            .cloned();
-        if expression.is_none() {
-            unnamed.get_or_insert_with(|| name.to_owned());
-        }
-        expression
-    });
-    match unnamed {
-        Some(name) => polars_bail!(ComputeError: "no expression is called '{name}'"),
-        None => Ok(args),
-    }
 }
 
 /// Whether a Node's plan writes its frame, as to a file.
@@ -550,7 +441,7 @@ fn given(frame: &LazyFrame) -> LazyFrame {
 }
 
 /// Runs `f`, returning a panic as `Err`.
-fn guard<T>(f: impl FnOnce() -> PolarsResult<T>) -> PolarsResult<T> {
+pub(crate) fn guard<T>(f: impl FnOnce() -> PolarsResult<T>) -> PolarsResult<T> {
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).unwrap_or_else(|panic| {
         let message = panic
             .downcast_ref::<&str>()

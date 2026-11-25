@@ -3,6 +3,8 @@
 mod blocks;
 mod engine;
 mod methods;
+mod names;
+mod orders;
 #[cfg(feature = "plot")]
 mod plots;
 mod render;

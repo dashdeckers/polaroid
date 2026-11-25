@@ -6,6 +6,7 @@ mod engine;
 pub mod frames;
 pub mod io;
 pub mod methods;
+mod names;
 #[cfg(feature = "plot")]
 mod plot;
 #[cfg(feature = "plot")]
@@ -14,7 +15,8 @@ mod registry;
 pub mod schema;
 
 pub use block::{Block, ColumnName};
-pub use engine::{Node, Pipeline, is_sink, marked, marker};
+pub use engine::{Node, Pipeline, is_sink};
+pub use names::{marked, marker};
 #[cfg(feature = "plot")]
 pub use plot::{Drawer, Format, Options, Plot, numbers};
 pub use polars;

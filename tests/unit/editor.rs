@@ -605,13 +605,14 @@ fn an_expression_is_renamed_edited_and_deleted_for_the_nodes_that_use_it() {
 
     // an edit to it forgets the nodes that use it, and no others
     checked(&mut editor);
-    let five = form::Message::Put(String::new(), serde_json::json!(5));
-    drawer(&mut editor, drawer::Message::Form("few".to_owned(), five));
+    let five = serde_json::json!({ "Literal": { "Dyn": { "Int": 5 } } });
+    let put = form::Message::Put(String::new(), five.clone());
+    drawer(&mut editor, drawer::Message::Form("few".to_owned(), put));
     assert_eq!(
         editor
             .pipeline
             .expressions["few"],
-        5
+        five
     );
     assert_eq!(
         status(&editor),

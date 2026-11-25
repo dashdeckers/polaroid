@@ -401,8 +401,7 @@ fn an_expression_is_renamed_in_its_place_and_where_it_is_used() {
         "expressions": { "first": null, "large": null, "odd": null },
     });
     let mut pipeline: Pipeline = serde_json::from_value(pipeline).unwrap();
-    assert!(pipeline.nodes[0].uses("large"));
-    assert!(!pipeline.nodes[1].uses("large"));
+    assert_eq!(pipeline.users("large"), ["some"]);
 
     assert!(pipeline.rename_expression("large", "big"));
     let names: Vec<_> = pipeline
@@ -413,8 +412,12 @@ fn an_expression_is_renamed_in_its_place_and_where_it_is_used() {
     let predicates = &pipeline.nodes[0].args["predicates"];
     assert_eq!(predicates[0], marker("big"));
     assert_eq!(marked(&predicates[1]), Some("odd"));
-    assert!(pipeline.nodes[0].uses("big"));
-    assert!(!pipeline.nodes[0].uses("large"));
+    assert_eq!(pipeline.users("big"), ["some"]);
+    assert!(
+        pipeline
+            .users("large")
+            .is_empty()
+    );
 
     // not to nothing, nor to the name of another, nor if there is no such expression
     assert!(!pipeline.rename_expression("big", ""));

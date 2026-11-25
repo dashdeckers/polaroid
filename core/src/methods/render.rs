@@ -5,8 +5,11 @@ use serde_json::{Value, json};
 use super::{Arg, Method, read};
 use crate::schema::number;
 
-/// `node` as a chain of calls: `pl.col("a").str.contains("x", …)`.
+/// `node` as a chain of calls: `pl.col("a").str.contains("x", …)`, a named expression as `@name`.
 pub fn text(node: &Value) -> String {
+    if let Some(name) = crate::marked(node) {
+        return format!("@{name}");
+    }
     let Some(method) = read(node) else {
         let variant = match node {
             Value::Null => return "_".to_owned(),
