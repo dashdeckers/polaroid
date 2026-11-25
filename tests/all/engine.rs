@@ -36,6 +36,26 @@ fn a_known_frame_is_not_computed() {
 }
 
 #[test]
+fn what_the_editor_keeps_in_a_pipeline_is_saved_and_changes_no_run() {
+    let mut value = serde_json::to_value(pipeline("no such file.parquet")).unwrap();
+    // a pipeline without it is saved without it
+    assert!(
+        value
+            .get("ui")
+            .is_none()
+    );
+    value["ui"] = serde_json::json!({ "groups": [{ "name": "a", "expressions": [] }] });
+    let pipeline: Pipeline = serde_json::from_value(value.clone()).unwrap();
+    assert_eq!(serde_json::to_value(&pipeline).unwrap(), value);
+
+    let known = HashMap::from([("all".to_owned(), df!("x" => [1, 2, 3]).unwrap())]);
+    let frames = pipeline
+        .run_from(&Registry::with_polars(), &known)
+        .unwrap();
+    assert!(frames[0].equals(&df!("x" => [1, 2]).unwrap()));
+}
+
+#[test]
 fn a_known_frame_gives_its_columns_to_a_check_and_is_not_looked_at() {
     let registry = Registry::with_polars();
     let pipeline = pipeline("no such file.parquet");

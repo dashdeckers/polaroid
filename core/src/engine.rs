@@ -24,6 +24,9 @@ pub struct Pipeline {
     /// Plain JSON by name: `{"$value": name}` in args, expressions or values stands for one.
     #[serde(default, skip_serializing_if = "Map::is_empty")]
     pub values: Map<String, Value>,
+    /// Editor state, such as how the expressions are grouped and tagged. The engine ignores it.
+    #[serde(default, skip_serializing_if = "Value::is_null")]
+    pub ui: Value,
 }
 
 /// A Node is a frame-level operation.
@@ -57,6 +60,7 @@ impl Default for Pipeline {
             outputs: Vec::new(),
             expressions: Map::new(),
             values: Map::new(),
+            ui: Value::Null,
         }
     }
 }
