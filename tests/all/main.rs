@@ -2,6 +2,7 @@
 
 mod blocks;
 mod engine;
+mod holes;
 mod methods;
 mod names;
 mod orders;

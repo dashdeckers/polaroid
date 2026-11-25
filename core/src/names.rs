@@ -1,19 +1,22 @@
 //! Names: what stands for a named expression or value in JSON, and what takes its place in a build.
 
 use std::fmt;
+use std::sync::LazyLock;
 
 use polars::prelude::*;
+use schemars::generate::SchemaSettings;
 use serde_json::{Map, Number, Value};
 
 use crate::engine::{Pipeline, guard};
 use crate::registry::Entry;
 use crate::{Registry, schema};
 
-/// What a reference names.
+/// What a reference names: an expression, a value, or an argument of the function it stands in.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Kind {
     Expression,
     Value,
+    Argument,
 }
 
 impl Kind {
@@ -22,23 +25,30 @@ impl Kind {
         match self {
             Self::Expression => "$expr",
             Self::Value => "$value",
+            Self::Argument => "$arg",
         }
     }
 
     /// The kind whose key `fields` hold, if they hold one.
     fn of(fields: &Map<String, Value>) -> Option<Self> {
-        [Self::Expression, Self::Value]
-            .into_iter()
-            .find(|kind| fields.contains_key(kind.key()))
+        [
+            Self::Expression,
+            Self::Value,
+            Self::Argument,
+        ]
+        .into_iter()
+        .find(|kind| fields.contains_key(kind.key()))
     }
 }
 
-/// A reference as JSON writes it: `{"$expr": name}`, or `{"$value": name, "at": .., "part": ..}`.
+/// A reference as JSON writes it: `{"$expr": name}`, `{"$value": name}` or `{"$arg": name}`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Reference<'a> {
     pub kind: Kind,
     pub name: &'a str,
-    /// The JSON pointer to the part of a value that is meant: empty for all of it.
+    /// The arguments of a call of an expression that has holes, each by the name of its hole.
+    pub with: Option<&'a Map<String, Value>>,
+    /// The JSON pointer to the part of a value or an argument that is meant: empty for all of it.
     pub at: &'a str,
     /// What of a table is meant in place of the table: `keys` or `values`.
     pub part: Option<&'a str>,
@@ -53,6 +63,7 @@ impl<'a> Reference<'a> {
         Self {
             kind,
             name,
+            with: None,
             at: "",
             part: None,
         }
@@ -70,6 +81,9 @@ impl From<&Reference<'_>> for Value {
                 .name
                 .into(),
         );
+        if let Some(with) = reference.with {
+            fields.insert("with".to_owned(), with.clone().into());
+        }
         if !reference
             .at
             .is_empty()
@@ -84,12 +98,16 @@ impl From<&Reference<'_>> for Value {
 }
 
 impl fmt::Display for Reference<'_> {
-    /// As it is written in an expression: `@name`, `@name.field[0]`, `@name.keys`.
+    /// As it is written in an expression, without arguments: `@name`, `@name.keys`, `$hole.field`.
     fn fmt(
         &self,
         f: &mut fmt::Formatter<'_>,
     ) -> fmt::Result {
-        write!(f, "@{}", self.name)?;
+        let sign = match self.kind {
+            Kind::Argument => '$',
+            Kind::Expression | Kind::Value => '@',
+        };
+        write!(f, "{sign}{}", self.name)?;
         for step in steps(self.at) {
             match step.parse::<usize>() {
                 Ok(index) => write!(f, "[{index}]")?,
@@ -116,8 +134,9 @@ pub fn reference(value: &Value) -> Option<Reference<'_>> {
     let fields = value.as_object()?;
     let kind = Kind::of(fields)?;
     let taken: &[&str] = match kind {
-        Kind::Expression => &[],
+        Kind::Expression => &["with"],
         Kind::Value => &["at", "part"],
+        Kind::Argument => &["at"],
     };
     let text = |key: &str| {
         fields
@@ -126,15 +145,132 @@ pub fn reference(value: &Value) -> Option<Reference<'_>> {
     };
     let is_reference = fields
         .iter()
-        .all(|(key, field)| {
-            (key == kind.key() || taken.contains(&key.as_str())) && field.is_string()
+        .all(|(key, field)| match key.as_str() {
+            "with" => taken.contains(&"with") && field.is_object(),
+            key => (key == kind.key() || taken.contains(&key)) && field.is_string(),
         });
     Some(Reference {
         kind,
         name: text(kind.key()).filter(|_| is_reference)?,
+        with: fields
+            .get("with")
+            .and_then(Value::as_object),
         at: text("at").unwrap_or_default(),
         part: text("part"),
     })
+}
+
+/// What a hole of a function takes, by where it stands in it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Taken {
+    Expression,
+    /// A name, as that of a column, or another text.
+    Text,
+    Number,
+    Flag,
+    /// Any JSON: it stands under a literal, has a part of it meant, or is passed on to a call.
+    Any,
+}
+
+impl Taken {
+    /// What the place at the JSON pointer `at` of an expression of Polars takes.
+    fn at(at: &str) -> Self {
+        /// The definitions of the schema of an expression of Polars.
+        static DEFS: LazyLock<Value> = LazyLock::new(|| {
+            let mut generator = SchemaSettings::draft2020_12().into_generator();
+            generator.subschema_for::<Expr>();
+            serde_json::to_value(generator.definitions()).unwrap_or_default()
+        });
+        let expression = &DEFS["Expr"];
+        let taken = schema::pointer(&DEFS, expression, at);
+        match schema::json_type(taken) {
+            _ if std::ptr::eq(taken, expression) => Self::Expression,
+            "string" => Self::Text,
+            "number" | "integer" => Self::Number,
+            "boolean" => Self::Flag,
+            _ => Self::Any,
+        }
+    }
+
+    /// Whether what is `given` is of this kind: an expression if Polars reads it as one.
+    fn takes(
+        self,
+        given: &Value,
+    ) -> bool {
+        match self {
+            Self::Expression => serde_json::from_value::<Expr>(given.clone()).is_ok(),
+            Self::Text => given.is_string(),
+            Self::Number => given.is_number(),
+            Self::Flag => given.is_boolean(),
+            Self::Any => true,
+        }
+    }
+}
+
+impl fmt::Display for Taken {
+    fn fmt(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+    ) -> fmt::Result {
+        f.write_str(match self {
+            Self::Expression => "an expression",
+            Self::Text => "text",
+            Self::Number => "a number",
+            Self::Flag => "true or false",
+            Self::Any => "anything",
+        })
+    }
+}
+
+/// The holes of the function `body` in the order they first stand, each with what it takes.
+fn holes(body: &Value) -> PolarsResult<Vec<(&str, Taken)>> {
+    let mut holes: Vec<(&str, Taken)> = Vec::new();
+    let mut places = vec![(body, String::new(), true)];
+    while let Some((value, at, is_placed)) = places.pop() {
+        match (reference(value), value) {
+            (Some(hole), _) if hole.kind == Kind::Argument => {
+                // a hole of which a part is meant is a table or a list, wherever it stands
+                let taken = match is_placed && hole.at.is_empty() {
+                    true => Taken::at(&at),
+                    false => Taken::Any,
+                };
+                match holes
+                    .iter_mut()
+                    .find(|(name, _)| *name == hole.name)
+                {
+                    None => holes.push((hole.name, taken)),
+                    Some((_, before)) if *before == Taken::Any => *before = taken,
+                    Some((_, before)) if taken == Taken::Any || *before == taken => {}
+                    Some((name, before)) => polars_bail!(
+                        ComputeError: "`${name}` stands where {before} is taken, and where {taken}"
+                    ),
+                }
+            }
+            // an argument of a call is an expression of its own, or a hole that is passed on
+            (Some(call), _) => places.extend(
+                call.with
+                    .into_iter()
+                    .flatten()
+                    .rev()
+                    .map(|(_, given)| (given, String::new(), reference(given).is_none())),
+            ),
+            (None, Value::Array(items)) => places.extend(
+                items
+                    .iter()
+                    .enumerate()
+                    .rev()
+                    .map(|(i, item)| (item, format!("{at}/{i}"), is_placed)),
+            ),
+            (None, Value::Object(fields)) => places.extend(
+                fields
+                    .iter()
+                    .rev()
+                    .map(|(key, field)| (field, format!("{at}/{key}"), is_placed)),
+            ),
+            (None, _) => {}
+        }
+    }
+    Ok(holes)
 }
 
 /// What stands for the expression of a name: in the args of a Node, or in another expression.
@@ -220,6 +356,26 @@ impl Pipeline {
             .collect()
     }
 
+    /// The holes of the expression `name`, each with what it takes, or why it is no sound one.
+    pub fn holes(
+        &self,
+        name: &str,
+    ) -> PolarsResult<Vec<(&str, Taken)>> {
+        let body = self
+            .expressions
+            .get(name)
+            .ok_or_else(|| polars_err!(ComputeError: "no expression is called '{name}'"))?;
+        let holes = holes(body)?;
+        // all that it names is there, and what it calls is given what that takes
+        resolve(
+            &mut body.clone(),
+            self,
+            Scope::Alone,
+            &mut vec![name.to_owned()],
+        )?;
+        Ok(holes)
+    }
+
     /// The expression or the value of a name: they share their names.
     fn named(
         &self,
@@ -262,22 +418,36 @@ pub(crate) fn resolved(
     }
     let (schema, defs) = entry.schema();
     numbered(&mut args, "", &schema, &defs, pipeline)?;
-    resolve(&mut args, pipeline, &mut Vec::new())?;
+    resolve(&mut args, pipeline, Scope::Outside, &mut Vec::new())?;
     Ok(args)
+}
+
+/// What stands in the place of the holes that are met.
+#[derive(Clone, Copy)]
+enum Scope<'a> {
+    /// Nothing: a hole stands in no function, which is an error.
+    Outside,
+    /// Themselves: a function is looked at alone.
+    Alone,
+    /// What a call gives for each.
+    Call(&'a Map<String, Value>),
 }
 
 /// Replaces each reference in `value` by what it names; one named again in `chain` names itself.
 fn resolve(
     value: &mut Value,
     pipeline: &Pipeline,
+    scope: Scope,
     chain: &mut Vec<String>,
 ) -> PolarsResult<()> {
-    // a value under a literal is the literal of Polars that it is
+    // what is plain under a literal is the literal of Polars that it is; a hole left open stays
     if let Some(named) = lifted(value).map(|named| named.to_string()) {
         let plain = &mut value["Literal"];
-        resolve(plain, pipeline, chain)?;
-        *value = serde_json::to_value(literal(plain, &named)?)
-            .map_err(|e| polars_err!(ComputeError: "`{named}`: {e}"))?;
+        resolve(plain, pipeline, scope, chain)?;
+        if reference(plain).is_none() {
+            *value = serde_json::to_value(literal(plain, &named)?)
+                .map_err(|e| polars_err!(ComputeError: "`{named}`: {e}"))?;
+        }
         return Ok(());
     }
     let Some(reference) = reference(value) else {
@@ -290,7 +460,7 @@ fn resolve(
             polars_bail!(ComputeError: "{value} holds `{key}`, and is no reference");
         }
         for part in parts(value) {
-            resolve(part, pipeline, chain)?;
+            resolve(part, pipeline, scope, chain)?;
         }
         return Ok(());
     };
@@ -300,6 +470,24 @@ fn resolve(
             .name
             .to_owned(),
     );
+    if kind == Kind::Argument {
+        let given = match scope {
+            Scope::Outside => {
+                polars_bail!(ComputeError: "`{reference}` is a hole, and stands in no function")
+            }
+            Scope::Alone => return Ok(()),
+            // a call that does not give every hole is refused before
+            Scope::Call(given) => given
+                .get(&name)
+                .unwrap_or(&Value::Null),
+        };
+        // a hole of a function looked at alone is passed on as it is, without parts
+        *value = match crate::reference(given) {
+            Some(_) => given.clone(),
+            None => meant(given.clone(), &reference)?,
+        };
+        return Ok(());
+    }
     if let Some(at) = chain
         .iter()
         .position(|named| *named == name)
@@ -312,23 +500,41 @@ fn resolve(
             .collect();
         polars_bail!(ComputeError: "`{}` uses {}", chain[at], links.join(", which uses "));
     }
-    let named = match kind {
-        Kind::Expression => pipeline
-            .expressions
-            .get(&name)
-            .ok_or_else(|| polars_err!(ComputeError: "no expression is called '{name}'")),
-        Kind::Value => pipeline
+    let is_value = kind == Kind::Value;
+    let named = match is_value {
+        true => pipeline
             .values
             .get(&name)
             .ok_or_else(|| polars_err!(ComputeError: "no value is called '{name}'")),
+        false => pipeline
+            .expressions
+            .get(&name)
+            .ok_or_else(|| polars_err!(ComputeError: "no expression is called '{name}'")),
     };
     let mut named = named?.clone();
+    // the arguments of a call are resolved where the call stands, and then stand for its holes
+    let mut given = reference
+        .with
+        .cloned()
+        .unwrap_or_default();
+    for argument in given.values_mut() {
+        resolve(argument, pipeline, scope, chain)?;
+    }
+    let scope = match is_value {
+        true => Scope::Outside,
+        false => {
+            called(&name, &named, &given)?;
+            Scope::Call(&given)
+        }
+    };
     chain.push(name.clone());
-    resolve(&mut named, pipeline, chain)?;
+    resolve(&mut named, pipeline, scope, chain)?;
     chain.pop();
-    *value = match kind {
-        Kind::Value => meant(named, &reference)?,
-        Kind::Expression => match serde_json::from_value::<Expr>(named.clone()) {
+    *value = match is_value {
+        true => meant(named, &reference)?,
+        // an expression whose holes are left open is not yet anything
+        false if has_reference(&named) => named,
+        false => match serde_json::from_value::<Expr>(named.clone()) {
             Ok(_) => named,
             Err(e) => polars_bail!(ComputeError: "`{name}` is no expression: {e}"),
         },
@@ -336,12 +542,52 @@ fn resolve(
     Ok(())
 }
 
-/// The reference to a value that `value` holds as a literal: `{"Literal": {"$value": name}}`.
+/// Fails unless a call of the function `name` gives each hole of its `body` what that takes.
+fn called(
+    name: &str,
+    body: &Value,
+    given: &Map<String, Value>,
+) -> PolarsResult<()> {
+    let holes = holes(body)?;
+    for (hole, taken) in &holes {
+        let given = given
+            .get(*hole)
+            .ok_or_else(
+                || polars_err!(ComputeError: "`{name}` takes `{hole}`, which is not given"),
+            )?;
+        // what still holds a hole, of a function looked at alone, is not yet anything
+        let is_taken = has_reference(given) || taken.takes(given);
+        let said = match given {
+            Value::Number(number) => format!("the number {number}"),
+            Value::String(text) => format!("the text {text:?}"),
+            Value::Array(_) => "a list".to_owned(),
+            Value::Object(_) => "a table".to_owned(),
+            plain => plain.to_string(),
+        };
+        polars_ensure!(
+            is_taken,
+            ComputeError: "`{name}`: `{hole}` is {said}, where {taken} is taken"
+        );
+    }
+    let unknown = given
+        .keys()
+        .find(|key| {
+            !holes
+                .iter()
+                .any(|(hole, _)| hole == key)
+        });
+    match unknown {
+        Some(unknown) => polars_bail!(ComputeError: "`{name}` takes no `{unknown}`"),
+        None => Ok(()),
+    }
+}
+
+/// The reference to what is plain that `value` holds as a literal: `{"Literal": {"$value": name}}`.
 fn lifted(value: &Value) -> Option<Reference<'_>> {
     let fields = value
         .as_object()
         .filter(|fields| fields.len() == 1)?;
-    reference(fields.get("Literal")?).filter(|reference| reference.kind == Kind::Value)
+    reference(fields.get("Literal")?).filter(|reference| reference.kind != Kind::Expression)
 }
 
 /// The part of what is `named` that `reference` means: all of it, or what its pointer leads to.
@@ -349,7 +595,12 @@ fn meant(
     named: Value,
     reference: &Reference,
 ) -> PolarsResult<Value> {
-    let root = format!("@{}", reference.name);
+    let whole = Reference {
+        at: "",
+        part: None,
+        ..reference.clone()
+    };
+    let root = whole.to_string();
     let mut found = &named;
     for step in steps(reference.at) {
         let part = match found {
@@ -401,6 +652,9 @@ fn literal(
         _ => None,
     };
     Ok(match plain {
+        Value::Object(_) if serde_json::from_value::<Expr>(plain.clone()).is_ok() => {
+            polars_bail!(ComputeError: "`{named}` is an expression, which is no literal")
+        }
         Value::Object(_) => polars_bail!(
             ComputeError: "`{named}` is a table, which is no literal: name its keys or its values"
         ),
@@ -465,7 +719,7 @@ fn numbered(
         "number" => false,
         _ => return Ok(()),
     };
-    resolve(value, pipeline, &mut Vec::new())?;
+    resolve(value, pipeline, Scope::Outside, &mut Vec::new())?;
     let field = at.trim_start_matches('/');
     let number = worked_out(value)
         .ok_or_else(|| polars_err!(ComputeError: "`{name}` is no number, which `{field}` takes"))?;
@@ -561,23 +815,27 @@ fn uses<'a>(
     pipeline: &'a Pipeline,
     seen: &mut Vec<&'a str>,
 ) -> bool {
-    match (reference(value), value) {
-        (Some(reference), _) if reference.name == name => true,
-        (Some(reference), _) if seen.contains(&reference.name) => false,
-        (Some(reference), _) => {
-            seen.push(reference.name);
-            pipeline
-                .named(reference.name)
-                .is_some_and(|named| uses(named, name, pipeline, seen))
+    let through = reference(value).is_some_and(|reference| {
+        reference.kind != Kind::Argument
+            && (reference.name == name
+                || !seen.contains(&reference.name) && {
+                    seen.push(reference.name);
+                    pipeline
+                        .named(reference.name)
+                        .is_some_and(|named| uses(named, name, pipeline, seen))
+                })
+    });
+    // and in what it holds, as the arguments of a call
+    through
+        || match value {
+            Value::Array(items) => items
+                .iter()
+                .any(|item| uses(item, name, pipeline, seen)),
+            Value::Object(fields) => fields
+                .values()
+                .any(|field| uses(field, name, pipeline, seen)),
+            _ => false,
         }
-        (None, Value::Array(items)) => items
-            .iter()
-            .any(|item| uses(item, name, pipeline, seen)),
-        (None, Value::Object(fields)) => fields
-            .values()
-            .any(|field| uses(field, name, pipeline, seen)),
-        (None, _) => false,
-    }
 }
 
 /// Has each reference to `old` in `value` name `new`, and mean of it what it meant.
@@ -587,11 +845,10 @@ fn rename(
     new: &str,
 ) {
     let key = reference(value)
-        .filter(|reference| reference.name == old)
+        .filter(|reference| reference.name == old && reference.kind != Kind::Argument)
         .map(|reference| reference.kind.key());
     if let Some(key) = key {
         value[key] = new.into();
-        return;
     }
     for part in parts(value) {
         rename(part, old, new);

@@ -16,7 +16,7 @@ pub mod schema;
 
 pub use block::{Block, ColumnName};
 pub use engine::{Node, Pipeline, is_sink};
-pub use names::{Kind, Reference, marked, marker, reference};
+pub use names::{Kind, Reference, Taken, marked, marker, reference};
 #[cfg(feature = "plot")]
 pub use plot::{Drawer, Format, Options, Plot, numbers};
 pub use polars;

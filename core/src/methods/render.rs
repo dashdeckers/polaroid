@@ -5,10 +5,23 @@ use serde_json::{Value, json};
 use super::{Arg, Method, read};
 use crate::schema::number;
 
-/// `node` as a chain of calls: `pl.col("a").str.contains("x", …)`, and what is named as `@name`.
+/// `node` as a chain of calls, `pl.col("a").str.contains("x", …)`, with `@name` and `$hole`.
 pub fn text(node: &Value) -> String {
     if let Some(reference) = crate::reference(node) {
-        return reference.to_string();
+        // a call is written with what it gives each hole: `@name(hole=…)`
+        let Some(with) = reference.with else {
+            return reference.to_string();
+        };
+        let given: Vec<String> = with
+            .iter()
+            .map(
+                |(hole, given)| match crate::reference(given).is_some() || read(given).is_some() {
+                    true => format!("{hole}={}", argument(given)),
+                    false => format!("{hole}={given}"),
+                },
+            )
+            .collect();
+        return format!("{reference}({})", given.join(", "));
     }
     let Some(method) = read(node) else {
         let variant = match node {
@@ -167,6 +180,9 @@ pub fn literal_of(typed: &str) -> Value {
 
 /// A value that is no expression, as Python writes it; a named data type is `pl.Name`.
 fn plain(value: &Value) -> String {
+    if let Some(reference) = crate::reference(value) {
+        return reference.to_string();
+    }
     match (value, value["Literal"].as_str()) {
         (Value::Object(tagged), Some(dtype)) if tagged.len() == 1 => format!("pl.{dtype}"),
         (Value::Null, _) => "None".to_owned(),
