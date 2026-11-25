@@ -67,7 +67,7 @@ impl Block<0> for ScanParquet {
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct WriteParquet {
-    /// Path of the Parquet file to write.
+    /// Path of the Parquet file to write. Folders of it that are missing are made.
     pub path: String,
 }
 
@@ -82,7 +82,10 @@ impl Block for WriteParquet {
                 target: SinkTarget::Path(PlRefPath::new(&self.path)),
             },
             FileWriteFormat::Parquet(Default::default()),
-            UnifiedSinkArgs::default(),
+            UnifiedSinkArgs {
+                mkdir: true,
+                ..Default::default()
+            },
         )
     }
 }
@@ -143,7 +146,7 @@ impl Block<0> for ScanCsv {
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct WriteCsv {
-    /// Path of the CSV file to write.
+    /// Path of the CSV file to write. Folders of it that are missing are made.
     pub path: String,
     /// Character that separates the values of a line.
     #[serde(default = "comma")]
@@ -173,7 +176,10 @@ impl Block for WriteCsv {
                 target: SinkTarget::Path(PlRefPath::new(&self.path)),
             },
             FileWriteFormat::Csv(options),
-            UnifiedSinkArgs::default(),
+            UnifiedSinkArgs {
+                mkdir: true,
+                ..Default::default()
+            },
         )
     }
 }
