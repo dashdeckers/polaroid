@@ -203,3 +203,47 @@ fn a_handle_is_dragged_from_where_it_is() {
         .collect();
     assert_eq!(asked, [5]);
 }
+
+/// What a drag up from a handle, or `beside` it to its right, asks for, and the text it selects.
+fn selected_by(beside: f32) -> (Vec<i32>, String) {
+    use iced::Vector;
+    use iced::advanced::widget::operation::{self, Operation, Outcome};
+    use iced::widget::{column, row, text};
+    use polaroid_iced::{HANDLE, handle};
+
+    let start = Instant::now();
+    let mut simulator = simulator(column![
+        text("a line of text above, which a drag across it selects").selectable(true),
+        row![
+            text_input("", "5").width(100),
+            handle().on_scrub(|steps| steps)
+        ],
+    ]);
+    let at = simulator
+        .find(HANDLE)
+        .expect("the handle is shown")
+        .bounds()
+        .center()
+        + Vector::new(beside, 0.0);
+    press(&mut simulator, at);
+    // up into the line above
+    move_to(&mut simulator, Point::new(at.x, at.y - 24.0));
+    frame(&mut simulator, start, Duration::ZERO);
+    let mut copy = operation::text::copy();
+    simulator.operate(&mut operation::black_box(&mut copy));
+    let Outcome::Some(selected) = copy.finish() else {
+        unreachable!("a copy tells what is selected, if only nothing");
+    };
+    let asked = simulator
+        .into_messages()
+        .collect();
+    (asked, selected)
+}
+
+#[test]
+fn a_drag_on_a_handle_selects_no_text() {
+    // the value moves four steps, and nothing is selected
+    assert_eq!(selected_by(0.0), (vec![4], String::new()));
+    // which the same drag beside it does select, where nothing takes the press
+    assert_ne!(selected_by(40.0).1, "");
+}
