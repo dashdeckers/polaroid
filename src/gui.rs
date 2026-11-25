@@ -1023,24 +1023,27 @@ fn error<'a, Message: 'a>(message: &'a str) -> Element<'a, Message> {
         .boxed()
 }
 
-/// A field for a name, which is given on Enter: what is `typed` until then, marked as not given.
+/// A field for a name, given on Enter: what is `typed` until then, orange, or red if it is refused.
 fn name_field<'a, Message: Clone + 'a>(
     placeholder: &'static str,
     typed: Option<&str>,
     name: &str,
+    is_taken: impl Fn(&str) -> bool,
 ) -> text_input::TextInput<'a, Message> {
     let is_typed = is_unsaved(typed, name);
+    let is_refused = is_refused(typed, name, is_taken);
     let shown = typed
         .unwrap_or(name)
         .to_owned();
     text_input(placeholder, shown).style(move |theme: &Theme, status| {
         let mut style = text_input::default(theme, status);
         if is_typed {
-            style.border.color = theme
-                .palette()
-                .warning
-                .base
-                .color;
+            let palette = theme.palette();
+            let (refused, unsaved) = (palette.danger.base, palette.warning.base);
+            style.border.color = match is_refused {
+                true => refused.color,
+                false => unsaved.color,
+            };
             style.border.width = 2.0;
         }
         style
@@ -1053,6 +1056,15 @@ fn is_unsaved(
     name: &str,
 ) -> bool {
     typed.is_some_and(|typed| typed != name)
+}
+
+/// Whether what is typed for a name is one that Enter does not give: empty, or `is_taken`.
+fn is_refused(
+    typed: Option<&str>,
+    name: &str,
+    is_taken: impl Fn(&str) -> bool,
+) -> bool {
+    is_unsaved(typed, name) && typed.is_some_and(|typed| typed.is_empty() || is_taken(typed))
 }
 
 #[cfg(test)]

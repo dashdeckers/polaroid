@@ -27,7 +27,7 @@ use iced::{
     border,
     mouse,
 };
-use polaroid_iced::{Asked, Heading, pick_list, width_of};
+use polaroid_iced::{Asked, Heading, leave, pick_list, width_of};
 use serde_json::{Map, Value};
 
 use super::form::{Expressions, Tone};
@@ -260,7 +260,7 @@ pub struct Card<'a> {
 #[derive(Default)]
 pub struct State {
     form: form::State,
-    /// The id as it is being typed, until Enter renames the node.
+    /// The id as it is being typed, until its field is left.
     name: Option<String>,
 }
 
@@ -268,6 +268,8 @@ pub struct State {
 pub enum Event {
     Name(String),
     Rename,
+    /// The field of the id lost the focus.
+    Leave,
     Form(form::Message),
     Gallery(gallery::Message),
     Edit(Edit),
@@ -291,7 +293,12 @@ impl<'a> Component<'a, Message> for Card<'a> {
                 state.name = Some(name);
                 return None;
             }
-            Event::Rename => Edit::Rename(state.name.take()?),
+            // one that is refused stays typed
+            Event::Rename => Edit::Rename(state.name.clone()?),
+            Event::Leave => {
+                state.name = None;
+                return None;
+            }
             Event::Gallery(message) => {
                 return Some(Message::Gallery(self.node.id.clone(), message));
             }
@@ -468,13 +475,21 @@ impl<'a> Card<'a> {
                      and press Ctrl+C to copy them.",
             ),
             self.help.of(
-                name_field("id", typed, &self.node.id)
+                leave(
+                    name_field("id", typed, &self.node.id, |id| {
+                        self.nodes
+                            .iter()
+                            .any(|node| node.id == id)
+                    })
                     .on_input(Event::Name)
                     .on_submit(Event::Rename)
                     .size(TITLE)
                     .padding(FIELD),
+                    Event::Leave,
+                ),
                 "The id of the node. Type another and press Enter to rename it; the border \
-                     is orange until then.",
+                     is orange until then, and red while the id is empty or another node's. \
+                     Leaving the field shows the id again.",
             ),
             self.help.of(
                 cross(Event::Edit(Edit::Delete)).width(BUTTON),
