@@ -21,6 +21,9 @@ pub struct Pipeline {
     /// Expressions by name: `{"$expr": name}` in args or in an expression stands for one.
     #[serde(default, skip_serializing_if = "Map::is_empty")]
     pub expressions: Map<String, Value>,
+    /// Plain JSON by name: `{"$value": name}` in args, expressions or values stands for one.
+    #[serde(default, skip_serializing_if = "Map::is_empty")]
+    pub values: Map<String, Value>,
 }
 
 /// A Node is a frame-level operation.
@@ -53,6 +56,7 @@ impl Default for Pipeline {
             nodes: Vec::new(),
             outputs: Vec::new(),
             expressions: Map::new(),
+            values: Map::new(),
         }
     }
 }
@@ -87,6 +91,18 @@ impl Pipeline {
             ComputeError: "the pipeline is for Polars {}, this is Polars {}",
             self.polars, polars::VERSION
         );
+
+        // an expression and a value share their names, so that a name tells which is meant
+        let twice = self
+            .expressions
+            .keys()
+            .find(|name| {
+                self.values
+                    .contains_key(*name)
+            });
+        if let Some(name) = twice {
+            polars_bail!(Duplicate: "an expression and a value are both called '{name}'");
+        }
 
         let mut ids = HashSet::new();
         for node in &self.nodes {

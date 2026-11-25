@@ -403,7 +403,7 @@ fn an_expression_is_renamed_in_its_place_and_where_it_is_used() {
     let mut pipeline: Pipeline = serde_json::from_value(pipeline).unwrap();
     assert_eq!(pipeline.users("large"), ["some"]);
 
-    assert!(pipeline.rename_expression("large", "big"));
+    assert!(pipeline.rename_named("large", "big"));
     let names: Vec<_> = pipeline
         .expressions
         .keys()
@@ -420,9 +420,9 @@ fn an_expression_is_renamed_in_its_place_and_where_it_is_used() {
     );
 
     // not to nothing, nor to the name of another, nor if there is no such expression
-    assert!(!pipeline.rename_expression("big", ""));
-    assert!(!pipeline.rename_expression("big", "odd"));
-    assert!(!pipeline.rename_expression("large", "huge"));
+    assert!(!pipeline.rename_named("big", ""));
+    assert!(!pipeline.rename_named("big", "odd"));
+    assert!(!pipeline.rename_named("large", "huge"));
 
     // a marker is that alone: with anything beside its name it is a value like any other
     assert_eq!(

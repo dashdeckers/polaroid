@@ -194,14 +194,14 @@ fn args_that_the_block_does_not_read_are_refused_once_resolved() {
 #[test]
 fn an_expression_is_renamed_in_the_expressions_that_name_it() {
     let mut pipeline = priced(&["gross", "rate"]);
-    assert!(pipeline.rename_expression("rate", "tax"));
+    assert!(pipeline.rename_named("rate", "tax"));
     let named = &pipeline.expressions["gross_total"]["Alias"][0]["BinaryExpr"];
     assert_eq!(named["right"]["BinaryExpr"]["right"], marker("tax"));
     assert_eq!(marked(&pipeline.nodes[1].args["exprs"][1]), Some("tax"));
     assert_eq!(numbers(&pipeline, "gross"), [2.38, 238.0, 47.6, 5.95]);
 
     // not to the name of another, though no node names that one
-    assert!(!pipeline.rename_expression("tax", "top_n"));
+    assert!(!pipeline.rename_named("tax", "top_n"));
 }
 
 #[test]

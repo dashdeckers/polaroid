@@ -5,10 +5,10 @@ use serde_json::{Value, json};
 use super::{Arg, Method, read};
 use crate::schema::number;
 
-/// `node` as a chain of calls: `pl.col("a").str.contains("x", …)`, a named expression as `@name`.
+/// `node` as a chain of calls: `pl.col("a").str.contains("x", …)`, and what is named as `@name`.
 pub fn text(node: &Value) -> String {
-    if let Some(name) = crate::marked(node) {
-        return format!("@{name}");
+    if let Some(reference) = crate::reference(node) {
+        return reference.to_string();
     }
     let Some(method) = read(node) else {
         let variant = match node {
@@ -114,9 +114,12 @@ fn argument(node: &Value) -> String {
     literal(node).unwrap_or_else(|| text(node))
 }
 
-/// A plain literal as Python writes it: a number, string, boolean or null.
+/// A plain literal as Python writes it: a number, string, boolean or null; or the value it names.
 pub fn literal(node: &Value) -> Option<String> {
     let value = &node["Literal"];
+    if let Some(reference) = crate::reference(value) {
+        return Some(reference.to_string());
+    }
     let is_null = value["Scalar"]["Null"].is_string();
     [
         &value["Dyn"]["Int"],

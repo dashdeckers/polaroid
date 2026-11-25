@@ -1,4 +1,6 @@
-//! Names: what stands for a named expression in JSON, and what takes its place in a build.
+//! Names: what stands for a named expression or value in JSON, and what takes its place in a build.
+
+use std::fmt;
 
 use polars::prelude::*;
 use serde_json::{Map, Number, Value};
@@ -7,82 +9,233 @@ use crate::engine::{Pipeline, guard};
 use crate::registry::Entry;
 use crate::{Registry, schema};
 
+/// What a reference names.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Kind {
+    Expression,
+    Value,
+}
+
+impl Kind {
+    /// The key that a reference of this kind holds its name under.
+    fn key(self) -> &'static str {
+        match self {
+            Self::Expression => "$expr",
+            Self::Value => "$value",
+        }
+    }
+
+    /// The kind whose key `fields` hold, if they hold one.
+    fn of(fields: &Map<String, Value>) -> Option<Self> {
+        [Self::Expression, Self::Value]
+            .into_iter()
+            .find(|kind| fields.contains_key(kind.key()))
+    }
+}
+
+/// A reference as JSON writes it: `{"$expr": name}`, or `{"$value": name, "at": .., "part": ..}`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Reference<'a> {
+    pub kind: Kind,
+    pub name: &'a str,
+    /// The JSON pointer to the part of a value that is meant: empty for all of it.
+    pub at: &'a str,
+    /// What of a table is meant in place of the table: `keys` or `values`.
+    pub part: Option<&'a str>,
+}
+
+impl<'a> Reference<'a> {
+    /// A reference to all of what is called `name`.
+    pub fn to(
+        kind: Kind,
+        name: &'a str,
+    ) -> Self {
+        Self {
+            kind,
+            name,
+            at: "",
+            part: None,
+        }
+    }
+}
+
+impl From<&Reference<'_>> for Value {
+    /// The reference as JSON writes it, which `reference` reads again.
+    fn from(reference: &Reference) -> Self {
+        let mut fields = Map::new();
+        let key = reference.kind.key();
+        fields.insert(
+            key.to_owned(),
+            reference
+                .name
+                .into(),
+        );
+        if !reference
+            .at
+            .is_empty()
+        {
+            fields.insert("at".to_owned(), reference.at.into());
+        }
+        if let Some(part) = reference.part {
+            fields.insert("part".to_owned(), part.into());
+        }
+        Value::Object(fields)
+    }
+}
+
+impl fmt::Display for Reference<'_> {
+    /// As it is written in an expression: `@name`, `@name.field[0]`, `@name.keys`.
+    fn fmt(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+    ) -> fmt::Result {
+        write!(f, "@{}", self.name)?;
+        for step in steps(self.at) {
+            match step.parse::<usize>() {
+                Ok(index) => write!(f, "[{index}]")?,
+                Err(_) => write!(f, ".{step}")?,
+            }
+        }
+        self.part
+            .map_or(Ok(()), |part| write!(f, ".{part}"))
+    }
+}
+
+/// The keys and places that the JSON pointer `at` steps through.
+fn steps(at: &str) -> impl Iterator<Item = String> + '_ {
+    at.split('/')
+        .skip(1)
+        .map(|step| {
+            step.replace("~1", "/")
+                .replace("~0", "~")
+        })
+}
+
+/// The reference that `value` is, if it is one: with anything its kind does not take, it is none.
+pub fn reference(value: &Value) -> Option<Reference<'_>> {
+    let fields = value.as_object()?;
+    let kind = Kind::of(fields)?;
+    let taken: &[&str] = match kind {
+        Kind::Expression => &[],
+        Kind::Value => &["at", "part"],
+    };
+    let text = |key: &str| {
+        fields
+            .get(key)
+            .and_then(Value::as_str)
+    };
+    let is_reference = fields
+        .iter()
+        .all(|(key, field)| {
+            (key == kind.key() || taken.contains(&key.as_str())) && field.is_string()
+        });
+    Some(Reference {
+        kind,
+        name: text(kind.key()).filter(|_| is_reference)?,
+        at: text("at").unwrap_or_default(),
+        part: text("part"),
+    })
+}
+
 /// What stands for the expression of a name: in the args of a Node, or in another expression.
 pub fn marker(name: &str) -> Value {
-    serde_json::json!({ "$expr": name })
+    Value::from(&Reference::to(Kind::Expression, name))
 }
 
 /// The name of the expression that `value` stands for, if it is a marker.
 pub fn marked(value: &Value) -> Option<&str> {
-    value
-        .as_object()
-        .filter(|marker| marker.len() == 1)?
-        .get("$expr")?
-        .as_str()
+    reference(value)
+        .filter(|reference| reference.kind == Kind::Expression)
+        .map(|reference| reference.name)
 }
 
 impl Pipeline {
-    /// Calls the expression `old` `new`, in its place and where it is named; false if it cannot.
-    pub fn rename_expression(
+    /// Calls the expression or value `old` `new`, in its place and where it is named, if it can.
+    pub fn rename_named(
         &mut self,
         old: &str,
         new: &str,
     ) -> bool {
-        let expressions = &mut self.expressions;
-        // an empty or taken name would have its users take another expression
-        if !expressions.contains_key(old) || new.is_empty() || expressions.contains_key(new) {
+        let is_taken = self
+            .named(new)
+            .is_some();
+        let named = match self
+            .expressions
+            .contains_key(old)
+        {
+            true => &mut self.expressions,
+            false => &mut self.values,
+        };
+        // an empty or taken name would have its users take another
+        if !named.contains_key(old) || new.is_empty() || is_taken {
             return false;
         }
-        *expressions = std::mem::take(expressions)
+        *named = std::mem::take(named)
             .into_iter()
-            .map(|(name, expression)| match name == old {
-                true => (new.to_owned(), expression),
-                false => (name, expression),
+            .map(|(name, value)| match name == old {
+                true => (new.to_owned(), value),
+                false => (name, value),
             })
             .collect();
-        let named = self
+        let naming = self
             .nodes
             .iter_mut()
             .map(|node| &mut node.args)
             .chain(
                 self.expressions
                     .values_mut(),
+            )
+            .chain(
+                self.values
+                    .values_mut(),
             );
-        for value in named {
+        for value in naming {
             rename(value, old, new);
         }
         true
     }
 
-    /// The ids of the Nodes whose args use the expression `name`, themselves or through others.
+    /// The ids of the Nodes whose args use what is named `name`, themselves or through others.
     pub fn users(
         &self,
         name: &str,
     ) -> Vec<&str> {
         self.nodes
             .iter()
-            .filter(|node| uses(&node.args, name, &self.expressions, &mut Vec::new()))
+            .filter(|node| uses(&node.args, name, self, &mut Vec::new()))
             .map(|node| node.id.as_str())
             .collect()
     }
 
-    /// The expressions that use the expression `name`, themselves or through others.
+    /// The expressions and values that use what is named `name`, themselves or through others.
     pub fn dependents(
         &self,
         name: &str,
     ) -> Vec<&str> {
         self.expressions
             .iter()
-            .filter(|(other, expression)| {
-                *other != name && uses(expression, name, &self.expressions, &mut Vec::new())
-            })
+            .chain(&self.values)
+            .filter(|(other, named)| *other != name && uses(named, name, self, &mut Vec::new()))
             .map(|(other, _)| other.as_str())
             .collect()
+    }
+
+    /// The expression or the value of a name: they share their names.
+    fn named(
+        &self,
+        name: &str,
+    ) -> Option<&Value> {
+        self.expressions
+            .get(name)
+            .or_else(|| {
+                self.values
+                    .get(name)
+            })
     }
 }
 
 impl Registry {
-    /// `args` as a node of `block` reads them, each marker replaced, or why it does not take them.
+    /// `args` as a node of `block` reads them, each name replaced, or why it does not take them.
     pub fn resolved(
         &self,
         block: &str,
@@ -98,13 +251,13 @@ impl Registry {
     }
 }
 
-/// `args` of a node of `entry`, each marker replaced by its number or else its expression.
+/// `args` of a node of `entry`, each reference replaced by what it names.
 pub(crate) fn resolved(
     entry: &Entry,
     mut args: Value,
     pipeline: &Pipeline,
 ) -> PolarsResult<Value> {
-    if !has_marker(&args) {
+    if !has_reference(&args) {
         return Ok(args);
     }
     let (schema, defs) = entry.schema();
@@ -113,18 +266,40 @@ pub(crate) fn resolved(
     Ok(args)
 }
 
-/// Replaces each marker in `value` by its expression; one named again in `chain` names itself.
+/// Replaces each reference in `value` by what it names; one named again in `chain` names itself.
 fn resolve(
     value: &mut Value,
     pipeline: &Pipeline,
     chain: &mut Vec<String>,
 ) -> PolarsResult<()> {
-    let Some(name) = marked(value).map(str::to_owned) else {
+    // a value under a literal is the literal of Polars that it is
+    if let Some(named) = lifted(value).map(|named| named.to_string()) {
+        let plain = &mut value["Literal"];
+        resolve(plain, pipeline, chain)?;
+        *value = serde_json::to_value(literal(plain, &named)?)
+            .map_err(|e| polars_err!(ComputeError: "`{named}`: {e}"))?;
+        return Ok(());
+    }
+    let Some(reference) = reference(value) else {
+        // what holds the key of a reference and is none would pass for plain JSON
+        let key = value
+            .as_object()
+            .and_then(Kind::of)
+            .map(Kind::key);
+        if let Some(key) = key {
+            polars_bail!(ComputeError: "{value} holds `{key}`, and is no reference");
+        }
         for part in parts(value) {
             resolve(part, pipeline, chain)?;
         }
         return Ok(());
     };
+    let (kind, name) = (
+        reference.kind,
+        reference
+            .name
+            .to_owned(),
+    );
     if let Some(at) = chain
         .iter()
         .position(|named| *named == name)
@@ -137,22 +312,126 @@ fn resolve(
             .collect();
         polars_bail!(ComputeError: "`{}` uses {}", chain[at], links.join(", which uses "));
     }
-    let mut expression = pipeline
-        .expressions
-        .get(&name)
-        .cloned()
-        .ok_or_else(|| polars_err!(ComputeError: "no expression is called '{name}'"))?;
+    let named = match kind {
+        Kind::Expression => pipeline
+            .expressions
+            .get(&name)
+            .ok_or_else(|| polars_err!(ComputeError: "no expression is called '{name}'")),
+        Kind::Value => pipeline
+            .values
+            .get(&name)
+            .ok_or_else(|| polars_err!(ComputeError: "no value is called '{name}'")),
+    };
+    let mut named = named?.clone();
     chain.push(name.clone());
-    resolve(&mut expression, pipeline, chain)?;
+    resolve(&mut named, pipeline, chain)?;
     chain.pop();
-    if let Err(e) = serde_json::from_value::<Expr>(expression.clone()) {
-        polars_bail!(ComputeError: "`{name}` is no expression: {e}");
-    }
-    *value = expression;
+    *value = match kind {
+        Kind::Value => meant(named, &reference)?,
+        Kind::Expression => match serde_json::from_value::<Expr>(named.clone()) {
+            Ok(_) => named,
+            Err(e) => polars_bail!(ComputeError: "`{name}` is no expression: {e}"),
+        },
+    };
     Ok(())
 }
 
-/// Puts its number in the place of each marker that stands where `schema` takes a number.
+/// The reference to a value that `value` holds as a literal: `{"Literal": {"$value": name}}`.
+fn lifted(value: &Value) -> Option<Reference<'_>> {
+    let fields = value
+        .as_object()
+        .filter(|fields| fields.len() == 1)?;
+    reference(fields.get("Literal")?).filter(|reference| reference.kind == Kind::Value)
+}
+
+/// The part of what is `named` that `reference` means: all of it, or what its pointer leads to.
+fn meant(
+    named: Value,
+    reference: &Reference,
+) -> PolarsResult<Value> {
+    let root = format!("@{}", reference.name);
+    let mut found = &named;
+    for step in steps(reference.at) {
+        let part = match found {
+            Value::Object(fields) => fields.get(&step),
+            Value::Array(rows) => match step.parse::<usize>() {
+                Ok(index) => rows.get(index),
+                Err(_) => {
+                    polars_bail!(ComputeError: "`{root}` is a list: name a row, as `{root}[0]`")
+                }
+            },
+            _ => None,
+        };
+        found = part.ok_or_else(|| polars_err!(ComputeError: "there is no `{reference}`"))?;
+    }
+    match (reference.part, found) {
+        (None, _) => Ok(found.clone()),
+        (Some("keys"), Value::Object(fields)) => Ok(fields
+            .keys()
+            .cloned()
+            .collect()),
+        (Some("values"), Value::Object(fields)) => Ok(fields
+            .values()
+            .cloned()
+            .collect()),
+        (Some("keys" | "values"), _) => {
+            polars_bail!(ComputeError: "there is no `{reference}`: a table alone has those")
+        }
+        (Some(part), _) => {
+            polars_bail!(ComputeError: "`{root}` has its `keys` and its `values`, but no `{part}`")
+        }
+    }
+}
+
+/// The literal of Polars that `plain` is: a number, a text, a truth, nothing, or a list of them.
+fn literal(
+    plain: &Value,
+    named: &str,
+) -> PolarsResult<Expr> {
+    let scalar = |plain: &Value, is_float: bool| match plain {
+        Value::Null => Some(AnyValue::Null),
+        Value::Bool(truth) => Some(AnyValue::Boolean(*truth)),
+        Value::Number(number) if is_float => number
+            .as_f64()
+            .map(AnyValue::Float64),
+        Value::Number(number) => number
+            .as_i64()
+            .map(AnyValue::Int64),
+        Value::String(text) => Some(AnyValue::StringOwned(text.into())),
+        _ => None,
+    };
+    Ok(match plain {
+        Value::Object(_) => polars_bail!(
+            ComputeError: "`{named}` is a table, which is no literal: name its keys or its values"
+        ),
+        Value::Array(items) => {
+            // whole numbers among numbers that are not whole are numbers like them
+            let is_float = items
+                .iter()
+                .any(Value::is_f64);
+            let items: Option<Vec<AnyValue>> = items
+                .iter()
+                .map(|item| scalar(item, is_float))
+                .collect();
+            let series = items
+                .and_then(|items| Series::from_any_values(PlSmallStr::EMPTY, &items, true).ok());
+            lit(series.ok_or_else(|| {
+                polars_err!(ComputeError: "`{named}` is no list of one kind, which a literal takes")
+            })?)
+        }
+        Value::String(text) => lit(text.as_str()),
+        Value::Bool(truth) => lit(*truth),
+        Value::Null => lit(NULL),
+        Value::Number(number) => match number.as_i64() {
+            Some(whole) => lit(whole),
+            None => lit(number
+                .as_f64()
+                .unwrap_or(f64::NAN)),
+        },
+    })
+}
+
+/// Puts its number in the place of each expression named where `schema` takes a number.
 fn numbered(
     value: &mut Value,
     at: &str,
@@ -259,54 +538,59 @@ fn parts(value: &mut Value) -> Box<dyn Iterator<Item = &mut Value> + '_> {
     }
 }
 
-/// Whether `value` holds a marker anywhere.
-fn has_marker(value: &Value) -> bool {
+/// Whether `value` holds the key of a reference anywhere.
+fn has_reference(value: &Value) -> bool {
     match value {
-        _ if marked(value).is_some() => true,
         Value::Array(items) => items
             .iter()
-            .any(has_marker),
-        Value::Object(fields) => fields
-            .values()
-            .any(has_marker),
+            .any(has_reference),
+        Value::Object(fields) => {
+            Kind::of(fields).is_some()
+                || fields
+                    .values()
+                    .any(has_reference)
+        }
         _ => false,
     }
 }
 
-/// Whether `value` names `name`, itself or through expressions, each of them `seen` once.
+/// Whether `value` names `name`, itself or through what it names, each of them `seen` once.
 fn uses<'a>(
     value: &'a Value,
     name: &str,
-    expressions: &'a Map<String, Value>,
+    pipeline: &'a Pipeline,
     seen: &mut Vec<&'a str>,
 ) -> bool {
-    match (marked(value), value) {
-        (Some(marked), _) if marked == name => true,
-        (Some(marked), _) if seen.contains(&marked) => false,
-        (Some(marked), _) => {
-            seen.push(marked);
-            expressions
-                .get(marked)
-                .is_some_and(|expression| uses(expression, name, expressions, seen))
+    match (reference(value), value) {
+        (Some(reference), _) if reference.name == name => true,
+        (Some(reference), _) if seen.contains(&reference.name) => false,
+        (Some(reference), _) => {
+            seen.push(reference.name);
+            pipeline
+                .named(reference.name)
+                .is_some_and(|named| uses(named, name, pipeline, seen))
         }
         (None, Value::Array(items)) => items
             .iter()
-            .any(|item| uses(item, name, expressions, seen)),
+            .any(|item| uses(item, name, pipeline, seen)),
         (None, Value::Object(fields)) => fields
             .values()
-            .any(|field| uses(field, name, expressions, seen)),
+            .any(|field| uses(field, name, pipeline, seen)),
         (None, _) => false,
     }
 }
 
-/// Makes each marker of `old` in `value` one of `new`.
+/// Has each reference to `old` in `value` name `new`, and mean of it what it meant.
 fn rename(
     value: &mut Value,
     old: &str,
     new: &str,
 ) {
-    if marked(value) == Some(old) {
-        *value = marker(new);
+    let key = reference(value)
+        .filter(|reference| reference.name == old)
+        .map(|reference| reference.kind.key());
+    if let Some(key) = key {
+        value[key] = new.into();
         return;
     }
     for part in parts(value) {

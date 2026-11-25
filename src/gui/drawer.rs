@@ -85,7 +85,7 @@ impl Drawer {
                     .name
                     .clone();
                 // one that is refused stays typed
-                let Some(new) = typed.filter(|new| pipeline.rename_expression(&old, new)) else {
+                let Some(new) = typed.filter(|new| pipeline.rename_named(&old, new)) else {
                     return Change::Nothing;
                 };
                 // what is shown of it goes along to its new name
