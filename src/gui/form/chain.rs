@@ -390,27 +390,25 @@ impl<'a> Form<'a, '_> {
                     })
                     .width(width);
                 // a number has a handle that moves it, and it stays whole if it was
-                let Some(number) = number else {
-                    return Some(field.boxed());
-                };
-                let kind = match number.is_f64() {
-                    true => "number",
-                    false => "integer",
-                };
-                let put = put();
-                let on_scrub = move |steps| {
-                    let moved = schema::nudged(&json!({ "type": kind }), &json!(number), steps);
-                    put(methods::literal_of(&moved.to_string()))
-                };
+                let scrub = number.map(|number| {
+                    let kind = match number.is_f64() {
+                        true => "number",
+                        false => "integer",
+                    };
+                    let put = put();
+                    let on_scrub = move |steps| {
+                        let moved = schema::nudged(&json!({ "type": kind }), &json!(number), steps);
+                        put(methods::literal_of(&moved.to_string()))
+                    };
+                    self.help
+                        .of(handle().on_scrub(on_scrub), form::DRAG)
+                });
+                // the field keeps its place, and so its focus, while what is typed is no number
                 Some(
-                    row![
-                        field,
-                        self.help
-                            .of(handle().on_scrub(on_scrub), form::DRAG)
-                    ]
-                    .spacing(2)
-                    .align_y(Center)
-                    .boxed(),
+                    row![field, scrub]
+                        .spacing(2)
+                        .align_y(Center)
+                        .boxed(),
                 )
             }
             _ => None,

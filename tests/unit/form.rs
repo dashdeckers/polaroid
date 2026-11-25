@@ -351,6 +351,75 @@ fn a_drag_across_a_number_in_an_expression_moves_it() -> Result<(), Error> {
     Ok(())
 }
 
+/// What typing `new` over `old` in a field of `expr` leaves of it, shown again after each key.
+fn retyped(
+    expr: Expr,
+    old: &str,
+    new: &str,
+) -> Result<Value, Error> {
+    use iced::keyboard::key::Named;
+
+    // what is shown lives as long as the simulator that keeps the state of its widgets
+    let catalog: &'static crate::Catalog = Box::leak(Box::new(Registry::with_polars().catalog()));
+    let defs = &catalog.defs;
+    let schema = resolve(defs, &catalog.blocks["select"].args);
+    let shown = |state: &State, args: &Value| {
+        let args = Box::leak(Box::new(args.clone()));
+        view(
+            state,
+            defs,
+            schema,
+            args,
+            Expressions::Chained(&[]),
+            0.0,
+            crate::gui::Help::default(),
+        )
+    };
+    let mut state = State::default();
+    let mut args = json!({ "exprs": [json_of(expr)] });
+    // the arguments of its last call are laid out, to be found
+    let toggle = chain::Message::Toggle("/exprs/0".to_owned());
+    let _ = state.update(toggle.into(), &mut args);
+
+    let mut ui = simulator(shown(&state, &args));
+    let _ = ui.click(old)?;
+    let _ = ui.tap_key(Named::End);
+    let erased = old
+        .chars()
+        .map(|_| None);
+    let written = new
+        .chars()
+        .map(Some);
+    for key in erased.chain(written) {
+        let _ = match key {
+            None => ui.tap_key(Named::Backspace),
+            Some(typed) => ui.typewrite(&typed.to_string()),
+        };
+        for message in ui.drain() {
+            state.update(message, &mut args);
+        }
+        ui = ui.rebuild(shown(&state, &args));
+    }
+    Ok(args["exprs"][0].take())
+}
+
+#[test]
+fn a_field_that_is_cleared_keeps_its_focus_for_what_is_typed_next() -> Result<(), Error> {
+    // a literal is no number while it is empty or on its way to one
+    let more = retyped(col("a").gt(lit(5)), "5", "2.5")?;
+    assert_eq!(more, json_of(col("a").gt(lit(2.5))));
+    let more = retyped(col("a").eq(lit("x")), "x", "12")?;
+    assert_eq!(more, json_of(col("a").eq(lit(12))));
+    // a number, which is none while it is empty, and the name of a column
+    let round = |name: &str, decimals| col(name).round(decimals, RoundMode::HalfToEven);
+    assert_eq!(retyped(round("a", 2), "2", "10")?, json_of(round("a", 10)));
+    assert_eq!(retyped(round("a", 2), "a", "bc")?, json_of(round("bc", 2)));
+    // and a name, which is a string while it is empty
+    let named = retyped(col("a").alias("x"), "x", "yz")?;
+    assert_eq!(named, json_of(col("a").alias("yz")));
+    Ok(())
+}
+
 #[test]
 fn the_methods_of_no_namespace_are_offered_under_a_name_of_their_own() -> Result<(), Error> {
     let mut form = Form::of(json_of(col("a")));
