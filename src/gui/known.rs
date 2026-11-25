@@ -162,23 +162,36 @@ impl Known {
             .collect()
     }
 
+    /// Lets go of every frame that is saved, as if no Run had computed any node.
+    pub fn clear(&mut self) {
+        for found in self
+            .found
+            .values_mut()
+        {
+            found.frame = None;
+            found.is_run = false;
+        }
+    }
+
+    /// How many bytes the frames that are saved take in memory, as Polars estimates them.
+    pub fn size(&self) -> usize {
+        self.found
+            .values()
+            .filter_map(|found| found.frame.as_ref())
+            .map(|(frame, _)| frame.estimated_size())
+            .sum()
+    }
+
     /// What a Run is to compute: the pipeline to run, its targets, and the saved frames it reads.
-    ///
-    /// A Reload first lets go of every frame, so that it computes everything.
     pub fn plan(
         &mut self,
         pipeline: &Pipeline,
-        is_reload: bool,
     ) -> (Pipeline, Vec<String>, HashMap<String, DataFrame>) {
         for found in self
             .found
             .values_mut()
         {
             found.failed = None;
-            if is_reload {
-                found.frame = None;
-                found.is_run = false;
-            }
         }
         let mut pipeline = pipeline.clone();
         // a frame that is saved is not collected again

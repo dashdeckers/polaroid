@@ -31,6 +31,7 @@ use iced::widget::{
     tooltip,
 };
 use iced::{
+    Center,
     Element,
     Fill,
     Function,
@@ -219,6 +220,8 @@ enum Message {
     Run,
     /// A Run of everything, whatever was saved before.
     Reload,
+    /// The frames that are saved are let go, for the next Run to compute again.
+    Clear,
     Mode(Mode),
     /// Delay is to wait this many steps longer, or shorter if they are fewer than none.
     Wait(i32),
@@ -373,14 +376,18 @@ impl Editor {
                     .known
                     .is_checked(&self.pipeline);
                 if self.mode != Mode::Manual && is_sound {
-                    return self.run(false);
+                    return self.run();
                 }
             }
             Message::Run => {
                 self.mode = Mode::Manual;
-                return self.run(false);
+                return self.run();
             }
-            Message::Reload => return self.run(true),
+            Message::Reload => {
+                self.known.clear();
+                return self.run();
+            }
+            Message::Clear => self.known.clear(),
             Message::Mode(mode) => {
                 self.mode = mode;
                 return self.follow();
@@ -619,14 +626,11 @@ impl Editor {
         Task::perform(write, Message::Exported)
     }
 
-    /// Starts a Run of what is not saved yet, or of everything if it is a Reload.
-    fn run(
-        &mut self,
-        is_reload: bool,
-    ) -> Task<Message> {
+    /// Starts a Run of what is not saved yet.
+    fn run(&mut self) -> Task<Message> {
         let (pipeline, targets, read) = self
             .known
-            .plan(&self.pipeline, is_reload);
+            .plan(&self.pipeline);
         let run = self
             .worker
             .clone()
@@ -772,7 +776,7 @@ impl Editor {
         ]
     }
 
-    /// The drawer's button and the help, then the modes, Reload and the files.
+    /// The drawer's button and the help, then the modes, Reload and Clear, and the files.
     fn toolbar(&self) -> impl Widget<Message> + use<> {
         let save = self
             .is_dirty
@@ -851,6 +855,36 @@ impl Editor {
             ),
         ]
         .spacing(1);
+        // under Clear, how much memory the frames that it lets go of take
+        let kept = self.known.size();
+        let clear = column![
+            text("Clear"),
+            text(bytes(kept)).size(NOTE),
+        ]
+        .align_x(Center);
+        let frames = row![
+            help.of(
+                // as tall as Clear beside it
+                button(
+                    text("Reload")
+                        .center()
+                        .height(Fill)
+                )
+                .height(Fill)
+                .style(button::secondary)
+                .on_press(Message::Reload),
+                "Runs everything again from the files on disk, whatever was kept before.",
+            ),
+            help.of(
+                button(clear)
+                    .style(button::secondary)
+                    .on_press_maybe((kept > 0).then_some(Message::Clear)),
+                "Lets go of the frames that are kept, which take this much memory; the next Run \
+                 computes them again.",
+            ),
+        ]
+        .spacing(1)
+        .height(Shrink);
         let asked = match help.0 {
             true => button::primary,
             false => button::secondary,
@@ -870,16 +904,12 @@ impl Editor {
             ),
             space::horizontal(),
             modes,
-            help.of(
-                button("Reload")
-                    .style(button::secondary)
-                    .on_press(Message::Reload),
-                "Runs everything again from the files on disk, whatever was kept before.",
-            ),
+            frames,
             files,
         ]
         .spacing(10)
         .padding(10)
+        .align_y(Center)
     }
 
     /// The nodes as cards on a surface, wired as they read each other.
@@ -973,6 +1003,21 @@ fn cross<'a, Message: Clone + 'a>(message: Message) -> Button<'a, Message, &'sta
         .style(button::danger)
         .padding([0, 6])
         .on_press(message)
+}
+
+/// A size in bytes as it reads: to a tenth below ten of its unit, and else to a whole one.
+fn bytes(size: usize) -> String {
+    const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
+    let (mut value, mut unit) = (size as f64, 0);
+    // a unit up, where this one would round to a thousand
+    while value >= 999.5 && unit < UNITS.len() - 1 {
+        value /= 1000.0;
+        unit += 1;
+    }
+    match unit > 0 && value < 9.95 {
+        true => format!("{value:.1} {}", UNITS[unit]),
+        false => format!("{value:.0} {}", UNITS[unit]),
+    }
 }
 
 /// How thick the bars are that an error is scrolled by.
