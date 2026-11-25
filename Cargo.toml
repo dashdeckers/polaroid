@@ -63,6 +63,7 @@ gui = [
 [dev-dependencies]
 iced_test = { workspace = true }
 schemars = "1.2"
+serde = { version = "1", features = ["derive"] }
 
 # optimize for fast compilation
 [profile.dev]

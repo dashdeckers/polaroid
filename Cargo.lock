@@ -4075,6 +4075,7 @@ dependencies = [
  "rfd",
  "rustd3-iced",
  "schemars",
+ "serde",
  "serde_json",
  "tokio",
 ]

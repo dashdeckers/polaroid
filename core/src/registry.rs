@@ -13,6 +13,7 @@ use crate::{Block, frames, io};
 pub(crate) struct Entry {
     pub inputs: &'static [&'static str],
     category: &'static str,
+    icon: &'static str,
     schema: fn(&mut SchemaGenerator) -> Schema,
     build: fn(Value, Vec<LazyFrame>) -> PolarsResult<LazyFrame>,
     parse: fn(&Value) -> PolarsResult<()>,
@@ -27,6 +28,7 @@ impl Entry {
         Entry {
             inputs: &B::INPUTS,
             category,
+            icon: B::ICON,
             schema: |generator| generator.subschema_for::<B>(),
             build: |args, inputs| {
                 let block: B = serde_json::from_value(args)
@@ -199,6 +201,13 @@ impl Registry {
             .get(block)?
             .images;
         images(args)
+    }
+
+    /// Each Block by its name, with the typst of its icon.
+    pub fn icons(&self) -> impl Iterator<Item = (&'static str, &'static str)> {
+        self.blocks
+            .iter()
+            .map(|(name, entry)| (*name, entry.icon))
     }
 
     /// Adds a Plot, as the Block it is and as what draws its figures over again.

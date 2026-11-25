@@ -298,6 +298,44 @@ fn a_block_is_in_the_category_named_before_it() {
     assert_eq!(category("third"), "Reshape");
 }
 
+/// A block that draws an icon of its own.
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+struct Dot {}
+
+impl polaroid::Block for Dot {
+    const ICON: &'static str = "#circle(radius: 5pt, fill: ink)";
+
+    fn apply(
+        self,
+        [frame]: [LazyFrame; 1],
+    ) -> PolarsResult<LazyFrame> {
+        Ok(frame)
+    }
+}
+
+#[test]
+fn a_block_has_the_default_icon_unless_it_draws_its_own() {
+    use polaroid::frames::Limit;
+
+    let registry = Registry::default()
+        .register::<Limit, _>("limit")
+        .register::<Dot, _>("dot");
+    let icons: HashMap<_, _> = registry
+        .icons()
+        .collect();
+    assert_eq!(icons.len(), 2);
+    assert_eq!(icons["dot"], "#circle(radius: 5pt, fill: ink)");
+
+    // every block of the standard repertoire has the default
+    let default = icons["limit"];
+    assert_ne!(default, icons["dot"]);
+    assert!(
+        Registry::with_polars()
+            .icons()
+            .all(|(_, icon)| icon == default)
+    );
+}
+
 /// A scan `a` read by `b` and `c`, `d` that reads `b`, and `e` that reads nothing yet.
 fn graph() -> Pipeline {
     let node = |id: &str, inputs: &[&str]| {
