@@ -349,10 +349,10 @@ impl<'a> Component<'a, Message> for Card<'a> {
             .reads()
             .iter()
             .copied();
-        let names = look::names(reads.chain(args));
+        let label_width = look::label_width(reads.chain(args));
 
         let head = self.head(typed, is_open);
-        let inputs = self.inputs(names, is_open);
+        let inputs = self.inputs(label_width, is_open);
         let wrong = match self.found {
             Some(Err(e)) => Some(error(e)),
             _ => None,
@@ -384,7 +384,7 @@ impl<'a> Component<'a, Message> for Card<'a> {
                     check: &self.check(),
                     value,
                     held,
-                    names,
+                    label_width,
                     help: self.help,
                 }
                 .view(schema)
@@ -510,7 +510,7 @@ impl<'a> Card<'a> {
     /// A line for each frame it reads: the name of the input, and in an open card the node read.
     fn inputs(
         &self,
-        names: f32,
+        label_width: f32,
         is_open: bool,
     ) -> impl Widget<Event> + use<'a> {
         let node = self.node;
@@ -544,7 +544,7 @@ impl<'a> Card<'a> {
                         .width(Fill)
                         .style(theme::pick_list::toned(tone))
                 });
-                container(look::labelled(name, names, None, wired))
+                container(look::labelled(name, label_width, None, wired))
                     .id(anchor(slot))
                     .boxed()
             });

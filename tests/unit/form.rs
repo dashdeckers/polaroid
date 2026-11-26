@@ -142,7 +142,7 @@ impl Shown {
             check: &self.check,
             value,
             held,
-            names: 0.0,
+            label_width: 0.0,
             help: crate::gui::Help::default(),
         }
     }

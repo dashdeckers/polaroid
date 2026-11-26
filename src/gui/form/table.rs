@@ -38,7 +38,7 @@ impl<'a> Form<'a, '_> {
                         clear(Message::Drop(inside.clone())),
                         "Takes this one out of the table."
                     ),
-                    named(entries, key, at, wide),
+                    key_field(entries, key, at, wide),
                     self.placed(items, entry, inside, true)
                 ]
                 .spacing(spacing::XS)
@@ -119,7 +119,7 @@ impl<'a> Form<'a, '_> {
             let wide = widest(entries.keys());
             let names = entries
                 .keys()
-                .map(|key| named(entries, key, at, wide));
+                .map(|key| key_field(entries, key, at, wide));
             headed(space().boxed(), names)
         });
         // then a column of each key, under what renames it and takes it out in every row
@@ -216,7 +216,7 @@ fn widest<'a>(keys: impl IntoIterator<Item = &'a String>) -> f32 {
 }
 
 /// The field of the key of an entry of `entries`, which renames the entry as it is typed in.
-fn named<'a>(
+fn key_field<'a>(
     entries: &'a Map<String, Value>,
     key: &'a String,
     at: &str,

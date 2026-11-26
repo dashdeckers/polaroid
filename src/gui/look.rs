@@ -186,7 +186,7 @@ pub fn round<'a, Message: Clone + 'a>(content: impl Widget<Message> + 'a) -> But
 }
 
 /// A round button that is a sign.
-fn sign<'a, Message: Clone + 'a>(
+fn signed<'a, Message: Clone + 'a>(
     sign: &'static str,
     message: Message,
 ) -> Button<'a, Message> {
@@ -202,22 +202,22 @@ pub fn toggle<'a, Message: Clone + 'a>(
         true => sign::CLOSE,
         false => sign::OPEN,
     };
-    sign(open, message).style(theme::button::icon)
+    signed(open, message).style(theme::button::icon)
 }
 
 /// The button that adds one more.
 pub fn add<'a, Message: Clone + 'a>(message: Message) -> Button<'a, Message> {
-    sign(sign::ADD, message).style(theme::button::text)
+    signed(sign::ADD, message).style(theme::button::text)
 }
 
 /// The button that clears a value, or takes one of many out.
 pub fn clear<'a, Message: Clone + 'a>(message: Message) -> Button<'a, Message> {
-    sign(sign::DELETE, message).style(theme::button::icon)
+    signed(sign::DELETE, message).style(theme::button::icon)
 }
 
 /// The button that deletes what has a name.
 pub fn cross<'a, Message: Clone + 'a>(message: Message) -> Button<'a, Message> {
-    sign(sign::DELETE, message).style(theme::button::danger)
+    signed(sign::DELETE, message).style(theme::button::danger)
 }
 
 /// Text that reads as code.
@@ -245,7 +245,7 @@ pub fn note<'a>(
 }
 
 /// The width of a column that holds the widest of the names of some arguments.
-pub fn names<'a>(names: impl IntoIterator<Item = &'a str>) -> f32 {
+pub fn label_width<'a>(names: impl IntoIterator<Item = &'a str>) -> f32 {
     names
         .into_iter()
         .map(|name| width_of(name, size::TEXT, font::SANS))
@@ -288,10 +288,10 @@ fn told_at<'a, Message: 'a>(
         .boxed()
 }
 
-/// An argument on a line: its name in a column of the width `names`, then its value.
+/// An argument on a line: its name in a column of this `width`, then its value.
 pub fn labelled<'a, Message: 'a>(
     name: &'a str,
-    names: f32,
+    width: f32,
     described: Option<&'a str>,
     value: impl Widget<Message> + 'a,
 ) -> Element<'a, Message> {
@@ -299,7 +299,7 @@ pub fn labelled<'a, Message: 'a>(
         .wrapping(text::Wrapping::None)
         .ellipsis(text::Ellipsis::End);
     // its name tells what it is for when hovered
-    let name = told(container(name).width(names), described.map(flowed));
+    let name = told(container(name).width(width), described.map(flowed));
     row![lined(name), value]
         .spacing(spacing::S)
         .boxed()
@@ -330,8 +330,8 @@ pub fn error<'a, Message: 'a>(message: &'a str) -> Element<'a, Message> {
         horizontal: bar(),
     };
     // the bars lie over the edges of what is seen, so the text ends clear of them
-    let clear = padding::right(theme::BAR + spacing::XXS).bottom(theme::BAR + spacing::XXS);
-    let scrolled = scrollable(container(written).padding(clear))
+    let room = padding::right(theme::BAR + spacing::XXS).bottom(theme::BAR + spacing::XXS);
+    let scrolled = scrollable(container(written).padding(room))
         .direction(direction)
         .width(Fill)
         .height(Shrink.max(extent::S))

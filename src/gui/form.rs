@@ -19,8 +19,8 @@ use super::look::{
     clear,
     field,
     fitted,
+    label_width,
     labelled,
-    names,
     note,
     pick,
     scrubbed,
@@ -167,7 +167,7 @@ pub struct Form<'a, 'c> {
     pub value: &'a Value,
     pub held: Option<&'a str>,
     /// The least width of the column of the names of the arguments.
-    pub names: f32,
+    pub label_width: f32,
     pub help: Help,
 }
 
@@ -501,13 +501,16 @@ impl<'a> Form<'a, '_> {
             .into_iter()
             .flatten();
         // as wide as the widest of the names, and what is nested starts its own column
-        let wide = names(
+        let wide = label_width(
             fields
                 .clone()
                 .map(|(name, _)| name.as_str()),
         )
-        .max(self.names);
-        let nested = Form { names: 0.0, ..self };
+        .max(self.label_width);
+        let nested = Form {
+            label_width: 0.0,
+            ..self
+        };
         column(fields.map(|(name, field)| {
             let described = field["description"].as_str();
             let field = nested.value(field, &value[name], format!("{at}/{name}"));

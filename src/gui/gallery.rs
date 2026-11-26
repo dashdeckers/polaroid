@@ -497,7 +497,7 @@ impl Gallery {
         #[cfg(not(feature = "plot"))]
         let _ = zoom;
 
-        let names = look::names(
+        let label_width = look::label_width(
             self.attributes
                 .iter()
                 .map(|attribute| {
@@ -511,7 +511,7 @@ impl Gallery {
             .iter()
             .map(|attribute| {
                 let filter = self.filter(state, attribute);
-                look::labelled(&attribute.name, names, None, filter)
+                look::labelled(&attribute.name, label_width, None, filter)
             });
         let save = picture
             .is_some()

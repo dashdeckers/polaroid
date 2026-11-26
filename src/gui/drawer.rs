@@ -273,7 +273,7 @@ impl Drawer {
                     check: &check(pipeline, registry, name),
                     value,
                     held,
-                    names: 0.0,
+                    label_width: 0.0,
                     help,
                 }
                 .view(schema)
