@@ -353,16 +353,17 @@ impl<'a> Form<'a, '_> {
             _ if is_named => self.named(shown, value, at.clone(), tone),
             Expressions::Chained if is_expression => self.chain(value, at.clone()),
             Expressions::Named if is_expression => {
-                // one that has no name is written as it is, until a name takes its place
+                // one that has no name is written as it is, before the names to take its place
                 let written =
                     (!value.is_null()).then(|| aside(methods::text(value)).font(font::MONO));
-                row![
-                    named("expression…", tone),
-                    written
-                ]
-                .spacing(spacing::S)
-                .align_y(Center)
-                .boxed()
+                let named = match written {
+                    Some(_) => named("@…", Tone::Given),
+                    None => named("expression…", tone),
+                };
+                row![written, named]
+                    .spacing(spacing::S)
+                    .align_y(Center)
+                    .boxed()
             }
             // the whole of what a form is for is not a name, unless it is any JSON
             _ if at.is_empty() && !is_free => self.plain(shown, value, at.clone(), tone),

@@ -680,7 +680,21 @@ fn a_field_that_holds_a_name_shows_it_and_what_it_stands_for() -> Result<(), Err
     ui.find("@x")?;
     ui.find(r#"pl.col("x")"#)?;
     ui.find(r#"pl.col("y")"#)?;
-    ui.find("expression…")?;
+    // written first, before the list of the names to take its place
+    let written = ui
+        .find(r#"pl.col("y")"#)?
+        .bounds();
+    let names = ui
+        .find("@…")?
+        .bounds();
+    assert!(written.x < names.x, "{written:?} {names:?}");
+    assert!(
+        ui.find("expression…")
+            .is_err()
+    );
+    // and none yet is the list alone, which says what to pick
+    let form = Shown::of("filter", json!({ "predicates": [null] }), named());
+    simulator(form.view()).find("expression…")?;
     Ok(())
 }
 
