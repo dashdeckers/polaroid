@@ -5,19 +5,20 @@ use iced::advanced::text::{self, Renderer as _};
 use iced::advanced::widget::{self, Tree, tree};
 use iced::advanced::{Renderer as _, Shell, Text, Widget, mouse, renderer};
 use iced::alignment::Vertical;
-use iced::{Border, Color, Event, Fill, Font, Length, Point, Rectangle, Renderer, Size, Theme};
+use iced::{Event, Fill, Length, Point, Rectangle, Renderer, Size, Theme};
 
+use crate::theme::{self, font, icon, sign, size, spacing, stroke};
 use crate::width_of;
 
 /// The height of a line, the size of its text, and the room left and right of that.
-const LINE: f32 = 26.0;
-const TEXT: f32 = 13.0;
-const SIDE: f32 = 12.0;
+const LINE: f32 = theme::LINE;
+const TEXT: f32 = size::TEXT;
+const SIDE: f32 = spacing::M;
 /// The room above the first line of a list and below its last.
-const EDGE: f32 = 4.0;
+const EDGE: f32 = theme::menu::EDGE;
 /// What marks a group as one that opens, and the room it takes at the end of its line.
-const OPENS: &str = "›";
-const MARK: f32 = 18.0;
+const OPENS: &str = sign::ONWARD;
+const MARK: f32 = icon::M + spacing::XXS;
 
 /// A menu of groups, each a label over items of a label and a message, at a point of its room.
 pub fn menu<Message>(
@@ -27,7 +28,7 @@ pub fn menu<Message>(
     // a list is as wide as the widest of its labels
     let wide = |labels: &mut dyn Iterator<Item = &String>| {
         labels
-            .map(|label| width_of(label, TEXT, Font::DEFAULT))
+            .map(|label| width_of(label, TEXT, font::SANS))
             .fold(0.0, f32::max)
             + 2.0 * SIDE
     };
@@ -308,51 +309,46 @@ impl<Message: Clone> Widget<Message, Theme, Renderer> for Menu<Message> {
         let hit = cursor
             .position_over(bounds)
             .map(|point| self.hit(state.open, point, bounds));
-        let palette = theme.palette();
-        let paper = palette
-            .background
-            .base;
-        let lit = palette
-            .background
-            .strong
-            .color;
-        let rim = Border {
-            color: lit,
-            width: 1.0,
-            radius: 4.0.into(),
-        };
+        let style = theme::menu::list(theme);
 
         let list = |renderer: &mut Renderer, list: Rectangle, lines: &[(&str, bool, bool)]| {
             let whole = renderer::Quad {
                 bounds: list,
-                border: rim,
+                border: style.border,
+                shadow: style.shadow,
                 ..renderer::Quad::default()
             };
-            renderer.fill_quad(whole, paper.color);
+            renderer.fill_quad(whole, style.background);
             for (index, (label, is_lit, opens)) in lines
                 .iter()
                 .enumerate()
             {
                 let line = Rectangle {
-                    x: list.x + 1.0,
+                    x: list.x + stroke::THIN,
                     y: list.y + EDGE + index as f32 * LINE,
-                    width: list.width - 2.0,
+                    width: list.width - 2.0 * stroke::THIN,
                     height: LINE,
                 };
+                // a rounded mark inside the list, under the text of the line
                 if *is_lit {
                     let under = renderer::Quad {
-                        bounds: line,
+                        bounds: line.shrink([0.0, EDGE - stroke::THIN]),
+                        border: style.mark,
                         ..renderer::Quad::default()
                     };
-                    renderer.fill_quad(under, lit);
+                    renderer.fill_quad(under, style.lit);
                 }
+                let ink = match is_lit {
+                    true => style.on_lit,
+                    false => style.text,
+                };
                 let middle = line.y + LINE / 2.0;
                 let written = |content: &str| Text {
                     content: content.to_owned(),
                     bounds: line.size(),
                     size: TEXT.into(),
-                    line_height: text::LineHeight::default(),
-                    font: Font::DEFAULT,
+                    line_height: theme::LINE_HEIGHT,
+                    font: font::SANS,
                     align_x: text::Alignment::Left,
                     align_y: Vertical::Center,
                     shaping: text::Shaping::default(),
@@ -360,7 +356,6 @@ impl<Message: Clone> Widget<Message, Theme, Renderer> for Menu<Message> {
                     ellipsis: text::Ellipsis::None,
                     hint_factor: None,
                 };
-                let ink: Color = paper.text;
                 renderer.fill_text(written(label), Point::new(line.x + SIDE, middle), ink, line);
                 if *opens {
                     let mark = Point::new(line.x + line.width - MARK, middle);

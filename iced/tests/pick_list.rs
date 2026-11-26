@@ -1,9 +1,12 @@
 //! A pick list under a simulator: closed as wide as what it shows, open as wide as its options.
 
+mod common;
+
+use common::simulator;
 use iced::widget::container;
 use iced::{Fill, Point, Rectangle, Widget};
 use iced_test::simulator::click;
-use iced_test::{Error, Simulator, simulator};
+use iced_test::{Error, Simulator};
 use polaroid_iced::{PickList, pick_list};
 
 const SHORT: &str = "a";

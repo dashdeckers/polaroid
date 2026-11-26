@@ -16,7 +16,7 @@ pub fn width_of(
         content,
         bounds: Size::INFINITE,
         size: size.into(),
-        line_height: text::LineHeight::default(),
+        line_height: crate::theme::LINE_HEIGHT,
         font,
         align_x: text::Alignment::Default,
         align_y: Vertical::Top,

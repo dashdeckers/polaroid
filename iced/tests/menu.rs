@@ -1,7 +1,10 @@
 //! The menu under a simulator: a group opens beside it, on the cursor's way or not, in its room.
 
+mod common;
+
+use common::simulator;
 use iced::{Event, Point, mouse};
-use iced_test::simulator::{Simulator, click, simulator};
+use iced_test::simulator::{Simulator, click};
 use polaroid_iced::menu;
 
 #[derive(Debug, Clone, Copy, PartialEq)]

@@ -10,7 +10,6 @@ use iced::advanced::text::{self, Renderer as _};
 use iced::advanced::widget::{self, Tree, tree};
 use iced::advanced::{Shell, Text, Widget, mouse, overlay, renderer};
 use iced::alignment::Vertical;
-use iced::overlay::menu;
 pub use iced::widget::pick_list::{Status, Style, StyleFn, default};
 use iced::widget::row;
 use iced::{
@@ -31,16 +30,14 @@ use iced::{
     window,
 };
 
+use crate::theme::{self, Tone, spacing};
 use crate::{handle, width_of};
 
 /// The room an open list has over that of its widest option, for what rounding takes.
-const SLACK: f32 = 4.0;
+const SLACK: f32 = spacing::XS;
 
-/// The room between an option and why it cannot be picked.
-const GAP: f32 = 12.0;
-
-/// How faint an option that cannot be picked is.
-const FAINT: f32 = 0.4;
+/// The room above the first option of an open list and below its last.
+const EDGE: f32 = theme::menu::EDGE;
 
 /// A list of `options` that shows the one `selected`, each as the text that `to_string` gives.
 pub fn pick_list<'a, T: Clone + PartialEq, Message>(
@@ -56,11 +53,10 @@ pub fn pick_list<'a, T: Clone + PartialEq, Message>(
         disabled: None,
         placeholder: String::new(),
         width: Length::Shrink,
-        padding: Padding::new(5.0).horizontal(10),
+        padding: theme::FIELD,
         text_size: None,
         font: None,
-        style: Box::new(default),
-        menu_style: Box::new(menu::default),
+        style: Box::new(theme::pick_list::toned(Tone::Given)),
         status: None,
     }
 }
@@ -79,7 +75,6 @@ pub struct PickList<'a, T, Message> {
     text_size: Option<Pixels>,
     font: Option<Font>,
     style: StyleFn<'a, Theme>,
-    menu_style: menu::StyleFn<'a, Theme>,
     /// How it was at the latest frame, which tells when to draw it again.
     status: Option<Status>,
 }
@@ -150,7 +145,7 @@ impl<'a, T, Message> PickList<'a, T, Message> {
             self,
             handle().on_scrub_maybe(step)
         ]
-        .spacing(2)
+        .spacing(spacing::XXS)
         .align_y(Center)
         ._boxed()
     }
@@ -233,7 +228,7 @@ impl<'a, T, Message> PickList<'a, T, Message> {
         &self,
         size: Pixels,
     ) -> f32 {
-        text::LineHeight::default()
+        theme::LINE_HEIGHT
             .to_absolute(size)
             .0
             + self.padding.y()
@@ -286,7 +281,7 @@ impl<T: Clone + PartialEq, Message> Widget<Message, Theme, Renderer> for PickLis
         limits: &layout::Limits,
     ) {
         let (font, size) = self.text(renderer);
-        let line = text::LineHeight::default().to_absolute(size);
+        let line = theme::LINE_HEIGHT.to_absolute(size);
         // its text, and beside that the arrow
         let wide = match self.width {
             Length::Shrink => width_of(&self.shown(), size.0, font).ceil(),
@@ -359,7 +354,8 @@ impl<T: Clone + PartialEq, Message> Widget<Message, Theme, Renderer> for PickLis
                     .iter()
                     .map(|option| {
                         let why = self.why(option);
-                        wide((self.to_string)(option)) + why.map_or(0.0, |why| GAP + wide(why))
+                        wide((self.to_string)(option))
+                            + why.map_or(0.0, |why| theme::menu::GAP + wide(why))
                     })
                     .fold(0.0, f32::max);
                 shell.capture_event();
@@ -476,12 +472,12 @@ impl<T: Clone + PartialEq, Message> Widget<Message, Theme, Renderer> for PickLis
             content,
             bounds: Size::new(
                 bounds.width - self.padding.x(),
-                text::LineHeight::default()
+                theme::LINE_HEIGHT
                     .to_absolute(size)
                     .0,
             ),
             size,
-            line_height: text::LineHeight::default(),
+            line_height: theme::LINE_HEIGHT,
             font,
             align_x,
             align_y: Vertical::Center,
@@ -541,7 +537,7 @@ impl<T: Clone + PartialEq, Message> Widget<Message, Theme, Renderer> for PickLis
 
         // under it, or over it where there is more room, and scrolled where there is too little
         let row = self.row(size);
-        let all = self.options.len() as f32 * row;
+        let all = self.options.len() as f32 * row + 2.0 * EDGE;
         let below = window.height - (position.y + bounds.height);
         let height = all.min(below.max(position.y));
         let y = match all <= below || below >= position.y {
@@ -559,7 +555,6 @@ impl<T: Clone + PartialEq, Message> Widget<Message, Theme, Renderer> for PickLis
                 .disabled
                 .as_deref(),
             on_select,
-            style: &self.menu_style,
             bounds: Rectangle::new(Point::new(position.x, y), Size::new(width, height)),
             row,
             padding: self.padding,
@@ -579,7 +574,6 @@ struct List<'a, 'b, T, Message> {
     to_string: &'b (dyn Fn(&T) -> String + 'a),
     disabled: Option<&'b (dyn Fn(&T) -> Option<String> + 'a)>,
     on_select: &'b (dyn Fn(T) -> Message + 'a),
-    style: &'b menu::StyleFn<'a, Theme>,
     /// Where it lies in the window.
     bounds: Rectangle,
     /// How tall a row is.
@@ -596,8 +590,9 @@ impl<T, Message> List<'_, '_, T, Message> {
         cursor: mouse::Cursor,
     ) -> Option<usize> {
         let point = cursor.position_over(self.bounds)?;
-        let at = ((point.y - self.bounds.y + self.state.offset) / self.row) as usize;
-        (at < self.options.len()).then_some(at)
+        let down = point.y - self.bounds.y - EDGE + self.state.offset;
+        let at = (down / self.row) as usize;
+        (down >= 0.0 && at < self.options.len()).then_some(at)
     }
 
     /// Where the row of the option at `at` lies, scrolled.
@@ -605,7 +600,7 @@ impl<T, Message> List<'_, '_, T, Message> {
         &self,
         at: usize,
     ) -> Rectangle {
-        let y = self.bounds.y + at as f32 * self.row - self.state.offset;
+        let y = self.bounds.y + EDGE + at as f32 * self.row - self.state.offset;
         Rectangle::new(
             Point::new(self.bounds.x, y),
             Size::new(self.bounds.width, self.row),
@@ -662,7 +657,7 @@ impl<T: Clone, Message> overlay::Overlay<Message, Theme, Renderer> for List<'_, 
                     mouse::ScrollDelta::Lines { y, .. } => y * self.row,
                     mouse::ScrollDelta::Pixels { y, .. } => *y,
                 };
-                let most = self.options.len() as f32 * self.row - self.bounds.height;
+                let most = self.options.len() as f32 * self.row + 2.0 * EDGE - self.bounds.height;
                 self.state.offset = (self.state.offset - by).clamp(0.0, most.max(0.0));
                 shell.capture_event();
                 shell.request_redraw();
@@ -712,14 +707,14 @@ impl<T: Clone, Message> overlay::Overlay<Message, Theme, Renderer> for List<'_, 
     ) {
         use iced::advanced::Renderer as _;
 
-        let style = (self.style)(theme);
+        let style = theme::menu::list(theme);
         let bounds = self.bounds;
         let hint = renderer.hint_factor();
         let line = |content: String, row: Rectangle, align_x: text::Alignment| Text {
             content,
             bounds: Size::new(row.width - self.padding.x(), row.height),
             size: self.size,
-            line_height: text::LineHeight::default(),
+            line_height: theme::LINE_HEIGHT,
             font: self.font,
             align_x,
             align_y: Vertical::Center,
@@ -739,8 +734,9 @@ impl<T: Clone, Message> overlay::Overlay<Message, Theme, Renderer> for List<'_, 
                 style.background,
             );
             // the rows in view alone
-            let first = (self.state.offset / self.row) as usize;
-            let last = ((self.state.offset + bounds.height) / self.row).ceil() as usize;
+            let above = self.state.offset - EDGE;
+            let first = (above / self.row) as usize;
+            let last = ((above + bounds.height) / self.row).ceil() as usize;
             for at in first..last.min(self.options.len()) {
                 let row = self.row(at);
                 let why = self.why(at);
@@ -748,19 +744,17 @@ impl<T: Clone, Message> overlay::Overlay<Message, Theme, Renderer> for List<'_, 
                 if is_lit {
                     renderer.fill_quad(
                         renderer::Quad {
-                            bounds: row,
-                            border: style.border,
+                            bounds: row.shrink([0.0, EDGE]),
+                            border: style.mark,
                             ..renderer::Quad::default()
                         },
-                        style.selected_background,
+                        style.lit,
                     );
                 }
                 let color = match (&why, is_lit) {
-                    (Some(_), _) => style
-                        .text_color
-                        .scale_alpha(FAINT),
-                    (None, true) => style.selected_text_color,
-                    (None, false) => style.text_color,
+                    (Some(_), _) => style.disabled,
+                    (None, true) => style.on_lit,
+                    (None, false) => style.text,
                 };
                 let option = (self.to_string)(&self.options[at]);
                 let left = Point::new(row.x + self.padding.left, row.center_y());
@@ -776,7 +770,7 @@ impl<T: Clone, Message> overlay::Overlay<Message, Theme, Renderer> for List<'_, 
                     renderer.fill_text(
                         line(why, row, text::Alignment::Right),
                         right,
-                        color,
+                        style.aside,
                         bounds,
                     );
                 }
