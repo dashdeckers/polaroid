@@ -9,15 +9,17 @@ use iced::time::Instant;
 use iced::widget::{container, text};
 use iced::{Element, Event, Length, Point, Rectangle, Renderer, Size, Theme, Vector, window};
 
+use crate::theme::{self, sign, size, spacing};
+
 /// How far a press is dragged before it adjusts, and how far then for each step.
-const START: f32 = 4.0;
-const STEP: f32 = 6.0;
+const START: f32 = theme::DRAG;
+const STEP: f32 = theme::scrub::STEP;
 
 /// The pixels a second up to which a drag steps evenly.
-const SLOW: f32 = 200.0;
+const SLOW: f32 = theme::scrub::SLOW;
 /// How steeply a drag steps more as it gets faster than that, and the most it ever does.
-const POWER: f32 = 1.5;
-const MOST: f32 = 40.0;
+const POWER: f32 = theme::scrub::POWER;
+const MOST: f32 = theme::scrub::MOST;
 
 /// How many times the steps of a slow drag one at `speed` makes, in pixels a second.
 fn gain(speed: f32) -> f32 {
@@ -27,12 +29,15 @@ fn gain(speed: f32) -> f32 {
         .min(MOST)
 }
 
-/// What a handle shows: arrows up and down.
-pub const HANDLE: &str = "↕";
+/// What a handle shows: arrows up and down, of a sign that no font draws as a coloured emoji.
+pub const HANDLE: &str = sign::SCRUB;
 
 /// A small handle to set beside a field, which a drag up or down from the handle is to adjust.
 pub fn handle<'a, Message: 'a>() -> Scrub<'a, Message> {
-    scrub(container(text(HANDLE).size(14)).padding([0, 3])).upward()
+    let arrows = text(HANDLE)
+        .size(size::TITLE)
+        .style(theme::text::muted);
+    scrub(container(arrows).padding([0.0, spacing::XXS])).upward()
 }
 
 /// A field that nothing adjusts until it is told what a drag asks for.

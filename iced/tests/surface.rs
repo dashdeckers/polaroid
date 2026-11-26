@@ -1,10 +1,13 @@
 //! The surface under a simulator: whose state a card keeps, who takes a press, drags and zoom.
 
+mod common;
+
+use common::simulator;
 use iced::mouse::{self, ScrollDelta};
 use iced::widget::{button, column, container, pick_list, space, text, text_input};
 use iced::{Event, Fill, Point, Rectangle, Size, Transformation, Widget};
 use iced_test::selector::id;
-use iced_test::simulator::{Simulator, click, simulator};
+use iced_test::simulator::{Simulator, click};
 use polaroid_iced::{card, surface};
 
 const KINDS: [&str; 3] = ["filter", "select", "join"];

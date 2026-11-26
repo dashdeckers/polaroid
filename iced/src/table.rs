@@ -1,20 +1,20 @@
 //! A table under its headings: only the cells in view are drawn, whatever its size.
 
 use iced::alignment::Vertical;
-use iced::font::Weight;
 use iced::keyboard::{self, Key};
 use iced::widget::canvas::{self, Frame};
 use iced::widget::text;
-use iced::{Color, Font, Point, Rectangle, Renderer, Size, Theme, mouse};
+use iced::{Color, Point, Rectangle, Renderer, Size, Theme, mouse};
 
+use crate::theme::{self, Scheme, extent, font, opacity, size, spacing, stroke};
 use crate::width_of;
 
 /// The height of a row, and of the names of the columns over their kinds.
-const ROW: f32 = 20.0;
-const HEADER: f32 = 38.0;
-const COLUMN: f32 = 140.0;
-const PAD: f32 = 6.0;
-const TEXT: f32 = 12.0;
+const ROW: f32 = theme::line(TEXT) + spacing::XS;
+const HEADER: f32 = ROW + theme::line(TEXT);
+const COLUMN: f32 = extent::S;
+const PAD: f32 = spacing::S;
+const TEXT: f32 = size::NOTE;
 
 /// A row and a column.
 type Cell = (usize, usize);
@@ -81,7 +81,7 @@ impl<'a> Table<'a> {
     /// The width of the numbers of the rows, left of the cells.
     fn gutter(&self) -> f32 {
         match self.cells {
-            Some((rows, _)) => 2.0 * PAD + width_of(&rows.to_string(), TEXT, Font::DEFAULT),
+            Some((rows, _)) => 2.0 * PAD + width_of(&rows.to_string(), TEXT, font::SANS),
             None => 0.0,
         }
     }
@@ -272,11 +272,9 @@ impl canvas::Program<Asked> for Table<'_> {
         bounds: Rectangle,
         _cursor: mouse::Cursor,
     ) -> Vec<canvas::Geometry> {
-        let palette = theme.palette();
-        let back = palette.background;
-        let ink = back.base.text;
-        let muted = back.strongest.color;
-        let bold = Font::DEFAULT.weight(Weight::Bold);
+        let scheme = Scheme::of(theme);
+        let ink = scheme.on_surface;
+        let muted = scheme.on_surface_variant;
         let body = self.body(bounds.size());
 
         let first = view.row.floor() as usize;
@@ -288,19 +286,20 @@ impl canvas::Program<Asked> for Table<'_> {
         let down = |row: usize| body.y + (row - first) as f32 * ROW;
         let along = |column: usize| body.x - view.x + column as f32 * COLUMN;
 
+        // on whatever it lies on, as a card
         let mut frame = Frame::new(renderer, bounds.size());
-        frame.fill_rectangle(Point::ORIGIN, bounds.size(), back.base.color);
         for row in rows
             .clone()
             .filter(|row| row % 2 == 1)
         {
             let stripe = Size::new(bounds.width, ROW);
-            frame.fill_rectangle(Point::new(0.0, down(row)), stripe, back.weakest.color);
+            let tint = ink.scale_alpha(opacity::STRIPE);
+            frame.fill_rectangle(Point::new(0.0, down(row)), stripe, tint);
         }
         frame.fill_rectangle(
-            Point::new(0.0, HEADER - 1.0),
-            Size::new(bounds.width, 1.0),
-            muted,
+            Point::new(0.0, HEADER - stroke::THIN),
+            Size::new(bounds.width, stroke::THIN),
+            scheme.outline_variant,
         );
 
         // the numbers of the rows stay put, left of whatever is scrolled to
@@ -316,7 +315,7 @@ impl canvas::Program<Asked> for Table<'_> {
                 let numeric = column.is_numeric;
                 let x = along(index);
                 frame.fill_text(canvas::Text {
-                    font: bold,
+                    font: font::BOLD,
                     ..line(column.name, x, 0.0, COLUMN, numeric, ink)
                 });
                 frame.fill_text(line(&column.kind, x, HEADER - ROW, COLUMN, numeric, muted));
@@ -333,10 +332,9 @@ impl canvas::Program<Asked> for Table<'_> {
                     (c1 - c0 + 1) as f32 * COLUMN,
                     (r1 + 1).saturating_sub(r0) as f32 * ROW,
                 );
-                let selected = palette
+                let selected = scheme
                     .primary
-                    .weak
-                    .color;
+                    .container;
                 frame.fill_rectangle(Point::new(along(c0), down(r0)), size, selected);
             }
             for index in shown {
@@ -386,6 +384,7 @@ fn line(
         max_width: width - 2.0 * PAD,
         wrapping: text::Wrapping::None,
         ellipsis: text::Ellipsis::End,
+        font: font::SANS,
         ..canvas::Text::default()
     }
 }

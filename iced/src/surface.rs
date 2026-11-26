@@ -27,23 +27,26 @@ use iced::{
 };
 
 use crate::seen::Seen;
+use crate::theme::{self, HALO, Scheme, motion, spacing, stroke};
 
 /// How much one step of the wheel zooms.
-const STEP: f32 = 1.1;
+const STEP: f32 = theme::surface::ZOOM_STEP;
 /// How far out and in a surface zooms.
-const ZOOM: (f32, f32) = (0.25, 2.5);
+const ZOOM: (f32, f32) = theme::surface::ZOOM;
 /// How long after the last step of the wheel a zoom is settled, and is told.
-const SETTLE: Duration = Duration::from_millis(200);
+const SETTLE: Duration = motion::SHORT;
 /// The radius of a port; a press twice as far from its middle still takes it.
-const PORT: f32 = 5.0;
+const PORT: f32 = theme::surface::PORT;
 /// The corner of a card that resizes it.
-const GRIP: f32 = 14.0;
+const GRIP: f32 = theme::surface::GRIP;
+/// The radius of a dot of that corner, and how far in from its edges the dots lie.
+const SPECK: f32 = theme::surface::SPECK;
+const NEAR: f32 = spacing::S;
+const FAR: f32 = NEAR + PORT;
 /// How much of the smaller of two cards lies on the other for a drop to swap them.
-const OVERLAP: f32 = 0.5;
+const OVERLAP: f32 = theme::surface::OVERLAP;
 /// How long a dragged card lies on another before a drop swaps them, which a halo then shows.
-const HOVER: Duration = Duration::from_millis(400);
-/// How thick the halo is around a card that a drop swaps the dragged one with.
-const HALO: f32 = 4.0;
+const HOVER: Duration = motion::MEDIUM;
 
 /// An empty surface.
 pub fn surface<'a, Key, Message>() -> Surface<'a, Key, Message> {
@@ -988,11 +991,8 @@ where
             .hit(tree, view, local)
             .filter(|_| is_free && cursor.is_over(bounds));
         let seen = clip * view.inverse();
-        let palette = theme.palette();
-        let muted = palette
-            .background
-            .strongest
-            .color;
+        let scheme = Scheme::of(theme);
+        let muted = scheme.outline;
 
         let mut wires = Frame::new(renderer, seen.size());
         wires.translate(Point::ORIGIN - seen.position());
@@ -1007,11 +1007,7 @@ where
         if let Some(Drag::Wire(from, to)) = &state.drag
             && let Some(from) = self.port(tree, view, from, None)
         {
-            let active = palette
-                .primary
-                .base
-                .color;
-            wire(&mut wires, from, *to, active);
+            wire(&mut wires, from, *to, scheme.primary.color);
         }
 
         renderer.with_layer(clip, |renderer| {
@@ -1043,27 +1039,27 @@ where
                         if let Some(handle) = card.handle {
                             // six dots in its middle
                             let middle = bounds.position() + (handle.center() - Point::ORIGIN);
-                            for (x, y) in [-2.5, 2.5]
+                            for (x, y) in [-PORT / 2.0, PORT / 2.0]
                                 .into_iter()
-                                .flat_map(|x| [-5.0, 0.0, 5.0].map(|y| (x, y)))
+                                .flat_map(|x| [-PORT, 0.0, PORT].map(|y| (x, y)))
                             {
                                 let dot = Rectangle::new(middle + Vector::new(x, y), Size::ZERO);
-                                renderer.fill_quad(quad(dot.expand(1.5), 1.5), muted);
+                                renderer.fill_quad(quad(dot.expand(SPECK), SPECK), muted);
                             }
                         }
                         if card.is_resizable {
                             // three dots along the corner
                             for (x, y) in [
-                                (8.0, 8.0),
-                                (13.0, 8.0),
-                                (8.0, 13.0),
+                                (NEAR, NEAR),
+                                (FAR, NEAR),
+                                (NEAR, FAR),
                             ] {
                                 let corner = Point::new(
                                     bounds.x + bounds.width - x,
                                     bounds.y + bounds.height - y,
                                 );
-                                let dot = Rectangle::new(corner, Size::ZERO).expand(1.5);
-                                renderer.fill_quad(quad(dot, 1.5), muted);
+                                let dot = Rectangle::new(corner, Size::ZERO).expand(SPECK);
+                                renderer.fill_quad(quad(dot, SPECK), muted);
                             }
                         }
                     });
@@ -1078,25 +1074,16 @@ where
                             .laid_out(tree, view)
                             .find(|(_, card, ..)| card.key == swap.target)?;
                         let color = match swap.is_possible {
-                            true => {
-                                palette
-                                    .primary
-                                    .base
-                                    .color
-                            }
-                            false => {
-                                palette
-                                    .danger
-                                    .base
-                                    .color
-                            }
+                            true => scheme.primary.color,
+                            false => scheme.error.color,
                         };
                         Some((layout.bounds(), color))
                     });
                 if let Some((bounds, color)) = halo {
+                    // round as the card it lies around
                     let halo = renderer::Quad {
                         bounds: bounds.expand(HALO),
-                        border: border::rounded(HALO + 5.0)
+                        border: border::rounded(theme::surface::CORNER + HALO)
                             .color(color)
                             .width(HALO),
                         ..renderer::Quad::default()
@@ -1197,15 +1184,15 @@ fn wire(
     to: Point,
     color: Color,
 ) {
-    let bend = Vector::new(((to.x - from.x).abs() / 2.0).max(40.0), 0.0);
+    let bend = Vector::new(((to.x - from.x).abs() / 2.0).max(theme::surface::BEND), 0.0);
     let path = Path::new(|path| {
         path.move_to(from);
         path.bezier_curve_to(from + bend, to - bend, to);
     });
-    let stroke = Stroke::default()
+    let line = Stroke::default()
         .with_color(color)
-        .with_width(2.0);
-    frame.stroke(&path, stroke);
+        .with_width(stroke::MEDIUM);
+    frame.stroke(&path, line);
 }
 
 /// What a card opens over the window, zoomed as its card is.

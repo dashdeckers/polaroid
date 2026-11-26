@@ -1,11 +1,14 @@
 //! A scrubbed field under a simulator: a drag across it steps, and a press alone is the field's.
 
+mod common;
+
 use std::time::Duration;
 
+use common::simulator;
 use iced::time::Instant;
 use iced::widget::text_input;
 use iced::{Event, Point, Widget, mouse, window};
-use iced_test::{Simulator, simulator};
+use iced_test::Simulator;
 use polaroid_iced::scrub;
 
 /// A field that asks for 0 when typed in, and for the steps of a drag across it.

@@ -1,9 +1,12 @@
 //! The split under a simulator: its edge is dragged, its side hidden, and its parts left alone.
 
+mod common;
+
+use common::simulator;
 use iced::event::Status;
 use iced::widget::text;
 use iced::{Event, Point, Widget, mouse};
-use iced_test::simulator::{Simulator, simulator};
+use iced_test::simulator::Simulator;
 use polaroid_iced::split;
 
 fn scene(is_shown: bool) -> impl Widget<()> {

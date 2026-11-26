@@ -5,11 +5,13 @@ use iced::advanced::widget::{self, Tree, tree};
 use iced::advanced::{Renderer as _, Shell, Widget, mouse, overlay, renderer};
 use iced::{Element, Event, Fill, Length, Rectangle, Renderer, Size, Theme, Vector};
 
+use crate::theme::{Scheme, extent, spacing, stroke};
+
 /// The width of the edge, and how far beside it a press still takes it.
-const EDGE: f32 = 1.0;
-const REACH: f32 = 4.0;
+const EDGE: f32 = stroke::THIN;
+const REACH: f32 = spacing::XS;
 /// The least that the side and the main part are wide.
-const LEAST: f32 = 120.0;
+const LEAST: f32 = extent::S;
 
 /// A side on the left of a main part.
 pub fn split<'a, Message>(
@@ -18,7 +20,7 @@ pub fn split<'a, Message>(
 ) -> Split<'a, Message> {
     Split {
         parts: [side._boxed(), main._boxed()],
-        width: 320.0,
+        width: extent::XL,
         is_shown: true,
     }
 }
@@ -275,23 +277,11 @@ impl<Message> Widget<Message, Theme, Renderer> for Split<'_, Message> {
             let state = tree
                 .state
                 .downcast_ref::<State>();
-            let palette = theme.palette();
+            let scheme = Scheme::of(theme);
             // wider and in colour where a press would take it
             let (grown, color) = match state.is_dragged || state.is_lit {
-                true => (
-                    1.0,
-                    palette
-                        .primary
-                        .base
-                        .color,
-                ),
-                false => (
-                    0.0,
-                    palette
-                        .background
-                        .strong
-                        .color,
-                ),
+                true => (stroke::THIN, scheme.primary.color),
+                false => (0.0, scheme.outline_variant),
             };
             let line = Rectangle {
                 x: edge.x + REACH - grown,

@@ -1,14 +1,18 @@
 //! The widgets together: cards on a surface beside a list of them, and a menu to add more.
 
 use iced::advanced::widget::Id;
-use iced::widget::{button, column, container, pick_list, row, stack, text, text_input};
+use iced::widget::{button, column, container, row, stack, text, text_input};
 use iced::{Fill, Point, Widget};
-use polaroid_iced::{menu, split, surface};
+use polaroid_iced::theme::{self, Tone, extent, spacing};
+use polaroid_iced::{menu, pick_list, split, surface};
 
 const KINDS: [&str; 3] = ["filter", "select", "join"];
 
 pub fn main() -> iced::Result {
-    iced::run(Example::update, Example::view)
+    iced::application(Example::default, Example::update, Example::view)
+        .settings(theme::settings())
+        .theme(theme::light())
+        .run()
 }
 
 struct Example {
@@ -115,21 +119,28 @@ impl Example {
             let content = column![
                 // the port of its input is level with its title
                 container(text!("card {id}")).id("title"),
-                text_input("name", &card.name).on_input(move |name| Message::Named(id, name)),
-                pick_list(card.kind, KINDS, |kind| kind.to_string())
+                text_input("name", &card.name)
+                    .on_input(move |name| Message::Named(id, name))
+                    .padding(theme::FIELD)
+                    .style(theme::text_input::toned(Tone::Given)),
+                pick_list(card.kind, KINDS.to_vec(), |kind: &&str| kind.to_string())
                     .on_select(move |kind| Message::Picked(id, kind))
                     .placeholder("kind"),
                 row![
-                    button("raise").on_press(Message::Raised(id)),
-                    button("delete").on_press(Message::Deleted(id)),
+                    button("raise")
+                        .style(theme::button::tonal)
+                        .on_press(Message::Raised(id)),
+                    button("delete")
+                        .style(theme::button::text)
+                        .on_press(Message::Deleted(id)),
                 ]
-                .spacing(8),
+                .spacing(spacing::S),
             ]
-            .spacing(8);
+            .spacing(spacing::S);
             let content = container(content)
-                .width(220)
-                .padding(12)
-                .style(container::bordered_box);
+                .width(extent::M)
+                .padding(spacing::M)
+                .style(theme::container::card);
             let on_surface = polaroid_iced::card(id, card.at, content)
                 .ports([Id::new("title")])
                 .output(24.0);
@@ -157,9 +168,9 @@ impl Example {
             .cards
             .iter()
             .map(|card| text!("card {}: {}", card.id, card.name).boxed());
-        let list = container(column(names).spacing(4))
-            .padding(12)
+        let list = container(column(names).spacing(spacing::XS))
+            .padding(spacing::M)
             .width(Fill);
-        split(list, stack![cards, menu]).width(200.0)
+        split(list, stack![cards, menu]).width(extent::M)
     }
 }

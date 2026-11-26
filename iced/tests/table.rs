@@ -1,11 +1,14 @@
 //! The table under a simulator: its least height, and cells selected, scrolled to and copied.
 
+mod common;
+
+use common::simulator;
 use iced::event::Status;
 use iced::keyboard::{self, Key, Modifiers};
 use iced::mouse::{self, ScrollDelta};
 use iced::widget::canvas;
 use iced::{Event, Point, Widget};
-use iced_test::simulator::{Simulator, press_key, simulator};
+use iced_test::simulator::{Simulator, press_key};
 use polaroid_iced::{Asked, Heading, Table, table};
 
 /// A table of this many columns and rows, in which a cell says its row and its column.
@@ -33,13 +36,13 @@ fn scene<'a>(table: Table<'a>) -> impl Widget<Asked> + use<'a> {
         .height(height)
 }
 
-/// The middle of a cell in view: a column is 140 wide, a row 20 high below a header of 38.
+/// The middle of a cell in view: a column is 140 wide, a row 21 high below a header of 38.
 fn cell(
     row: usize,
     column: usize,
 ) -> Point {
     // right of the numbers of the rows, which are less than 60 wide
-    Point::new(100.0 + 140.0 * column as f32, 48.0 + 20.0 * row as f32)
+    Point::new(100.0 + 140.0 * column as f32, 48.0 + 21.0 * row as f32)
 }
 
 /// Presses at a point, moves to another and lets go there.
@@ -90,9 +93,9 @@ fn wheel(
 
 #[test]
 fn it_is_as_tall_as_its_header_and_up_to_five_rows_at_the_least() {
-    assert_eq!(cells(1, 0).least(), 38.0 + 20.0);
-    assert_eq!(cells(1, 3).least(), 38.0 + 3.0 * 20.0);
-    assert_eq!(cells(1, 40).least(), 38.0 + 5.0 * 20.0);
+    assert_eq!(cells(1, 0).least(), 38.0 + 21.0);
+    assert_eq!(cells(1, 3).least(), 38.0 + 3.0 * 21.0);
+    assert_eq!(cells(1, 40).least(), 38.0 + 5.0 * 21.0);
     // without rows it is its header alone
     assert_eq!(table(Vec::new()).least(), 38.0);
 }
