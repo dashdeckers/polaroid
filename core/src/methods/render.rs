@@ -67,9 +67,12 @@ pub fn arguments(
     }
 
     // the inputs, as far as the last that is not at its default
+    // and one that may be left out is set where it is there
     let is_set = |input: &Arg| {
-        let value = pointer(node, &input.at);
-        input.is_variadic || value.is_null() || value != pointer(&method.node, &input.at)
+        node.pointer(&input.at)
+            .is_some_and(|value| {
+                input.is_variadic || value.is_null() || value != pointer(&method.node, &input.at)
+            })
     };
     let shown = method
         .inputs

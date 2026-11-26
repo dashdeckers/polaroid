@@ -116,6 +116,7 @@ impl Beside for Result<Method, String> {
                     name: name.to_owned(),
                     at,
                     is_variadic: false,
+                    is_optional: false,
                 });
         }
         Ok(method)
@@ -162,10 +163,19 @@ impl Namespace {
                     (name, list, true)
                 }
             };
+            let (name, is_optional) = match name.strip_prefix('?') {
+                None => (name, false),
+                Some(name) => {
+                    last_of_list(&mut node, &at)
+                        .ok_or_else(|| problem("a `?` input is not the last of a list"))?;
+                    (name, true)
+                }
+            };
             args.push(Arg {
                 name: name.to_owned(),
                 at,
                 is_variadic,
+                is_optional,
             });
         }
 
@@ -224,6 +234,18 @@ fn alone_in_list(
     })
 }
 
+/// Takes the value at `at` out of the list that it is the last of.
+fn last_of_list(
+    node: &mut Value,
+    at: &str,
+) -> Option<Value> {
+    let (list, index) = at.rsplit_once('/')?;
+    let items = node
+        .pointer_mut(list)?
+        .as_array_mut()?;
+    (index.parse() == Ok(items.len() - 1)).then(|| items.pop())?
+}
+
 /// The variant of the enum at `at` in `node`, and its payload if it has one.
 fn variant<'a>(
     node: &'a Value,
@@ -274,6 +296,7 @@ fn options(
         name,
         at,
         is_variadic: false,
+        is_optional: false,
     };
     let lists_fields = |others: &[&str]| {
         others

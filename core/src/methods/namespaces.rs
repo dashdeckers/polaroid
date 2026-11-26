@@ -1,4 +1,5 @@
-//! The tables. A row calls the Rust method with Python's defaults; `*` marks a variadic input.
+//! The tables. A row calls the Rust method with Python's defaults; `*` marks a variadic input, `?`
+//! one that may be left out.
 
 mod array;
 mod binary;

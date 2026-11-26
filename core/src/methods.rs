@@ -42,6 +42,8 @@ pub struct Arg {
     pub at: String,
     /// Whether its value is a list of any number of expressions.
     pub is_variadic: bool,
+    /// Whether it may be left out: the last of its list, and in it only where it is given.
+    pub is_optional: bool,
 }
 
 impl Method {
@@ -90,6 +92,14 @@ impl Method {
             return true;
         }
 
+        // one more than the template holds is an input that may be left out, given
+        let is_given = match (template, node) {
+            (Value::Array(template), Value::Array(node)) => {
+                node.len() == template.len() + 1
+                    && self.is_slot(&format!("{at}/{}", template.len()))
+            }
+            _ => false,
+        };
         let len = at.len();
         let mut child = |key: &dyn Display, template, node| {
             let _ = write!(at, "/{key}");
@@ -108,7 +118,7 @@ impl Method {
                         })
             }
             (Value::Array(template), Value::Array(node)) => {
-                template.len() == node.len()
+                (template.len() == node.len() || is_given)
                     && template
                         .iter()
                         .zip(node)

@@ -2,7 +2,7 @@
 
 use std::collections::BTreeSet;
 
-use polaroid::methods::{Arg, Method, methods, read};
+use polaroid::methods::{Arg, Method, methods, read, text};
 use polaroid::polars::prelude::*;
 use polaroid::schema::{self, resolve, variants};
 use schemars::generate::SchemaSettings;
@@ -91,7 +91,12 @@ pub fn method<'a>(
 /// The node of `method` on a column `receiver`, each input a column of its name.
 fn filled(method: &Method) -> Value {
     let mut node = method.call(json!({ "Column": "receiver" }));
-    for input in &method.inputs {
+    // an input that may be left out is left out
+    for input in method
+        .inputs
+        .iter()
+        .filter(|input| !input.is_optional)
+    {
         let column = json!({ "Column": input.name });
         let value = node
             .pointer_mut(&input.at)
@@ -343,6 +348,39 @@ fn a_call_is_what_polars_builds() {
         clip_min
             .options
             .is_empty()
+    );
+}
+
+#[test]
+fn an_input_that_may_be_left_out_is_read_given_or_not() {
+    let replace = method(methods(), "", "replace_strict");
+    let bare = col("a").replace_strict(lit(1), lit(2), None, None::<DataType>);
+    let given = col("a").replace_strict(lit(1), lit(2), Some(lit(0)), None::<DataType>);
+    assert!(replace.reads(&json_of(bare.clone())));
+    assert!(replace.reads(&json_of(given.clone())));
+    assert_eq!(
+        text(&json_of(bare)),
+        r#"pl.col("a").replace_strict(1, 2, …)"#
+    );
+    assert_eq!(
+        text(&json_of(given)),
+        r#"pl.col("a").replace_strict(1, 2, 0, …)"#
+    );
+
+    // it is the last of its list, and there only where it is given
+    let default = replace
+        .inputs
+        .last()
+        .expect("it takes inputs");
+    assert!(default.is_optional);
+    assert_eq!(default.at, "/Function/input/3");
+    assert_eq!(
+        filled(replace)["Function"]["input"],
+        json!([
+            { "Column": "receiver" },
+            { "Column": "old" },
+            { "Column": "new" }
+        ])
     );
 }
 
