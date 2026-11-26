@@ -22,6 +22,7 @@ use super::look::{
     fitted,
     label_width,
     labelled,
+    lined,
     note,
     pick,
     scrubbed,
@@ -349,13 +350,13 @@ impl<'a> Form<'a, '_> {
             }
         };
         // the same widgets whatever it holds, so that what has the focus keeps it
+        // and what clears it and why on its first line, however many it takes
         row![
             form,
-            clear,
-            why.map(|why| note(why, Tone::Refused))
+            clear.map(lined),
+            why.map(|why| lined(note(why, Tone::Refused)))
         ]
         .spacing(spacing::XS)
-        .align_y(Center)
         .boxed()
     }
 
