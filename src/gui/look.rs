@@ -159,6 +159,24 @@ pub fn small<'a, Message: Clone + 'a>(
         .on_press(message)
 }
 
+/// A button of the toolbar around `content`, as tall as a pill.
+pub fn pill<'a, Message: Clone + 'a>(content: impl Widget<Message> + 'a) -> Button<'a, Message> {
+    button(
+        container(content)
+            .center_y(Fill)
+            .boxed(),
+    )
+    .height(control::M)
+    .padding([0.0, theme::BUTTON.left])
+}
+
+/// What a pill of the toolbar says.
+pub fn title<'a>(label: impl Into<String>) -> Text<'a> {
+    text(label.into())
+        .size(size::TITLE)
+        .center()
+}
+
 /// A round button of the size of a sign, around `content` in the middle of it.
 pub fn round<'a, Message: Clone + 'a>(content: impl Widget<Message> + 'a) -> Button<'a, Message> {
     button(center(content).boxed())

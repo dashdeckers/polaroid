@@ -15,13 +15,12 @@ use std::time::Duration;
 
 use iced::keyboard::key::Named;
 use iced::keyboard::{self, Key};
-use iced::widget::{button, column, component, container, markdown, row, rule, space, stack, text};
+use iced::widget::{column, component, container, markdown, row, rule, space, stack, text};
 use iced::{
+    Bottom,
     Center,
-    Fill,
     Function,
     Point,
-    Shrink,
     Size,
     Subscription,
     Task,
@@ -31,14 +30,15 @@ use iced::{
     system,
     task,
 };
-use polaroid_iced::theme::{self, size};
-use polaroid_iced::{Menu, Surface, menu, scrub, split, surface};
+use polaroid_iced::theme::button::Segment;
+use polaroid_iced::theme::{self, motion, size, spacing, stroke};
+use polaroid_iced::{Menu, Surface, menu, scrub, split, surface, switch};
 use serde_json::Value;
 
 use self::card::Edit;
 use self::drawer::Drawer;
 use self::known::Known;
-use self::look::{Help, error};
+use self::look::{Help, error, pill, title};
 use crate::polars::prelude::{DataFrame, DataType, PolarsResult, polars_err};
 use crate::{Catalog, Described, Node, Pipeline, Registry, schema};
 
@@ -54,10 +54,10 @@ While Help is on, everything says what it is for when the cursor rests on it. Pr
 to turn that off.";
 
 /// How long Delay waits at the least for a change to be the last, and a step of a drag on it.
-const STILL: Duration = Duration::from_millis(500);
-const LONGER: Duration = Duration::from_millis(100);
+const STILL: Duration = motion::LONG;
+const LONGER: Duration = motion::INSTANT;
 /// How long a gallery that is played shows each image.
-const FRAME: Duration = Duration::from_millis(200);
+const FRAME: Duration = motion::SHORT;
 
 /// When a Check and a Run follow a change.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -750,11 +750,11 @@ impl Editor {
         let problem = self
             .problem
             .as_deref()
-            .map(|problem| container(error(problem)).padding(10));
+            .map(|problem| container(error(problem)).padding(spacing::S));
 
         column![
             self.toolbar(),
-            rule::horizontal(1),
+            rule::horizontal(stroke::THIN),
             split(drawer, graph).shown(self.is_drawer_shown),
             problem,
         ]
@@ -765,11 +765,11 @@ impl Editor {
         let save = self
             .is_dirty
             .then_some(Message::Save);
-        // a Check goes before a Run: the button is a Check until every node is sound
+        // a Check goes before a Run: the end of the switch is a Check until every node is sound
         let is_checked = self
             .known
             .is_checked(&self.pipeline);
-        let (manual, pressed) = match (&self.job, is_checked) {
+        let (action, pressed) = match (&self.job, is_checked) {
             (Some(_), _) => ("Stop", Message::Stop),
             (None, false) => ("Check", Message::Check),
             (None, true) => ("Run", Message::Run),
@@ -779,111 +779,111 @@ impl Editor {
             self.still
                 .as_secs_f32()
         );
-        let mode = |label: String, mode, pressed| {
-            let style = match self.mode == mode {
-                true => button::primary,
-                false => button::secondary,
-            };
-            button(text(label).center())
-                .style(style)
-                .on_press(pressed)
-        };
         let help = self.help;
-        let manual_says = match manual {
-            "Stop" => "Stops the Check or Run that is under way.",
-            "Check" => {
+        // with Manual chosen, its stop is the button of what it does
+        let (manual, manual_says) = match (self.mode, action) {
+            (Mode::Manual, "Stop") => (action, "Stops the Check or Run that is under way."),
+            (Mode::Manual, "Check") => (
+                action,
                 "Manual: nothing follows a change. Check resolves the columns of every node, \
-                 without reading any rows; once all are sound, this button is Run."
-            }
-            _ => {
+                 without reading any rows; once all are sound, this button is Run.",
+            ),
+            (Mode::Manual, _) => (
+                action,
                 "Manual: nothing follows a change. Run computes the frames that are kept and \
-                 writes the files; it reads again only what was edited since the last."
-            }
+                 writes the files; it reads again only what was edited since the last.",
+            ),
+            _ => (
+                "Manual",
+                "Manual: nothing follows a change. Once chosen, this end is a button: Check, \
+                 and once all is sound, Run.",
+            ),
         };
-        let modes = row![
-            help.of(
-                mode("Live".to_owned(), Mode::Live, Message::Mode(Mode::Live)),
-                "Live: a Check and a Run follow every change at once, if it leaves all sound.",
-            ),
+        let modes = switch(self.mode as usize)
+            .stop(
+                help.of(
+                    title("Live"),
+                    "Live: a Check and a Run follow every change at once, if it leaves all sound.",
+                ),
+                Message::Mode(Mode::Live),
+                theme::mode::live,
+            )
             // dragged up it waits longer, and down again shorter
-            help.of(
-                scrub(mode(delay, Mode::Delay, Message::Mode(Mode::Delay)).width(120))
-                    .upward()
-                    .on_scrub(Message::Wait),
-                "Delay: a Check and a Run follow a change once there has been none for this \
-                 long. Drag the button up to wait longer, and down for shorter.",
-            ),
-            // as wide whatever it says
-            help.of(
-                mode(manual.to_owned(), Mode::Manual, pressed).width(64),
-                manual_says
-            ),
-        ]
-        .spacing(1);
-        let files = row![
-            help.of(
-                button("Save").on_press_maybe(save),
-                "Writes the pipeline to its file, if it was changed since.",
-            ),
-            help.of(
-                button("Load")
-                    .style(button::secondary)
-                    .on_press(Message::Load),
-                "Opens the pipeline of another file in place of this one.",
-            ),
-            help.of(
-                button("New")
-                    .style(button::secondary)
-                    .on_press(Message::New),
-                "Starts an empty pipeline, in a file that the first Save makes.",
-            ),
-        ]
-        .spacing(1);
-        // under Clear, how much memory the frames that it lets go of take
+            .stop(
+                help.of(
+                    scrub(title(delay))
+                        .upward()
+                        .on_scrub(Message::Wait),
+                    "Delay: a Check and a Run follow a change once there has been none for this \
+                     long. Drag it up to wait longer, and down for shorter.",
+                ),
+                Message::Mode(Mode::Delay),
+                theme::mode::delay,
+            )
+            // chosen from another mode it is pressed at once, which chooses Manual too
+            .button(
+                help.of(title(manual), manual_says),
+                pressed.clone(),
+                pressed,
+                theme::mode::manual,
+            );
+        let segment = |at| theme::button::segment(theme::button::tonal, at);
+        // beside Clear and smaller, how much memory the frames that it lets go of take
         let kept = self.known.size();
-        let clear = column![
-            text("Clear"),
+        let clear = row![
+            title("Clear"),
             text(bytes(kept)).size(size::NOTE),
         ]
-        .align_x(Center);
+        .spacing(spacing::XS)
+        .align_y(Bottom);
         let frames = row![
             help.of(
-                // as tall as Clear beside it
-                button(
-                    text("Reload")
-                        .center()
-                        .height(Fill)
-                )
-                .height(Fill)
-                .style(button::secondary)
-                .on_press(Message::Reload),
+                pill(title("Reload"))
+                    .style(segment(Segment::First))
+                    .on_press(Message::Reload),
                 "Runs everything again from the files on disk, whatever was kept before.",
             ),
             help.of(
-                button(clear)
-                    .style(button::secondary)
+                pill(clear)
+                    .style(segment(Segment::Last))
                     .on_press_maybe((kept > 0).then_some(Message::Clear)),
                 "Lets go of the frames that are kept, which take this much memory; the next Run \
                  computes them again.",
             ),
         ]
-        .spacing(1)
-        .height(Shrink);
-        let asked = match help.0 {
-            true => button::primary,
-            false => button::secondary,
-        };
+        .spacing(spacing::XXS);
+        let files = row![
+            help.of(
+                pill(title("New"))
+                    .style(segment(Segment::First))
+                    .on_press(Message::New),
+                "Starts an empty pipeline, in a file that the first Save makes.",
+            ),
+            help.of(
+                pill(title("Load"))
+                    .style(segment(Segment::Inner))
+                    .on_press(Message::Load),
+                "Opens the pipeline of another file in place of this one.",
+            ),
+            help.of(
+                pill(title("Save"))
+                    .style(theme::button::segment(theme::button::filled, Segment::Last))
+                    .on_press_maybe(save),
+                "Writes the pipeline to its file, if it was changed since.",
+            ),
+        ]
+        .spacing(spacing::XXS);
         row![
             help.of(
-                button("Expressions")
-                    .style(button::secondary)
+                pill(title("Expressions"))
+                    .style(theme::button::tonal)
                     .on_press(Message::ToggleDrawer),
                 "Shows or hides the drawer of expressions and values on the left. Drag its edge to \
                  resize it.",
             ),
             help.of(
-                button("Help")
-                    .style(asked)
+                pill(title("Help"))
+                    .style(theme::button::selected(help.0))
                     .on_press(Message::Help),
                 INTRO,
             ),
@@ -892,8 +892,8 @@ impl Editor {
             frames,
             files,
         ]
-        .spacing(10)
-        .padding(10)
+        .spacing(spacing::M)
+        .padding([spacing::S, spacing::M])
         .align_y(Center)
     }
 

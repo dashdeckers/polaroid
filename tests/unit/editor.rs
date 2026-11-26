@@ -400,6 +400,42 @@ fn press(
 }
 
 #[test]
+fn the_files_are_pressed_as_buttons_and_save_once_there_is_a_change() {
+    let mut editor = chain(1);
+    assert!(matches!(press(&editor, "New")[..], [Message::New]));
+    assert!(matches!(press(&editor, "Load")[..], [Message::Load]));
+    assert!(press(&editor, "Save").is_empty());
+    editor.is_dirty = true;
+    assert!(matches!(press(&editor, "Save")[..], [Message::Save]));
+}
+
+#[test]
+fn the_end_of_the_switch_is_a_button_once_manual_is_chosen() {
+    let mut editor = chain(1);
+    assert!(matches!(
+        press(&editor, "Live")[..],
+        [Message::Mode(Mode::Live)]
+    ));
+    assert!(matches!(press(&editor, "Check")[..], [Message::Check]));
+
+    // elsewhere, it is the stop of Manual, which a press chooses with a Check at once
+    editor.mode = Mode::Delay;
+    assert!(
+        simulator(editor.view())
+            .find("Check")
+            .is_err()
+    );
+    assert!(press(&editor, "Delay 0.5 s").is_empty());
+    let pressed = press(&editor, "Manual");
+    assert!(matches!(pressed[..], [Message::Check]));
+    for message in pressed {
+        let _ = editor.update(message);
+    }
+    assert_eq!(editor.mode, Mode::Manual);
+    assert!(editor.job.is_some());
+}
+
+#[test]
 fn the_button_is_a_check_until_every_node_is_sound_and_a_run_from_then_on() {
     let mut editor = chain(2);
     let checked = |editor: &mut Editor, first: Columns| {
