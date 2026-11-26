@@ -4,7 +4,7 @@ use iced::widget::container;
 use iced::{Fill, Point, Rectangle, Widget};
 use iced_test::simulator::click;
 use iced_test::{Error, Simulator, simulator};
-use polaroid_iced::pick_list;
+use polaroid_iced::{PickList, pick_list};
 
 const SHORT: &str = "a";
 const LONG: &str = "one that is a good deal longer than that";
@@ -130,5 +130,77 @@ fn a_drag_down_from_its_handle_steps_through_the_options() -> Result<(), Error> 
         .into_messages()
         .collect();
     assert_eq!(picked, ["c", "a", "d", "d"]);
+    Ok(())
+}
+
+/// A list of four that shows `banana`, of which `cherry` cannot be picked.
+fn fruits() -> PickList<'static, &'static str, &'static str> {
+    let options = vec![
+        "apple",
+        "banana",
+        "cherry",
+        "blueberry",
+    ];
+    pick_list(Some("banana"), options, ToString::to_string)
+        .on_select(|picked| picked)
+        .disabled(|option| (*option == "cherry").then(|| "eaten".to_owned()))
+}
+
+#[test]
+fn an_option_that_cannot_be_picked_is_listed_and_a_press_on_it_does_nothing() -> Result<(), Error> {
+    let mut simulator = simulator(fruits());
+    simulator.click("banana")?;
+    // listed in its place, and pressed it keeps the list open, where another is picked
+    simulator.click("cherry")?;
+    simulator.click("blueberry")?;
+    let picked: Vec<_> = simulator
+        .into_messages()
+        .collect();
+    assert_eq!(picked, ["blueberry"]);
+    Ok(())
+}
+
+#[test]
+fn a_step_goes_past_an_option_that_cannot_be_picked() -> Result<(), Error> {
+    use iced::{Event, mouse, window};
+    use polaroid_iced::HANDLE;
+
+    let mut simulator = simulator(fruits().stepped());
+    let at = simulator
+        .find(HANDLE)?
+        .bounds()
+        .center();
+    let down = Point::new(at.x, at.y + 6.0);
+    simulator.point_at(at);
+    simulator.simulate([
+        Event::Mouse(mouse::Event::CursorMoved { position: at }),
+        Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+    ]);
+    simulator.point_at(down);
+    simulator.simulate([
+        Event::Mouse(mouse::Event::CursorMoved { position: down }),
+        Event::Window(window::Event::RedrawRequested(iced::time::Instant::now())),
+    ]);
+    let picked: Vec<_> = simulator
+        .into_messages()
+        .collect();
+    assert_eq!(picked, ["blueberry"]);
+    Ok(())
+}
+
+#[test]
+fn a_long_list_opens_scrolled_to_what_is_selected() -> Result<(), Error> {
+    let options: Vec<String> = (0..80)
+        .map(|n| format!("option {n}"))
+        .collect();
+    let list =
+        pick_list(Some("option 70".to_owned()), options, String::clone).on_select(|picked| picked);
+    let mut simulator = simulator(list);
+    simulator.click("option 70")?;
+    simulator.click("option 71")?;
+    let picked: Vec<_> = simulator
+        .into_messages()
+        .collect();
+    assert_eq!(picked, ["option 71"]);
     Ok(())
 }
