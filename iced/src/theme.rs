@@ -232,6 +232,11 @@ impl Scheme {
         over(self.surface, color, opacity::FADED)
     }
 
+    /// The paper of a box that holds an error: the window, tinted with the colour of an error.
+    pub fn error_paper(&self) -> Color {
+        over(self.surface, self.error.color, opacity::TINT)
+    }
+
     /// Its roles as the palette of iced, which the styles of iced itself are drawn with.
     fn palette(&self) -> Palette {
         let pair = |color, text| palette::Pair { color, text };
@@ -275,6 +280,8 @@ pub mod opacity {
     /// What is left of the content of what cannot be pressed, and of its container.
     pub const DISABLED: f32 = 0.38;
     pub const DISABLED_CONTAINER: f32 = 0.12;
+    /// What of a colour tints the paper of what is set apart in it, as an error.
+    pub const TINT: f32 = 0.12;
     /// The ink over every other row of a table.
     pub const STRIPE: f32 = 0.04;
     /// What is left of a selection behind its text, and of a line that is only hinted at.
@@ -1219,14 +1226,15 @@ pub mod container {
         Style::default().background(Elevation::Raised.surface(scheme))
     }
 
-    /// A box that holds an error, in the error container, outlined in the error colour.
+    /// A box that holds an error: tinted with the error colour, and outlined in it.
     pub fn error(theme: &Theme) -> Style {
-        let error = Scheme::of(theme).error;
+        let scheme = Scheme::of(theme);
+        let error = scheme.error;
         let outline = border::rounded(radius::S)
             .color(error.color)
             .width(stroke::THIN);
         Style::default()
-            .background(error.container)
+            .background(scheme.error_paper())
             .color(error.on_container)
             .border(outline)
     }
@@ -1357,10 +1365,7 @@ pub mod scrollable {
         theme: &Theme,
         status: Status,
     ) -> Style {
-        let paper = Scheme::of(theme)
-            .error
-            .container;
-        on(paper)(theme, status)
+        on(Scheme::of(theme).error_paper())(theme, status)
     }
 }
 
@@ -1393,7 +1398,7 @@ pub mod text {
         }
     }
 
-    /// Text of an error, as it lies in the error container, and selected in the error colour.
+    /// Text of an error, as it lies in its box, and selected in the error colour.
     pub fn error(theme: &Theme) -> Style {
         let error = Scheme::of(theme).error;
         Style {

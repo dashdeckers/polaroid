@@ -140,3 +140,28 @@ fn text_is_set_once_in_the_faces_of_the_plots() {
     // a line of a field is whole pixels, so the rows of a menu are crisp
     assert_eq!(theme::LINE, theme::LINE.round());
 }
+
+#[test]
+fn an_error_reads_in_its_box_and_the_box_is_made_out_on_every_surface() {
+    for theme in [theme::light(), theme::dark()] {
+        let scheme = Scheme::of(&theme);
+        let paper = scheme.error_paper();
+        let ink = theme::text::error(&theme)
+            .color
+            .expect("an error has a colour");
+        assert!(contrast(ink, paper) >= TEXT, "{ink:?} on {paper:?}");
+        // its outline is what tells it from a card, as what is not text
+        let outline = theme::container::error(&theme)
+            .border
+            .color;
+        for ground in [
+            scheme.surface,
+            scheme.surface_container_low,
+        ] {
+            assert!(
+                contrast(outline, ground) >= SHAPE,
+                "{outline:?} on {ground:?}"
+            );
+        }
+    }
+}
