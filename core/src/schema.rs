@@ -10,6 +10,28 @@ pub fn number(typed: &str) -> Option<Number> {
         .filter(|number| number.to_string() == typed)
 }
 
+/// The number that a person means by `typed`, on the way to it or not: `1.`, `1e3`, or `1,5`.
+pub fn read(typed: &str) -> Option<Number> {
+    let typed = typed.trim();
+    // a comma is the point where there is none
+    let typed = match typed.contains('.') {
+        true => typed.to_owned(),
+        false => typed.replacen(',', ".", 1),
+    };
+    if let Ok(whole) = typed.parse::<i64>() {
+        return Some(whole.into());
+    }
+    let number = typed
+        .parse::<f64>()
+        .ok()
+        .filter(|number| number.is_finite())?;
+    // one that is whole is an integer, which a field of either kind takes
+    match number.fract() == 0.0 && number.abs() < 2f64.powi(53) {
+        true => Some((number as i64).into()),
+        false => Number::from_f64(number),
+    }
+}
+
 /// The number `value` moved by `steps`, within what its schema takes; none yet is moved from 0.
 ///
 /// A step is 1 for an integer, and else a tenth of the power of ten that the number is at.

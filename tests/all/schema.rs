@@ -1,6 +1,6 @@
 //! The values that a JSON Schema starts from.
 
-use polaroid::schema::{default, nudged};
+use polaroid::schema::{default, nudged, read};
 use serde_json::{Value, json};
 
 #[test]
@@ -49,4 +49,28 @@ fn a_number_is_moved_by_steps_of_its_size_within_what_its_schema_takes() {
     // through nothing, in steps that stay whole tenths
     assert_eq!(nudged(&number, &json!(0.1), -3), -0.2);
     assert_eq!(nudged(&number, &json!(0.3), -3), 0.0);
+}
+
+#[test]
+fn a_number_is_read_as_a_person_types_it_on_the_way() {
+    let read = |typed: &str| read(typed).map(|number| json!(number));
+    // whole, which a field of either kind takes, or not
+    for (typed, number) in [
+        ("1.", json!(1)),
+        (" 900.00 ", json!(900)),
+        ("1e3", json!(1000)),
+        ("-2", json!(-2)),
+        ("2.5", json!(2.5)),
+        (".5", json!(0.5)),
+        // a comma is the point where there is none
+        ("1,5", json!(1.5)),
+    ] {
+        assert_eq!(read(typed), Some(number), "{typed}");
+    }
+    // and none yet on the way, or none at all
+    for typed in [
+        "", "-", ".", "1.e", "x", "1,5,3", "1.5,3", "inf", "NaN",
+    ] {
+        assert_eq!(read(typed), None, "{typed}");
+    }
 }
