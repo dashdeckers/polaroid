@@ -377,7 +377,7 @@ fn check<'a>(
                 registry
                     .resolved(&node.block, &node.args, tried)
                     .map(drop)
-                    .map_err(|e| format!("{}: {}", node.id, form::line(&e.why)))
+                    .map_err(|e| format!("{}: {}", node.id, form::line(&e.why)).into())
             })
     })
 }

@@ -1189,7 +1189,9 @@ fn a_card_offers_no_name_that_a_check_of_its_node_would_refuse() {
     .into();
     let _ = editor.update(Message::Checked(Ok(checks)));
     assert_eq!(check(&editor, &good), Ok(()));
-    let why = check(&editor, &bad).expect_err("a column that is not there is refused");
+    let why = check(&editor, &bad)
+        .expect_err("a column that is not there is refused")
+        .why;
     assert!(why.contains("nope"), "{why}");
 
     // so listed it is greyed, and a press on it picks nothing

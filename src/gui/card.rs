@@ -437,12 +437,10 @@ impl<'a> Card<'a> {
         let (registry, pipeline, known, node) =
             (self.registry, self.pipeline, self.known, self.node);
         Rc::new(move |args| {
-            registry
-                .resolved(&node.block, args, pipeline)
-                .map_err(|e| form::line(&e.why))?;
+            registry.resolved(&node.block, args, pipeline)?;
             known
                 .refuses(registry, pipeline, node, args)
-                .map_or(Ok(()), Err)
+                .map_or(Ok(()), |why| Err(why.into()))
         })
     }
 

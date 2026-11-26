@@ -31,7 +31,7 @@ use super::look::{
     told,
 };
 use crate::schema::{blank, default, json_type, nudged, optional, read, resolve, variants};
-use crate::{Pipeline, methods, reference};
+use crate::{Pipeline, Refusal, methods, reference};
 
 /// What a form shows that its value does not hold.
 #[derive(Debug, Default)]
@@ -61,8 +61,31 @@ pub enum Message {
     Name(String, String, Value),
 }
 
-/// Whether the owner of a value takes it as it is edited, or why not in a line: the core says.
-pub type Check<'a> = Rc<dyn Fn(&Value) -> Result<(), String> + 'a>;
+/// Whether the owner of a value takes it as it is edited, or why not and where: the core says.
+pub type Check<'a> = Rc<dyn Fn(&Value) -> Result<(), Refused> + 'a>;
+
+/// Why a value is not taken, in a line, and the pointer to the place in it that this is about.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Refused {
+    pub at: Option<String>,
+    pub why: String,
+}
+
+impl From<Refusal> for Refused {
+    fn from(refusal: Refusal) -> Self {
+        Self {
+            at: refusal.at,
+            why: line(&refusal.why),
+        }
+    }
+}
+
+impl From<String> for Refused {
+    /// A refusal of the value as a whole.
+    fn from(why: String) -> Self {
+        Self { at: None, why }
+    }
+}
 
 /// A value as it is edited that its owner does not take yet.
 #[derive(Debug, Clone, PartialEq)]
@@ -70,7 +93,7 @@ pub struct Draft {
     /// The value that it is an edit of, which it holds for no longer than that stays.
     of: Value,
     value: Value,
-    why: String,
+    refused: Refused,
 }
 
 impl Draft {
@@ -78,9 +101,9 @@ impl Draft {
     pub fn shown<'a>(
         draft: Option<&'a Self>,
         value: &'a Value,
-    ) -> (&'a Value, Option<&'a str>) {
+    ) -> (&'a Value, Option<&'a Refused>) {
         match draft.filter(|draft| draft.of == *value) {
-            Some(draft) => (&draft.value, Some(&draft.why)),
+            Some(draft) => (&draft.value, Some(&draft.refused)),
             None => (value, None),
         }
     }
@@ -89,7 +112,7 @@ impl Draft {
     pub fn taken(
         &self,
         value: &Value,
-        check: &dyn Fn(&Value) -> Result<(), String>,
+        check: &dyn Fn(&Value) -> Result<(), Refused>,
     ) -> Option<&Value> {
         (self.of == *value && check(&self.value).is_ok()).then_some(&self.value)
     }
@@ -114,7 +137,7 @@ impl State {
         message: Message,
         value: &Value,
         draft: Option<&Draft>,
-        check: &dyn Fn(&Value) -> Result<(), String>,
+        check: &dyn Fn(&Value) -> Result<(), Refused>,
     ) -> Change {
         // a number or a key is being typed for as long as nothing else is done
         self.typing = None;
@@ -154,10 +177,10 @@ impl State {
         }
         // its owner takes it once the core does, or if the core takes what it has no more
         match check(&edited) {
-            Err(why) if edited != *value && check(value).is_ok() => Change::Draft(Draft {
+            Err(refused) if edited != *value && check(value).is_ok() => Change::Draft(Draft {
                 of: value.clone(),
                 value: edited,
-                why,
+                refused,
             }),
             _ => Change::Value(edited),
         }
@@ -195,7 +218,7 @@ pub struct Form<'a, 'c> {
     pub check: &'c Check<'a>,
     /// The whole value that it shows, and why that is not taken if it is a draft.
     pub value: &'a Value,
-    pub held: Option<&'a str>,
+    pub held: Option<&'a Refused>,
     /// The least width of the column of the names of the arguments.
     pub label_width: f32,
     pub help: Help,
@@ -239,20 +262,23 @@ impl<'a> Form<'a, '_> {
         self,
         schema: &'a Value,
     ) -> impl Widget<Message> + use<'a> {
-        let fields = resolve(self.defs, schema)["properties"].as_object();
-        // a field that it names in backticks says it
-        let is_said = |why: &str| {
-            fields
-                .into_iter()
-                .flatten()
-                .any(|(name, _)| says(why, name))
+        // the field at the place that it is about says it, if it is about one that is there
+        let is_placed = |at: &String| {
+            self.value
+                .pointer(at)
+                .is_some()
         };
         let waits = self
             .held
-            .filter(|why| !is_said(why))
-            .map(|why| {
+            .filter(|refused| {
+                !refused
+                    .at
+                    .as_ref()
+                    .is_some_and(is_placed)
+            })
+            .map(|refused| {
                 note(
-                    format!("Not applied until it is whole: {why}"),
+                    format!("Not applied until it is whole: {}", refused.why),
                     Tone::Unsaved,
                 )
             });
@@ -301,18 +327,27 @@ impl<'a> Form<'a, '_> {
             self.help
                 .of(clear, "Clears the value, to give another or leave it out.")
         });
-        // why the whole is not taken is said at the field that it names
+        // a schema that resolves to the one definition of an expression is that very value
+        let is_expression = std::ptr::eq(shown, &self.defs["Expr"]);
+        let is_column = std::ptr::eq(shown, &self.defs["ColumnName"]);
+        // why the whole is not taken is said at the field of the place that it is about
+        let is_written = is_expression && !is_named && self.expressions == Expressions::Named;
         let why = self
             .held
-            .filter(|why| !at.is_empty() && says(why, &at[1..]));
+            .filter(|refused| {
+                refused
+                    .at
+                    .as_deref()
+                    .and_then(|said| said.strip_prefix(at.as_str()))
+                    // and what is under an expression that is only written, at that expression
+                    .is_some_and(|below| below.is_empty() || is_written && below.starts_with('/'))
+            })
+            .map(|refused| refused.why.as_str());
         let tone = match why {
             Some(_) => Tone::Refused,
             None => tone_of(value, default, is_nullable),
         };
 
-        // a schema that resolves to the one definition of an expression is that very value
-        let is_expression = std::ptr::eq(shown, &self.defs["Expr"]);
-        let is_column = std::ptr::eq(shown, &self.defs["ColumnName"]);
         let named = |placeholder, tone| self.names(shown, value, &at, placeholder, tone);
         let form = match self.expressions {
             _ if is_named => self.named(shown, value, at.clone(), tone),
@@ -669,14 +704,6 @@ fn worded(name: &str) -> String {
 fn escaped(key: &str) -> String {
     key.replace('~', "~0")
         .replace('/', "~1")
-}
-
-/// Whether `why` names the field `name`, as the core does in backticks.
-fn says(
-    why: &str,
-    name: &str,
-) -> bool {
-    why.contains(&format!("`{name}`"))
 }
 
 /// Why something is refused, in the first line that says it.

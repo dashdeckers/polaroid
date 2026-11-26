@@ -49,7 +49,7 @@ impl Shown {
                 registry
                     .resolved(block, args, pipeline)
                     .map(drop)
-                    .map_err(|e| line(&e.why))
+                    .map_err(Refused::from)
             }),
             columns: Vec::new(),
             state: State::default(),
@@ -118,7 +118,9 @@ impl Shown {
 
     /// Why the value as it is edited is not taken, if it is not.
     fn why(&self) -> Option<&str> {
-        Draft::shown(self.draft.as_ref(), &self.value).1
+        Draft::shown(self.draft.as_ref(), &self.value)
+            .1
+            .map(|refused| refused.why.as_str())
     }
 
     fn view(&self) -> impl Widget<Message> + use<> {
@@ -438,6 +440,28 @@ fn why_an_edit_is_not_taken_is_said_at_the_field_it_names_or_under_them_all() ->
         .expect("it waits")
         .to_owned();
     simulator(form.view()).find(waits(&why).as_str())?;
+
+    // and what is about a place in a list is said there
+    let mut form = Shown::of("select", json!({ "exprs": [marker("x")] }), named());
+    form.send(Message::Put("/exprs/1".to_owned(), marker("nothing")));
+    let refused = &form
+        .draft
+        .as_ref()
+        .expect("it waits")
+        .refused;
+    assert_eq!(
+        refused
+            .at
+            .as_deref(),
+        Some("/exprs/1")
+    );
+    let why = refused.why.clone();
+    let mut ui = simulator(form.view());
+    ui.find(why.as_str())?;
+    assert!(
+        ui.find(waits(&why).as_str())
+            .is_err()
+    );
     Ok(())
 }
 
@@ -957,13 +981,16 @@ fn a_draft_holds_for_as_long_as_the_value_that_it_is_an_edit_of_stays() {
     let draft = Draft {
         of: one.clone(),
         value: two.clone(),
-        why: "no".to_owned(),
+        refused: "no"
+            .to_owned()
+            .into(),
     };
-    assert_eq!(Draft::shown(Some(&draft), &one), (&two, Some("no")));
+    let shown = (&two, Some(&draft.refused));
+    assert_eq!(Draft::shown(Some(&draft), &one), shown);
     assert_eq!(Draft::shown(Some(&draft), &three), (&three, None));
 
     // and it is taken once it is whole, as an edit of that value alone
     assert_eq!(draft.taken(&one, &|_| Ok(())), Some(&two));
-    assert_eq!(draft.taken(&one, &|_| Err(String::new())), None);
+    assert_eq!(draft.taken(&one, &|_| Err(String::new().into())), None);
     assert_eq!(draft.taken(&three, &|_| Ok(())), None);
 }
