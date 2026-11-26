@@ -412,7 +412,7 @@ fn an_edit_that_is_not_taken_waits_as_a_draft() {
 
 #[test]
 fn why_an_edit_is_not_taken_is_said_at_the_field_it_names_or_under_them_all() -> Result<(), Error> {
-    let waits = |why: &str| format!("Not applied until it is whole: {why}");
+    let waits = |why: &str| look::unmarked(&format!("Not applied until it is whole: {why}"));
 
     // the core names the field of a number that an expression is none for
     let mut form = Shown::of("limit", json!({ "n": 1 }), named());
@@ -423,7 +423,8 @@ fn why_an_edit_is_not_taken_is_said_at_the_field_it_names_or_under_them_all() ->
         .to_owned();
     assert!(why.contains("`n`"), "{why}");
     let mut ui = simulator(form.view());
-    ui.find(why.as_str())?;
+    // shown without the backticks that mark the field
+    ui.find(look::unmarked(&why).as_str())?;
     assert!(
         ui.find(waits(&why).as_str())
             .is_err()

@@ -23,7 +23,7 @@ use super::{
     put,
     stepped,
 };
-use crate::gui::look::{aside, code, fitted, pick, scrubbed};
+use crate::gui::look::{aside, code, fitted, pick, scrubbed, unmarked};
 use crate::schema::{self, nudged};
 use crate::{Kind, Pipeline, Reference, Taken, methods, reference};
 
@@ -119,7 +119,9 @@ impl<'a> Form<'a, '_> {
                     }
                     let mut tried = root.clone();
                     put(&mut tried, &tried_at, Some(placed(named)));
-                    check(&tried).err()
+                    check(&tried)
+                        .err()
+                        .map(|why| unmarked(&why))
                 })
                 .clone()
         };

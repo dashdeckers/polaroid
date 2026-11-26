@@ -246,9 +246,14 @@ pub fn note<'a>(
     why: impl Into<String>,
     tone: Tone,
 ) -> Text<'a> {
-    text(why.into())
+    text(unmarked(&why.into()))
         .size(size::NOTE)
         .style(theme::text::toned(tone))
+}
+
+/// Why something is refused as it is shown: without the backticks the core marks names in.
+pub fn unmarked(why: &str) -> String {
+    why.replace('`', "")
 }
 
 /// The width of a column that holds the widest of the names of some arguments.
