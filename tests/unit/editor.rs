@@ -1,5 +1,3 @@
-use iced_test::simulator;
-
 use super::known::Status;
 use super::*;
 

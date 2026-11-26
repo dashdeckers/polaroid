@@ -1,6 +1,7 @@
-use iced_test::{Error, Simulator, simulator};
+use iced_test::{Error, Simulator};
 
 use super::*;
+use crate::gui::simulator;
 use crate::polars::prelude::*;
 use crate::{Catalog, Registry, marker};
 

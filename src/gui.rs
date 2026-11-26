@@ -46,9 +46,8 @@ use iced::{
     padding,
     system,
     task,
-    theme,
 };
-use polaroid_iced::{Menu, Surface, menu, scrub, split, surface};
+use polaroid_iced::{Menu, Surface, menu, scrub, split, surface, theme};
 use serde_json::Value;
 
 use self::card::Edit;
@@ -148,11 +147,12 @@ pub fn open(
         move || {
             let editor = Editor::new(registry.clone(), path.clone(), pipeline.clone());
             // light or dark, as the system is
-            (editor, system::theme().map(Message::Tone))
+            (editor, system::theme().map(Message::Scheme))
         },
         Editor::update,
         Editor::view,
     )
+    .settings(theme::settings())
     .title(Editor::title)
     .theme(|editor: &Editor| editor.theme.clone())
     .subscription(Editor::subscription)
@@ -246,7 +246,7 @@ enum Message {
     /// The cards are drawn this many times their size.
     Zoom(f32),
     /// The system is light or dark.
-    Tone(theme::Mode),
+    Scheme(iced::theme::Mode),
 }
 
 impl Editor {
@@ -289,7 +289,7 @@ impl Editor {
             help: Help::default(),
             zoom: 1.0,
             docs,
-            theme: Theme::Light,
+            theme: theme::light(),
         };
         editor.check_wiring();
         editor
@@ -320,7 +320,7 @@ impl Editor {
         Subscription::batch([
             escape,
             tick,
-            system::theme_changes().map(Message::Tone),
+            system::theme_changes().map(Message::Scheme),
         ])
     }
 
@@ -467,10 +467,10 @@ impl Editor {
             Message::ToggleDrawer => self.is_drawer_shown = !self.is_drawer_shown,
             Message::Help => self.help = Help(!self.help.0),
             Message::Zoom(zoom) => self.zoom = zoom,
-            Message::Tone(mode) => {
+            Message::Scheme(mode) => {
                 self.theme = match mode {
-                    theme::Mode::Dark => Theme::Dark,
-                    _ => Theme::Light,
+                    iced::theme::Mode::Dark => theme::dark(),
+                    _ => theme::light(),
                 };
             }
         }
@@ -1133,6 +1133,14 @@ fn is_refused(
     is_taken: impl Fn(&str) -> bool,
 ) -> bool {
     is_unsaved(typed, name) && typed.is_some_and(|typed| typed.is_empty() || is_taken(typed))
+}
+
+/// A simulator of `view`, set as the editor is.
+#[cfg(test)]
+fn simulator<'a, Message: 'a>(
+    view: impl Widget<Message> + 'a
+) -> iced_test::Simulator<'a, Message> {
+    iced_test::Simulator::with_settings(theme::settings(), view)
 }
 
 #[cfg(test)]

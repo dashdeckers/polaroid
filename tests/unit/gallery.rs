@@ -1,6 +1,5 @@
-use iced_test::simulator;
-
 use super::*;
+use crate::gui::simulator;
 use crate::polars::prelude::*;
 
 /// An image as wide as this.
