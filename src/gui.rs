@@ -769,10 +769,24 @@ impl Editor {
         let is_checked = self
             .known
             .is_checked(&self.pipeline);
-        let (action, pressed) = match (&self.job, is_checked) {
-            (Some(_), _) => ("Stop", Message::Stop),
-            (None, false) => ("Check", Message::Check),
-            (None, true) => ("Run", Message::Run),
+        let (action, pressed, says) = match (&self.job, is_checked) {
+            (Some(_), _) => (
+                "Stop",
+                Message::Stop,
+                "Stops the Check or Run that is under way.",
+            ),
+            (None, false) => (
+                "Check",
+                Message::Check,
+                "Manual: nothing follows a change. Check resolves the columns of every node, \
+                 without reading any rows; once all are sound, this button is Run.",
+            ),
+            (None, true) => (
+                "Run",
+                Message::Run,
+                "Manual: nothing follows a change. Run computes the frames that are kept and \
+                 writes the files; it reads again only what was edited since the last.",
+            ),
         };
         let delay = format!(
             "Delay {:.1} s",
@@ -781,24 +795,15 @@ impl Editor {
         );
         let help = self.help;
         // with Manual chosen, its stop is the button of what it does
-        let (manual, manual_says) = match (self.mode, action) {
-            (Mode::Manual, "Stop") => (action, "Stops the Check or Run that is under way."),
-            (Mode::Manual, "Check") => (
-                action,
-                "Manual: nothing follows a change. Check resolves the columns of every node, \
-                 without reading any rows; once all are sound, this button is Run.",
-            ),
-            (Mode::Manual, _) => (
-                action,
-                "Manual: nothing follows a change. Run computes the frames that are kept and \
-                 writes the files; it reads again only what was edited since the last.",
-            ),
+        let (manual, manual_says) = match self.mode {
+            Mode::Manual => (action, says),
             _ => (
                 "Manual",
                 "Manual: nothing follows a change. Once chosen, this end is a button: Check, \
                  and once all is sound, Run.",
             ),
         };
+        // its stops are in the order of the modes
         let modes = switch(self.mode as usize)
             .stop(
                 help.of(
