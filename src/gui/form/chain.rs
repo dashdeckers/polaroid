@@ -150,7 +150,8 @@ impl State {
                 Some(format!("{at}{to}{rest}"))
             })
             .collect();
-        self.namespace = None;
+        self.namespace
+            .take_if(|(pointer, _)| below(pointer, at).is_some());
     }
 }
 

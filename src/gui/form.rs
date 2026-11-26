@@ -108,7 +108,12 @@ impl State {
         let mut edited = shown.clone();
         match message {
             Message::Name(name, at, new) => return Change::Named(name, at, new),
-            Message::Put(at, new) => put(&mut edited, &at, Some(new)),
+            Message::Put(at, new) => {
+                // what was laid out there or below showed what is replaced
+                self.chain
+                    .relocate(&at, None, "");
+                put(&mut edited, &at, Some(new));
+            }
             Message::Type(at, typed) => {
                 let new = read(&typed).map_or(Value::Null, Value::from);
                 put(&mut edited, &at, Some(new));

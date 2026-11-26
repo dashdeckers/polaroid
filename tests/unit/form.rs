@@ -851,3 +851,36 @@ fn rows_of_one_shape_are_laid_out_as_a_grid() -> Result<(), Error> {
     assert!(!is_grid(json!([{ "$value": "top" }])));
     Ok(())
 }
+
+#[test]
+fn what_is_laid_out_is_folded_away_with_the_value_that_is_replaced() {
+    let contains = col("a")
+        .str()
+        .contains(lit("x"), true);
+    let mut form = Shown::chained(json_of(contains));
+    let at = || "/exprs/0".to_owned();
+    form.send(chain::Message::Toggle(at()));
+    form.send(chain::Message::Narrow(at(), "str"));
+
+    // an edit below it leaves it laid out, and its namespace offered
+    let column = "/exprs/0/Function/input/0/Column".to_owned();
+    form.send(Message::Put(column, "b".into()));
+    assert!(
+        form.state
+            .chain
+            .expanded
+            .contains("/exprs/0")
+    );
+    simulator(form.view())
+        .find("method")
+        .expect("the methods of the namespace are offered");
+
+    // and another value in its place is not laid out as it was
+    form.send(Message::Put(at(), Value::Null));
+    assert!(
+        form.state
+            .chain
+            .expanded
+            .is_empty()
+    );
+}
