@@ -5,12 +5,12 @@ use std::iter::successors;
 use std::sync::LazyLock;
 
 use iced::widget::{column, container, mouse_area, row, space};
-use iced::{Center, Element, Fill, Function, Widget, padding};
-use polaroid_iced::theme::{Tone, control, extent, font, spacing};
+use iced::{Center, Element, Function, Widget, padding};
+use polaroid_iced::theme::{Tone, control, font, spacing};
 use serde_json::Value;
 
 use super::{self as form, ANY, Form, INDENT, TEXT, put, stepped};
-use crate::gui::look::{add, clear, code, field, fitted, pick, scrubbed, told};
+use crate::gui::look::{add, clear, code, fitted, pick, scrubbed, told};
 use crate::methods::{self, Method};
 use crate::{reference, schema};
 
@@ -368,41 +368,8 @@ impl<'a> Form<'a, '_> {
                 Some(self.named(&ANY, value, at.clone(), Tone::Given))
             }
             "/Column" => {
-                let name = value
-                    .as_str()
-                    .unwrap_or_default();
-                if self
-                    .columns
-                    .is_empty()
-                {
-                    let typed = field("column", name, font::MONO, Tone::Given)
-                        .on_input({
-                            let put = put();
-                            move |name| put(name.into())
-                        })
-                        .width(Fill.max(extent::S));
-                    return Some(beside(typed.boxed(), &*TEXT));
-                }
-                // it shows a name that is none of the columns, as one named before they were known
-                let selected = self
-                    .columns
-                    .iter()
-                    .find(|column| *column == name)
-                    .cloned();
-                let placeholder = match name {
-                    "" => "column…",
-                    name => name,
-                };
-                let columns = self
-                    .columns
-                    .to_vec();
-                let picked = code_pick(selected, columns, String::clone, placeholder)
-                    .on_select({
-                        let put = put();
-                        move |name| put(name.into())
-                    })
-                    .stepped();
-                Some(beside(picked, &*TEXT))
+                let column = self.column(value, at.clone(), font::MONO, Tone::Given);
+                Some(beside(column, &*TEXT))
             }
             "/Literal" => {
                 let typed = methods::typed(node)?;

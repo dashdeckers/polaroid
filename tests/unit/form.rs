@@ -474,20 +474,26 @@ fn a_description_flows_within_its_paragraphs() {
 }
 
 #[test]
-fn the_name_of_a_column_is_picked_from_the_columns_that_are_read() -> Result<(), Error> {
-    let args = json!({ "column": null, "name": "to" });
+fn a_column_is_picked_from_the_columns_that_are_read_or_else_typed() -> Result<(), Error> {
+    use iced::keyboard::key::Named;
+
+    let args = json!({ "column": "old", "name": "to" });
     let mut form = Shown::of("write_files", args, Pipeline::default());
 
-    // until a Check finds the columns the list is there, with none to pick
+    // until a Check finds the columns, one is typed
     let mut ui = simulator(form.view());
-    ui.find("column…")?;
     ui.find("to")?;
+    ui.click("old")?;
+    let _ = ui.tap_key(Named::End);
+    let _ = ui.typewrite("s");
+    form.take(ui);
+    assert_eq!(form.shown()["column"], "olds");
 
-    // and one that is not among them is shown all the same
+    // then one is picked, and one that is not among them is shown all the same
     form.columns = vec!["plot".to_owned()];
     let mut ui = simulator(form.view());
     ui.find("to")?;
-    ui.click("column…")?;
+    ui.click("olds")?;
     ui.click("plot")?;
     let asked: Vec<Message> = ui
         .into_messages()

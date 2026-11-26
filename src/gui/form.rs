@@ -9,8 +9,8 @@ use std::rc::Rc;
 use std::sync::LazyLock;
 
 use iced::widget::{column, row};
-use iced::{Center, Element, Function, Widget};
-use polaroid_iced::theme::{Tone, font, spacing};
+use iced::{Center, Element, Fill, Font, Function, Widget};
+use polaroid_iced::theme::{Tone, extent, font, spacing};
 use serde_json::{Value, json};
 
 use super::look::{
@@ -225,7 +225,7 @@ pub struct Form<'a, 'c> {
 }
 
 /// Why there are no columns to pick from.
-const UNKNOWN: &str = "The columns are known once a Check found them: Check, then pick one.";
+const UNKNOWN: &str = "The columns are known once a Check found them: type one, or Check and pick.";
 
 /// The kinds of plain JSON that a value of any is picked as.
 const KINDS: [&str; 5] = [
@@ -368,7 +368,7 @@ impl<'a> Form<'a, '_> {
             _ if at.is_empty() && !is_free => self.plain(shown, value, at.clone(), tone),
             _ => {
                 let field = match is_column {
-                    true => self.column(value, at.clone(), tone),
+                    true => self.column(value, at.clone(), font::SANS, tone),
                     false => self.plain(shown, value, at.clone(), tone),
                 };
                 // what can be cleared, or emptied as a list or a table, is named once it is
@@ -399,30 +399,37 @@ impl<'a> Form<'a, '_> {
         .boxed()
     }
 
-    /// The name of a column at the pointer `at`, to pick another of the columns that are read by.
+    /// The name of a column at the pointer `at`: picked from those that are read, or else typed.
     fn column(
         self,
         value: &Value,
         at: String,
+        font: Font,
         tone: Tone,
     ) -> Element<'a, Message> {
-        // one that is not among them is shown all the same
         let name = value
             .as_str()
-            .map(str::to_owned);
-        let columns = self
-            .columns
-            .to_vec();
-        let pick = pick(name, columns, String::clone, "column…", font::SANS, tone)
-            .on_select(move |name: String| Message::Put(at.clone(), name.into()));
-        // none to pick from until a Check finds them, which it says
-        match self
+            .unwrap_or_default()
+            .to_owned();
+        let put = move |name: String| Message::Put(at.clone(), name.into());
+        // none to pick from until a Check finds them, which it says: until then it is typed
+        if self
             .columns
             .is_empty()
         {
-            true => told(pick, Some(UNKNOWN.to_owned())),
-            false => pick.stepped(),
+            let typed = field("column…", name, font, tone)
+                .on_input(put)
+                .width(Fill.max(extent::S));
+            return told(typed, Some(UNKNOWN.to_owned()));
         }
+        // one that is not among them is shown all the same
+        let name = Some(name).filter(|name| !name.is_empty());
+        let columns = self
+            .columns
+            .to_vec();
+        pick(name, columns, String::clone, "column…", font, tone)
+            .on_select(put)
+            .stepped()
     }
 
     /// The form for a value by nothing but its schema, or the hole it leaves.
