@@ -219,7 +219,7 @@ impl<'a> Form<'a, '_> {
             fields
                 .into_iter()
                 .flatten()
-                .any(|(name, _)| why.contains(&format!("`{name}`")))
+                .any(|(name, _)| says(why, name))
         };
         let waits = self
             .held
@@ -275,10 +275,10 @@ impl<'a> Form<'a, '_> {
             self.help
                 .of(clear, "Clears the value, to give another or leave it out.")
         });
-        // why the whole is not taken is said at the field that it names in backticks
+        // why the whole is not taken is said at the field that it names
         let why = self
             .held
-            .filter(|why| !at.is_empty() && why.contains(&format!("`{}`", &at[1..])));
+            .filter(|why| !at.is_empty() && says(why, &at[1..]));
         let tone = match why {
             Some(_) => Tone::Refused,
             None => tone_of(value, default, is_nullable),
@@ -636,6 +636,14 @@ fn worded(name: &str) -> String {
 fn escaped(key: &str) -> String {
     key.replace('~', "~0")
         .replace('/', "~1")
+}
+
+/// Whether `why` names the field `name`, as the core does in backticks.
+fn says(
+    why: &str,
+    name: &str,
+) -> bool {
+    why.contains(&format!("`{name}`"))
 }
 
 /// Why something is refused, in the first line that says it.
