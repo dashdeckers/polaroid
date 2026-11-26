@@ -1312,3 +1312,71 @@ fn an_expression_is_given_a_hole_in_the_drawer_which_says_what_it_takes() {
             .is_ok()
     );
 }
+
+#[test]
+fn a_draft_is_taken_once_a_check_finds_what_it_waited_for() {
+    use crate::polars::prelude::{col, lit};
+
+    let mut editor = chain(1);
+    let named = |name: &str| serde_json::to_value(col(name).gt(lit(1))).unwrap();
+    editor
+        .pipeline
+        .expressions
+        .extend([
+            ("good".to_owned(), named("a")),
+            ("late".to_owned(), named("b")),
+        ]);
+    let _ = editor.update(Message::Add("filter".to_owned(), Point::new(300.0, 20.0)));
+    let filter = || "filter_1".to_owned();
+    let _ = editor.update(Message::Edit(filter(), Edit::Wire(0, "n0".to_owned())));
+    let good = serde_json::json!({ "predicates": [crate::marker("good")] });
+    let late = serde_json::json!({ "predicates": [crate::marker("late")] });
+    let _ = editor.update(Message::Edit(filter(), Edit::Args(good.clone())));
+    let found = |columns: &[&str]| {
+        let columns: Vec<_> = columns
+            .iter()
+            .map(|column| ((*column).to_owned(), DataType::Int64))
+            .collect();
+        let checks = [
+            ("n0".to_owned(), Ok(columns.clone())),
+            (filter(), Ok(columns)),
+        ];
+        Message::Checked(Ok(checks.into()))
+    };
+    let args = |editor: &Editor| {
+        editor
+            .pipeline
+            .nodes[1]
+            .args
+            .clone()
+    };
+    let _ = editor.update(found(&["a"]));
+
+    // a column that is not there is refused, and the edit waits
+    let check = editor
+        .card(
+            &editor
+                .pipeline
+                .nodes[1],
+        )
+        .check();
+    let put = form::Message::Put(String::new(), late.clone());
+    let change = form::State::default().update(put, &good, None, &*check);
+    drop(check);
+    let form::Change::Draft(draft) = change else {
+        panic!("it waits: {change:?}");
+    };
+    let _ = editor.update(Message::Draft(filter(), draft));
+    assert_eq!(args(&editor), good);
+
+    // a Check that does not find it leaves it to wait, and one that does has it taken
+    let _ = editor.update(found(&["a"]));
+    assert_eq!(args(&editor), good);
+    let _ = editor.update(found(&["a", "b"]));
+    assert_eq!(args(&editor), late);
+    assert!(
+        editor
+            .drafts
+            .is_empty()
+    );
+}

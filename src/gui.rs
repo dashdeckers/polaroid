@@ -344,6 +344,10 @@ impl Editor {
                         .checked(checks),
                     Err(problem) => self.problem = Some(problem),
                 }
+                // a draft that waited for what was found is an edit, which a Check follows
+                if self.retry() {
+                    return self.follow();
+                }
                 let is_sound = self
                     .known
                     .is_checked(&self.pipeline);
@@ -424,6 +428,7 @@ impl Editor {
                 }
                 self.is_dirty = true;
                 self.check_wiring();
+                self.retry();
                 return self.follow();
             }
             Message::ToggleDrawer => self.is_drawer_shown = !self.is_drawer_shown,
@@ -724,6 +729,31 @@ impl Editor {
         self.known
             .forget(&self.pipeline, is_edited);
         self.job = None;
+    }
+
+    /// Takes each draft that its node takes by now, as an edit of it; false if it took none.
+    fn retry(&mut self) -> bool {
+        let taken = |node: &Node| {
+            let draft = self
+                .drafts
+                .get(&node.id)?;
+            let check = self
+                .card(node)
+                .check();
+            let args = draft.taken(&node.args, &*check)?;
+            Some((node.id.clone(), args.clone()))
+        };
+        let taken: Vec<(String, Value)> = self
+            .pipeline
+            .nodes
+            .iter()
+            .filter_map(taken)
+            .collect();
+        let is_taken = !taken.is_empty();
+        for (id, args) in taken {
+            self.edit(&id, Edit::Args(args));
+        }
+        is_taken
     }
 
     fn view(&self) -> impl Widget<Message> {

@@ -79,6 +79,15 @@ impl Draft {
             None => (value, None),
         }
     }
+
+    /// What it has `value` edited to, if `check` takes that by now.
+    pub fn taken(
+        &self,
+        value: &Value,
+        check: &dyn Fn(&Value) -> Result<(), String>,
+    ) -> Option<&Value> {
+        (self.of == *value && check(&self.value).is_ok()).then_some(&self.value)
+    }
 }
 
 /// What an update of a form leaves its owner to do.
