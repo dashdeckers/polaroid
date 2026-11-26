@@ -6,6 +6,7 @@ use iced::advanced::widget;
 use iced::widget::canvas::{self, Frame, Path, Stroke};
 use iced::widget::{Component, canvas as draw, column, container, markdown, row, space, text};
 use iced::{Center, Fill, Point, Rectangle, Renderer, Size, Theme, Widget, mouse};
+use polaroid_iced::theme::container::Ring;
 use polaroid_iced::theme::{self, Scheme, Tone, control, font, icon, size, spacing, stroke};
 use polaroid_iced::{Asked, Heading, leave, width_of};
 use serde_json::Value;
@@ -427,7 +428,7 @@ impl<'a> Component<'a, Message> for Card<'a> {
         .width(width)
         .height(Fill)
         .padding(PAD)
-        .style(move |theme| framed(theme, status))
+        .style(theme::container::ringed(ring(status)))
     }
 }
 
@@ -632,27 +633,15 @@ pub(super) fn shown(value: AnyValue) -> String {
     }
 }
 
-/// A card in a border of the colour of its status, once anything is known of it.
-fn framed(
-    theme: &Theme,
-    status: Status,
-) -> container::Style {
-    let card = theme::container::card(theme);
-    let scheme = Scheme::of(theme);
-    let (success, error) = (scheme.success.color, scheme.error.color);
-    // paler for what a Check found and no Run
-    let color = match status {
-        Status::Unknown => return card,
-        Status::Checked => scheme.pale(success),
-        Status::Rejected => scheme.pale(error),
-        Status::Ran => success,
-        Status::Failed => error,
-    };
-    let border = card
-        .border
-        .color(color)
-        .width(stroke::THICK);
-    card.border(border)
+/// How the theme rings the card of a node of this status, once anything is known of it.
+fn ring(status: Status) -> Option<Ring> {
+    match status {
+        Status::Unknown => None,
+        Status::Checked => Some(Ring::Sound),
+        Status::Rejected => Some(Ring::Unsound),
+        Status::Ran => Some(Ring::Done),
+        Status::Failed => Some(Ring::Failed),
+    }
 }
 
 /// A small table: the button that has a Run save the frame of its node, lit when it does.

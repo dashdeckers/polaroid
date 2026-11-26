@@ -1146,6 +1146,37 @@ pub mod container {
             .shadow(Elevation::Raised.shadow(scheme))
     }
 
+    /// How what a card stands for went: found sound or not, or done and well or not.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum Ring {
+        Sound,
+        Unsound,
+        Done,
+        Failed,
+    }
+
+    /// A card ringed in the colour of how it went, if anything is known of that.
+    pub fn ringed(ring: Option<Ring>) -> impl Fn(&Theme) -> Style {
+        move |theme| {
+            let card = card(theme);
+            let scheme = Scheme::of(theme);
+            let (success, error) = (scheme.success.color, scheme.error.color);
+            // paler for what is only found, and not done
+            let color = match ring {
+                None => return card,
+                Some(Ring::Sound) => scheme.pale(success),
+                Some(Ring::Unsound) => scheme.pale(error),
+                Some(Ring::Done) => success,
+                Some(Ring::Failed) => error,
+            };
+            let border = card
+                .border
+                .color(color)
+                .width(stroke::THICK);
+            card.border(border)
+        }
+    }
+
     /// The tile of a card, a step over it, and as round: alone it is the card, and open its corner.
     pub fn tile(theme: &Theme) -> Style {
         let scheme = Scheme::of(theme);
