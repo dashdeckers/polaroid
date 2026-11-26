@@ -313,7 +313,7 @@ impl<'a> Form<'a, '_> {
         // a schema that resolves to the one definition of an expression is that very value
         let is_expression = std::ptr::eq(shown, &self.defs["Expr"]);
         let is_column = std::ptr::eq(shown, &self.defs["ColumnName"]);
-        let named = |placeholder| self.names(shown, value, &at, placeholder, tone);
+        let named = |placeholder, tone| self.names(shown, value, &at, placeholder, tone);
         let form = match self.expressions {
             _ if is_named => self.named(shown, value, at.clone(), tone),
             Expressions::Chained if is_expression => self.chain(value, at.clone()),
@@ -321,10 +321,13 @@ impl<'a> Form<'a, '_> {
                 // one that has no name is written as it is, until a name takes its place
                 let written =
                     (!value.is_null()).then(|| aside(methods::text(value)).font(font::MONO));
-                row![named("expression…"), written]
-                    .spacing(spacing::S)
-                    .align_y(Center)
-                    .boxed()
+                row![
+                    named("expression…", tone),
+                    written
+                ]
+                .spacing(spacing::S)
+                .align_y(Center)
+                .boxed()
             }
             // the whole of what a form is for is not a name, unless it is any JSON
             _ if at.is_empty() && !is_free => self.plain(shown, value, at.clone(), tone),
@@ -341,7 +344,8 @@ impl<'a> Form<'a, '_> {
                     _ => is_nullable,
                 };
                 let named = (!is_given)
-                    .then(|| named("@…"))
+                    // beside a field, which shows how its value stands by itself
+                    .then(|| named("@…", Tone::Given))
                     .flatten();
                 row![field, named]
                     .spacing(spacing::XS)
