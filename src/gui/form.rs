@@ -39,6 +39,8 @@ pub struct State {
     chain: chain::State,
     /// The pointer to the number being typed, and its text, which may be no number yet.
     typing: Option<(String, String)>,
+    /// The pointer to the entry whose key is being typed, and its text while another has that key.
+    keying: Option<(String, String)>,
 }
 
 /// What a form asks for.
@@ -48,6 +50,8 @@ pub enum Message {
     Put(String, Value),
     /// Put the number that this text writes at a JSON pointer, or none if it writes none.
     Type(String, String),
+    /// Hold this text as the key being typed for the entry at a JSON pointer: another has it.
+    Key(String, String),
     /// Take what is at a JSON pointer out of its list or table.
     Drop(String),
     /// What the chain of an expression in it asks for.
@@ -111,12 +115,14 @@ impl State {
         draft: Option<&Draft>,
         check: &dyn Fn(&Value) -> Result<(), String>,
     ) -> Change {
-        // a number is being typed for as long as nothing else is done
+        // a number or a key is being typed for as long as nothing else is done
         self.typing = None;
+        self.keying = None;
         let (shown, _) = Draft::shown(draft, value);
         let mut edited = shown.clone();
         match message {
             Message::Name(name, at, new) => return Change::Named(name, at, new),
+            Message::Key(at, typed) => self.keying = Some((at, typed)),
             Message::Put(at, new) => {
                 // what was laid out there or below showed what is replaced
                 self.chain

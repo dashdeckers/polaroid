@@ -884,3 +884,44 @@ fn what_is_laid_out_is_folded_away_with_the_value_that_is_replaced() {
             .is_empty()
     );
 }
+
+#[test]
+fn a_key_is_typed_on_through_one_that_another_entry_has() -> Result<(), Error> {
+    use iced::keyboard::key::Named;
+
+    let mut form = Shown::any(json!({ "a": 1, "x": 2 }), Pipeline::default());
+    let mut ui = simulator(form.view());
+    let _ = ui.click("x")?;
+    let _ = ui.tap_key(Named::End);
+    // erased it is free, as `a` it is another's and held as typed, and as `ab` it is free again
+    for (key, held, keys) in [
+        (None, None, ["a", ""]),
+        (Some("a"), Some("a"), ["a", ""]),
+        (Some("b"), None, ["a", "ab"]),
+    ] {
+        let _ = match key {
+            None => ui.tap_key(Named::Backspace),
+            Some(typed) => ui.typewrite(typed),
+        };
+        for message in ui.drain() {
+            form.send(message);
+        }
+        ui = ui.rebuild(form.view());
+        let entries = form
+            .value
+            .as_object()
+            .expect("it is a table");
+        assert!(
+            entries
+                .keys()
+                .eq(keys)
+        );
+        let typed = form
+            .state
+            .keying
+            .as_ref()
+            .map(|(_, typed)| typed.as_str());
+        assert_eq!(typed, held);
+    }
+    Ok(())
+}

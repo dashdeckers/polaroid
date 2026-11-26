@@ -3,8 +3,9 @@
 use std::iter::once;
 use std::sync::LazyLock;
 
+use iced::widget::text_input::TextInput;
 use iced::widget::{column, row, space};
-use iced::{Element, Widget};
+use iced::{Element, Font, Widget};
 use polaroid_iced::theme::{Tone, font, spacing};
 use serde_json::{Map, Value};
 
@@ -38,7 +39,7 @@ impl<'a> Form<'a, '_> {
                         clear(Message::Drop(inside.clone())),
                         "Takes this one out of the table."
                     ),
-                    key_field(entries, key, at, wide),
+                    self.entry_key(entries, key, at, wide),
                     self.placed(items, entry, inside, true)
                 ]
                 .spacing(spacing::XS)
@@ -52,6 +53,51 @@ impl<'a> Form<'a, '_> {
         });
         column(lines.chain(add))
             .spacing(spacing::XS)
+            .boxed()
+    }
+
+    /// The field of `key` in the table at `at`: held as typed at `id` while that `is_taken`.
+    fn key(
+        self,
+        key: &'a str,
+        id: String,
+        at: &str,
+        font: Font,
+        is_taken: impl Fn(&str) -> bool + 'a,
+        renamed: impl Fn(&str) -> Value + 'a,
+    ) -> TextInput<'a, Message> {
+        let held = self
+            .state
+            .keying
+            .as_ref()
+            .filter(|(held, _)| *held == id)
+            .map(|(_, typed)| typed.clone());
+        let tone = match held {
+            Some(_) => Tone::Refused,
+            None => Tone::Given,
+        };
+        let table = at.to_owned();
+        field("key", held.unwrap_or_else(|| key.to_owned()), font, tone).on_input(move |typed| {
+            match typed != key && is_taken(&typed) {
+                true => Message::Key(id.clone(), typed),
+                false => Message::Put(table.clone(), renamed(&typed)),
+            }
+        })
+    }
+
+    /// The field of the key of an entry of `entries`, which renames the entry as it is typed in.
+    fn entry_key(
+        self,
+        entries: &'a Map<String, Value>,
+        key: &'a String,
+        at: &str,
+        wide: f32,
+    ) -> Element<'a, Message> {
+        let id = format!("{at}/{}", escaped(key));
+        let is_taken = |typed: &str| entries.contains_key(typed);
+        let renamed = |typed: &str| renamed(entries, key, typed);
+        self.key(key, id, at, font::SANS, is_taken, renamed)
+            .width(wide)
             .boxed()
     }
 
@@ -119,20 +165,24 @@ impl<'a> Form<'a, '_> {
             let wide = widest(entries.keys());
             let names = entries
                 .keys()
-                .map(|key| key_field(entries, key, at, wide));
+                .map(|key| self.entry_key(entries, key, at, wide));
             headed(space().boxed(), names)
         });
         // then a column of each key, under what renames it and takes it out in every row
         let cells = keys
             .clone()
             .map(|key| {
-                let table = at.to_owned();
-                let rename = field("key", key.as_str(), font::BOLD, Tone::Given)
-                    .width(width(key, font::BOLD))
-                    .on_input(move |typed| {
-                        let renamed = each(value, |cells| renamed(cells, key, &typed));
-                        Message::Put(table.clone(), renamed)
-                    });
+                let id = format!("{at}/{}/{}", rows[0].0, escaped(key));
+                let taken = keys.clone();
+                let is_taken = move |typed: &str| {
+                    taken
+                        .clone()
+                        .any(|key| key == typed)
+                };
+                let renamed = |typed: &str| each(value, |cells| renamed(cells, key, typed));
+                let rename = self
+                    .key(key, id, at, font::BOLD, is_taken, renamed)
+                    .width(width(key, font::BOLD));
                 let without = each(value, |cells| {
                     let mut cells = cells.clone();
                     cells.shift_remove(key);
@@ -213,20 +263,6 @@ fn widest<'a>(keys: impl IntoIterator<Item = &'a String>) -> f32 {
     keys.into_iter()
         .map(|key| width(key, font::SANS))
         .fold(0.0, f32::max)
-}
-
-/// The field of the key of an entry of `entries`, which renames the entry as it is typed in.
-fn key_field<'a>(
-    entries: &'a Map<String, Value>,
-    key: &'a String,
-    at: &str,
-    wide: f32,
-) -> Element<'a, Message> {
-    let table = at.to_owned();
-    field("key", key.as_str(), font::SANS, Tone::Given)
-        .width(wide)
-        .on_input(move |typed| Message::Put(table.clone(), renamed(entries, key, &typed)))
-        .boxed()
 }
 
 /// `entries` with the key `old` called `new`, in its place; as they are if another is called so.
