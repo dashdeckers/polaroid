@@ -1,7 +1,7 @@
 //! Named expressions: one naming others, a number arg naming one, and what follows a name.
 
 use polaroid::methods::text;
-use polaroid::{Pipeline, marked, marker};
+use polaroid::{Pipeline, Registry, marked, marker};
 use serde_json::{Value, json};
 
 use super::orders::{alias, binary, col, lit, numbers, pipeline, refusal, resolved, run, texts};
@@ -261,4 +261,26 @@ fn a_pipeline_file_is_read_run_and_written_as_it_was() {
     assert_eq!(numbers(&read, "gross_total"), [23.8, 238.0, 95.2, 23.8]);
     assert_eq!(serde_json::to_string_pretty(&read).unwrap(), written);
     std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn a_refusal_says_where_in_the_args_it_is_about() {
+    let at = |pipeline: &Pipeline| {
+        let out = &pipeline.nodes[1];
+        Registry::with_polars()
+            .resolved(&out.block, &out.args, pipeline)
+            .expect_err("the args are refused")
+            .at
+    };
+    // a name that is no number where one is taken, and a name that is not there
+    let mut count = first(marker("count"));
+    count
+        .expressions
+        .insert("count".to_owned(), json!("Len"));
+    assert_eq!(at(&count).as_deref(), Some("/n"));
+    let exprs = json!({ "exprs": [marker("gross"), marker("nothing")] });
+    let missing = pipeline(named(), "with_columns", exprs);
+    assert_eq!(at(&missing).as_deref(), Some("/exprs/1"));
+    // and what its block does not read is about the args as a whole
+    assert_eq!(at(&first(json!("two"))), None);
 }

@@ -49,7 +49,7 @@ impl Shown {
                 registry
                     .resolved(block, args, pipeline)
                     .map(drop)
-                    .map_err(|e| line(&e))
+                    .map_err(|e| line(&e.why))
             }),
             columns: Vec::new(),
             state: State::default(),

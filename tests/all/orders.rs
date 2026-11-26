@@ -129,5 +129,5 @@ pub fn refusal(pipeline: &Pipeline) -> String {
 /// The args of the node `out` as its Block reads them.
 pub fn resolved(pipeline: &Pipeline) -> PolarsResult<Value> {
     let out = &pipeline.nodes[1];
-    Registry::with_polars().resolved(&out.block, &out.args, pipeline)
+    Ok(Registry::with_polars().resolved(&out.block, &out.args, pipeline)?)
 }

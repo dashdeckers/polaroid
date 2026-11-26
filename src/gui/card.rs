@@ -439,7 +439,7 @@ impl<'a> Card<'a> {
         Rc::new(move |args| {
             registry
                 .resolved(&node.block, args, pipeline)
-                .map_err(|e| form::line(&e))?;
+                .map_err(|e| form::line(&e.why))?;
             known
                 .refuses(registry, pipeline, node, args)
                 .map_or(Ok(()), Err)

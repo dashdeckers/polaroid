@@ -390,14 +390,34 @@ impl Pipeline {
     }
 }
 
+/// Why args are not taken, and the JSON pointer to the place in them that it is about, if one.
+#[derive(Debug)]
+pub struct Refusal {
+    pub at: Option<String>,
+    pub why: PolarsError,
+}
+
+impl From<PolarsError> for Refusal {
+    /// A refusal of the args as a whole.
+    fn from(why: PolarsError) -> Self {
+        Self { at: None, why }
+    }
+}
+
+impl From<Refusal> for PolarsError {
+    fn from(refusal: Refusal) -> Self {
+        refusal.why
+    }
+}
+
 impl Registry {
-    /// `args` as a node of `block` reads them, each name replaced, or why it does not take them.
+    /// `args` as a node of `block` reads them, each name replaced, or why and where they are not.
     pub fn resolved(
         &self,
         block: &str,
         args: &Value,
         pipeline: &Pipeline,
-    ) -> PolarsResult<Value> {
+    ) -> Result<Value, Refusal> {
         let entry = self
             .get(block)
             .ok_or_else(|| polars_err!(ComputeError: "no block is called '{block}'"))?;
@@ -412,13 +432,11 @@ pub(crate) fn resolved(
     entry: &Entry,
     mut args: Value,
     pipeline: &Pipeline,
-) -> PolarsResult<Value> {
-    if !has_reference(&args) {
-        return Ok(args);
+) -> Result<Value, Refusal> {
+    if has_reference(&args) {
+        let (schema, defs) = entry.schema();
+        replace(&mut args, "", schema, defs, pipeline)?;
     }
-    let (schema, defs) = entry.schema();
-    numbered(&mut args, "", schema, defs, pipeline)?;
-    resolve(&mut args, pipeline, Scope::Outside, &mut Vec::new())?;
     Ok(args)
 }
 
@@ -685,31 +703,45 @@ fn literal(
     })
 }
 
-/// Puts its number in the place of each expression named where `schema` takes a number.
-fn numbered(
+/// Replaces each outermost reference in `value`, at `at` in the args: a refusal is said there.
+fn replace(
     value: &mut Value,
     at: &str,
     schema: &Value,
     defs: &Value,
     pipeline: &Pipeline,
-) -> PolarsResult<()> {
-    let Some(name) = marked(value).map(str::to_owned) else {
+) -> Result<(), Refusal> {
+    let is_named = lifted(value).is_some()
+        || value
+            .as_object()
+            .is_some_and(|fields| Kind::of(fields).is_some());
+    if !is_named {
         match value {
             Value::Array(items) => {
                 for (i, item) in items
                     .iter_mut()
                     .enumerate()
                 {
-                    numbered(item, &format!("{at}/{i}"), schema, defs, pipeline)?;
+                    replace(item, &format!("{at}/{i}"), schema, defs, pipeline)?;
                 }
             }
             Value::Object(fields) => {
                 for (key, field) in fields {
-                    numbered(field, &format!("{at}/{key}"), schema, defs, pipeline)?;
+                    replace(field, &format!("{at}/{key}"), schema, defs, pipeline)?;
                 }
             }
             _ => {}
         }
+        return Ok(());
+    }
+    let here = |why| Refusal {
+        at: Some(at.to_owned()),
+        why,
+    };
+    let name = marked(value).map(str::to_owned);
+    resolve(value, pipeline, Scope::Outside, &mut Vec::new()).map_err(here)?;
+    // where `schema` takes a number, an expression that was named stands as the number it is
+    let Some(name) = name else {
         return Ok(());
     };
     let taken = schema::pointer(defs, schema, at);
@@ -719,18 +751,20 @@ fn numbered(
         "number" => false,
         _ => return Ok(()),
     };
-    resolve(value, pipeline, Scope::Outside, &mut Vec::new())?;
     let field = at.trim_start_matches('/');
-    let number = worked_out(value)
-        .ok_or_else(|| polars_err!(ComputeError: "`{name}` is no number, which `{field}` takes"))?;
+    let number = worked_out(value).ok_or_else(|| {
+        here(polars_err!(ComputeError: "`{name}` is no number, which `{field}` takes"))
+    })?;
     // a whole number worked out of others may come as a float, which is whole if it stays itself
     *value = match (is_whole, number.as_f64()) {
         (true, Some(float)) if number.is_f64() => {
             let whole = float as i64;
-            polars_ensure!(
-                whole as f64 == float,
-                ComputeError: "`{name}` is no whole number, which `{field}` takes"
-            );
+            if whole as f64 != float {
+                let why = polars_err!(
+                    ComputeError: "`{name}` is no whole number, which `{field}` takes"
+                );
+                return Err(here(why));
+            }
             Value::from(whole)
         }
         _ => Value::Number(number),
