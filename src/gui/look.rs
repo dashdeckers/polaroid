@@ -234,6 +234,13 @@ pub fn aside<'a>(said: impl Into<String>) -> Text<'a> {
         .style(theme::text::muted)
 }
 
+/// `content` set in to start under the name on a line that a sign begins.
+pub fn under_name<'a, Message: 'a>(content: impl Widget<Message> + 'a) -> Element<'a, Message> {
+    container(content)
+        .padding(padding::left(control::S + spacing::XS))
+        .boxed()
+}
+
 /// Why a value is not taken, in the colour of its `tone`.
 pub fn note<'a>(
     why: impl Into<String>,

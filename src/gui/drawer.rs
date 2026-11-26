@@ -281,13 +281,15 @@ impl Drawer {
                 .view(schema)
                 .map(Message::Form.with(name.clone()))
                 .boxed(),
-                false => look::aside(written)
-                    .font(font::MONO)
-                    .boxed(),
+                false => look::under_name(look::aside(written).font(font::MONO)),
             };
-            column![head, takes, body]
-                .spacing(spacing::XS)
-                .boxed()
+            column![
+                head,
+                takes.map(look::under_name),
+                body
+            ]
+            .spacing(spacing::XS)
+            .boxed()
         };
         let group = |title: &'a str, kind: Kind, named: &'a Map<String, Value>, says: &str| {
             let head = row![
