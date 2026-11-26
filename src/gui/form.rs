@@ -9,14 +9,14 @@ use std::sync::LazyLock;
 
 use iced::widget::{column, row};
 use iced::{Center, Element, Function, Widget};
+use polaroid_iced::theme::{Tone, font, spacing};
 use serde_json::{Value, json};
 
 use super::look::{
-    Face,
-    GAP,
     Help,
-    Tone,
+    add,
     aside,
+    clear,
     field,
     fitted,
     labelled,
@@ -179,6 +179,9 @@ const KINDS: [&str; 5] = [
     "number", "text", "flag", "list", "table",
 ];
 
+/// How far the arguments of a call are set in from it, and a call from the root of its chain.
+const INDENT: f32 = spacing::L;
+
 /// The schemas of a text, a number, a whole number and a flag, and that of any JSON.
 static PLAIN: LazyLock<[Value; 5]> = LazyLock::new(|| {
     [
@@ -190,19 +193,17 @@ static PLAIN: LazyLock<[Value; 5]> = LazyLock::new(|| {
     ]
 });
 
-impl Tone {
-    /// The tone of `value`, by the default of its schema and whether that takes a null.
-    fn of(
-        value: &Value,
-        default: Option<&Value>,
-        is_nullable: bool,
-    ) -> Self {
-        match value {
-            _ if default == Some(value) => Self::Default,
-            // nothing where something has to be, as a null may be what is meant
-            Value::Null if !is_nullable => Self::Missing,
-            _ => Self::Given,
-        }
+/// How `value` stands, by the default of its schema and whether that takes a null.
+fn tone_of(
+    value: &Value,
+    default: Option<&Value>,
+    is_nullable: bool,
+) -> Tone {
+    match value {
+        _ if default == Some(value) => Tone::Default,
+        // nothing where something has to be, as a null may be what is meant
+        Value::Null if !is_nullable => Tone::Refused,
+        _ => Tone::Given,
     }
 }
 
@@ -223,12 +224,17 @@ impl<'a> Form<'a, '_> {
         let waits = self
             .held
             .filter(|why| !is_said(why))
-            .map(|why| note(format!("Not applied until it is whole: {why}")));
+            .map(|why| {
+                note(
+                    format!("Not applied until it is whole: {why}"),
+                    Tone::Unsaved,
+                )
+            });
         column![
             self.value(schema, self.value, String::new()),
             waits
         ]
-        .spacing(GAP)
+        .spacing(spacing::XS)
     }
 
     /// The form for the value at the pointer `at`: a name, an expression, or by its schema.
@@ -265,7 +271,7 @@ impl<'a> Form<'a, '_> {
         let is_named = reference(value).is_some();
         let can_clear = is_named || is_nullable && !(is_free && in_row);
         let clear = (can_clear && !value.is_null()).then(|| {
-            let clear = small("×", Message::Put(at.clone(), Value::Null));
+            let clear = clear(Message::Put(at.clone(), Value::Null));
             self.help
                 .of(clear, "Clears the value, to give another or leave it out.")
         });
@@ -274,8 +280,8 @@ impl<'a> Form<'a, '_> {
             .held
             .filter(|why| !at.is_empty() && why.contains(&format!("`{}`", &at[1..])));
         let tone = match why {
-            Some(_) => Tone::Missing,
-            None => Tone::of(value, default, is_nullable),
+            Some(_) => Tone::Refused,
+            None => tone_of(value, default, is_nullable),
         };
 
         // a schema that resolves to the one definition of an expression is that very value
@@ -287,9 +293,10 @@ impl<'a> Form<'a, '_> {
             Expressions::Chained if is_expression => self.chain(value, at.clone()),
             Expressions::Named if is_expression => {
                 // one that has no name is written as it is, until a name takes its place
-                let written = (!value.is_null()).then(|| aside(methods::text(value)));
+                let written =
+                    (!value.is_null()).then(|| aside(methods::text(value)).font(font::MONO));
                 row![named("expression…"), written]
-                    .spacing(8)
+                    .spacing(spacing::S)
                     .align_y(Center)
                     .boxed()
             }
@@ -311,16 +318,20 @@ impl<'a> Form<'a, '_> {
                     .then(|| named("@…"))
                     .flatten();
                 row![field, named]
-                    .spacing(GAP)
+                    .spacing(spacing::XS)
                     .align_y(Center)
                     .boxed()
             }
         };
         // the same widgets whatever it holds, so that what has the focus keeps it
-        row![form, clear, why.map(note)]
-            .spacing(GAP)
-            .align_y(Center)
-            .boxed()
+        row![
+            form,
+            clear,
+            why.map(|why| note(why, Tone::Refused))
+        ]
+        .spacing(spacing::XS)
+        .align_y(Center)
+        .boxed()
     }
 
     /// The name of a column at the pointer `at`, to pick another of the columns that are read by.
@@ -337,7 +348,7 @@ impl<'a> Form<'a, '_> {
         let columns = self
             .columns
             .to_vec();
-        let pick = pick(name, columns, String::clone, "column…", Face::Plain, tone)
+        let pick = pick(name, columns, String::clone, "column…", font::SANS, tone)
             .on_select(move |name: String| Message::Put(at.clone(), name.into()));
         // none to pick from until a Check finds them, which it says
         match self
@@ -396,7 +407,7 @@ impl<'a> Form<'a, '_> {
                     .iter()
                     .enumerate()
                     .map(|(i, item)| self.value(item, &value[i], format!("{at}/{i}"))))
-                .spacing(10)
+                .spacing(spacing::S)
                 .boxed(),
                 None => self.list(&schema["items"], value, &at),
             },
@@ -414,7 +425,7 @@ impl<'a> Form<'a, '_> {
                 value
                     .as_str()
                     .unwrap_or_default(),
-                Face::Plain,
+                font::SANS,
                 tone,
             )
             .on_input(move |typed| put(typed.into()))
@@ -425,7 +436,7 @@ impl<'a> Form<'a, '_> {
                 KINDS.to_vec(),
                 ToString::to_string,
                 "value…",
-                Face::Plain,
+                font::SANS,
                 tone,
             )
             .on_select(move |kind| {
@@ -462,7 +473,7 @@ impl<'a> Form<'a, '_> {
             });
         let put = Message::Put.with(at.clone());
         let worded = |(name, _): &(&str, Option<&Value>)| worded(name);
-        let pick = pick(selected, variants, worded, "pick…", Face::Plain, tone)
+        let pick = pick(selected, variants, worded, "pick…", font::SANS, tone)
             .on_select(move |(name, payload)| {
                 put(match payload {
                     Some(payload) => json!({ name: default(defs, payload) }),
@@ -476,7 +487,7 @@ impl<'a> Form<'a, '_> {
                 pick,
                 self.value(payload, &value[name], format!("{at}/{name}"))
             ]
-            .spacing(GAP)
+            .spacing(spacing::XS)
             .boxed(),
             _ => pick,
         }
@@ -506,7 +517,7 @@ impl<'a> Form<'a, '_> {
             let field = nested.value(field, &value[name], format!("{at}/{name}"));
             labelled(name, wide, described, field)
         }))
-        .spacing(GAP)
+        .spacing(spacing::XS)
         .boxed()
     }
 
@@ -525,7 +536,7 @@ impl<'a> Form<'a, '_> {
             .map(Vec::as_slice)
             .unwrap_or_default();
         let end = format!("{at}/{}", elements.len());
-        let add = Message::Put(end, default(self.defs, items));
+        let more = Message::Put(end, default(self.defs, items));
         let lines = elements
             .iter()
             .enumerate()
@@ -533,20 +544,20 @@ impl<'a> Form<'a, '_> {
                 let at = format!("{at}/{i}");
                 row![
                     self.help.of(
-                        small("×", Message::Drop(at.clone())),
+                        clear(Message::Drop(at.clone())),
                         "Takes this one out of the list."
                     ),
                     self.placed(items, element, at, true)
                 ]
-                .spacing(GAP)
+                .spacing(spacing::XS)
                 .boxed()
             });
         column(lines)
             .push(
                 self.help
-                    .of(small("+", add), "Adds one to the list."),
+                    .of(add(more), "Adds one to the list."),
             )
-            .spacing(GAP)
+            .spacing(spacing::XS)
             .boxed()
     }
 
@@ -573,7 +584,7 @@ impl<'a> Form<'a, '_> {
         let typing = self.typing(&at);
         // text that writes no number is none, and shown as one that is missing
         let tone = match &typing {
-            Some(typed) if !typed.is_empty() && read(typed).is_none() => Tone::Missing,
+            Some(typed) if !typed.is_empty() && read(typed).is_none() => Tone::Refused,
             _ => tone,
         };
         let typed = typing.unwrap_or_else(|| match value {
@@ -582,7 +593,7 @@ impl<'a> Form<'a, '_> {
             number => number.to_string(),
         });
         // as wide as its text, beside a handle that moves the number as a slider would
-        let field = fitted("", typed, Face::Plain, tone).on_input(Message::Type.with(at.clone()));
+        let field = fitted("", typed, font::SANS, tone).on_input(Message::Type.with(at.clone()));
         let schema = stepped(schema, value);
         let moved = move |steps| Message::Put(at.clone(), nudged(schema, value, steps));
         scrubbed(field, Some(moved), self.help)

@@ -4,66 +4,37 @@ use std::rc::Rc;
 
 use iced::advanced::widget;
 use iced::widget::canvas::{self, Frame, Path, Stroke};
-use iced::widget::{
-    Component,
-    button,
-    canvas as draw,
-    column,
-    container,
-    markdown,
-    row,
-    space,
-    text,
-};
-use iced::{
-    Center,
-    Color,
-    Fill,
-    Font,
-    Point,
-    Rectangle,
-    Renderer,
-    Size,
-    Theme,
-    Widget,
-    border,
-    mouse,
-};
+use iced::widget::{Component, canvas as draw, column, container, markdown, row, space, text};
+use iced::{Center, Fill, Point, Rectangle, Renderer, Size, Theme, Widget, mouse};
+use polaroid_iced::theme::{self, Scheme, Tone, control, font, icon, size, spacing, stroke};
 use polaroid_iced::{Asked, Heading, leave, pick_list, width_of};
 use serde_json::Value;
 
 use super::form::{Expressions, Form};
 use super::gallery::{self, Gallery};
 use super::known::{Known, Status};
-use super::look::{self, Help, NOTE, TEXT, TITLE, Tone, cross, error, name_field, toggle};
+use super::look::{self, Help, cross, error, name_field, round, toggle};
 use super::{Editor, Message, drawer, form, layout};
 use crate::polars::prelude::{AnyValue, DataFrame, DataType};
 use crate::{Described, Node, Pipeline, Registry, schema};
 
 /// The space around what a card holds, and between its lines.
-const PAD: f32 = 10.0;
-const GAP: f32 = 6.0;
+const PAD: f32 = spacing::M;
+const GAP: f32 = spacing::S;
 /// The height of the line of the id.
-const HEAD: f32 = 28.0;
-/// The width of the buttons that are a sign: the toggle and the cross.
-const BUTTON: f32 = 22.0;
-/// The small table, and the room around it in its button.
-const ICON: Size = Size::new(15.0, 11.0);
-const AROUND_ICON: f32 = 6.0;
-/// The room around the text of a field, and what its border and cursor take beside that.
-const FIELD: f32 = 4.0;
-const EDGE: f32 = 2.0;
+const HEAD: f32 = theme::line(size::TITLE) + theme::FIELD.top + theme::FIELD.bottom;
+/// The small table, a pixel under a sign so that its lines are crisp.
+const ICON: Size = Size::new(icon::M - 1.0, icon::S - 1.0);
+/// What the border and the cursor of a field take beside the room around its text.
+const EDGE: f32 = stroke::MEDIUM;
 /// The width of the handle that drags a card.
-const GRAB: f32 = 14.0;
-/// The width of a border that shows a status.
-const STATUS: f32 = 4.0;
+const GRAB: f32 = theme::surface::GRIP;
 
 /// The width of a card whose line of the id shows all of an id that is this wide.
 fn around(id: f32) -> f32 {
-    let buttons = 2.0 * BUTTON + ICON.width + 2.0 * AROUND_ICON;
-    let field = id + 2.0 * (FIELD + EDGE);
-    // in the card's padding: the handle, the buttons and the field, with a gap between each two
-    2.0 * PAD + GRAB + buttons + field + 4.0 * GAP
+    let field = id + theme::FIELD.x() + 2.0 * EDGE;
+    // in the card's padding: the handle, three buttons and the field, with a gap between each two
+    2.0 * PAD + GRAB + 3.0 * control::S + field + 4.0 * GAP
 }
 
 /// A change to a node.
@@ -367,7 +338,7 @@ impl<'a> Component<'a, Message> for Card<'a> {
             true => layout::size(node).width,
             false => layout::WIDTH,
         };
-        let width = made.max(around(width_of(&name, TITLE, Font::DEFAULT)));
+        let width = made.max(around(width_of(&name, size::TITLE, font::SANS)));
         // the names of all it is given in one column: the nodes it reads, then its args
         let args = schema["properties"]
             .as_object()
@@ -394,7 +365,12 @@ impl<'a> Component<'a, Message> for Card<'a> {
             true => {
                 // what the block does, laid out as the Markdown it is written in
                 let does = self.doc.map(|doc| {
-                    let settings = markdown::Settings::with_text_size(NOTE);
+                    let settings = markdown::Settings {
+                        font: font::SANS,
+                        inline_code_font: font::MONO,
+                        code_block_font: font::MONO,
+                        ..markdown::Settings::with_text_size(size::NOTE)
+                    };
                     markdown::view(doc.items(), settings, self.theme.clone()).map(|_| Event::Link)
                 });
                 // an expression is picked by its name, and edited in the drawer
@@ -427,9 +403,9 @@ impl<'a> Component<'a, Message> for Card<'a> {
             false => {
                 // a closed card says no more of its block than its name
                 let block = text(&node.block)
-                    .size(NOTE)
-                    .font(Font::MONOSPACE)
-                    .style(text::secondary);
+                    .size(size::NOTE)
+                    .font(font::MONO)
+                    .style(theme::text::muted);
                 // and of its images one, small
                 column![
                     head,
@@ -482,8 +458,8 @@ impl<'a> Card<'a> {
         is_open: bool,
     ) -> impl Widget<Event> + use<'a> {
         let save = match self.is_output {
-            true => button::primary,
-            false => button::text,
+            true => theme::button::filled,
+            false => theme::button::icon,
         };
         let icon = draw(Icon(self.is_output))
             .width(ICON.width)
@@ -492,15 +468,14 @@ impl<'a> Card<'a> {
             // where the surface draws the handle that drags the card
             space().width(GRAB),
             self.help.of(
-                toggle(is_open, Event::Edit(Edit::Toggle)).width(BUTTON),
+                toggle(is_open, Event::Edit(Edit::Toggle)),
                 "Lays the card open to edit its args and see its table, or closes it. A \
                      double-click on a closed card opens it too. Drag the corner of an open \
                      card to resize it.",
             ),
             self.help.of(
-                button(icon)
+                round(icon)
                     .style(save)
-                    .padding(AROUND_ICON)
                     .on_press(Event::Edit(Edit::Output(!self.is_output))),
                 "Keeps the frame of this node at the next Run, to show it on the open \
                      card. Scroll over the table, with Shift for sideways; drag across cells \
@@ -515,9 +490,7 @@ impl<'a> Card<'a> {
                             .any(|node| node.id == id)
                     })
                     .on_input(Event::Name)
-                    .on_submit(Event::Rename)
-                    .size(TITLE)
-                    .padding(FIELD),
+                    .on_submit(Event::Rename),
                     Event::Leave,
                 ),
                 "The id of the node. Type another and press Enter to rename it; the border \
@@ -525,7 +498,7 @@ impl<'a> Card<'a> {
                      Leaving the field shows the id again.",
             ),
             self.help.of(
-                cross(Event::Edit(Edit::Delete)).width(BUTTON),
+                cross(Event::Edit(Edit::Delete)),
                 "Deletes the node, and unwires those that read it.",
             ),
         ]
@@ -555,7 +528,7 @@ impl<'a> Card<'a> {
                 // a node to read is as much an argument as any, and without one it is missing
                 let tone = match source {
                     Some(_) => Tone::Given,
-                    None => Tone::Missing,
+                    None => Tone::Refused,
                 };
                 let wired = is_open.then(|| {
                     let others: Vec<&str> = self
@@ -568,16 +541,14 @@ impl<'a> Card<'a> {
                     pick_list(source, others, ToString::to_string)
                         .on_select(wire)
                         .placeholder("unwired")
-                        .text_size(TEXT)
-                        .padding(FIELD)
                         .width(Fill)
-                        .style(look::picked(tone))
+                        .style(theme::pick_list::toned(tone))
                 });
                 container(look::labelled(name, names, None, wired))
                     .id(anchor(slot))
                     .boxed()
             });
-        column(inputs).spacing(5)
+        column(inputs).spacing(spacing::XS)
     }
 
     /// An image of its frame; to browse, with what picks the rows and steps through them.
@@ -656,43 +627,27 @@ pub(super) fn shown(value: AnyValue) -> String {
     }
 }
 
-/// The paper of a card, in a border of the colour of its status.
+/// A card in a border of the colour of its status, once anything is known of it.
 fn framed(
     theme: &Theme,
     status: Status,
 ) -> container::Style {
-    let palette = theme.palette();
-    let paper = palette
-        .background
-        .base
-        .color;
-    // halfway to the card, for what a Check found and no Run
-    let pale = |color: Color| color.mix(paper, 0.5);
-    let success = palette
-        .success
-        .strong
-        .color;
-    let danger = palette
-        .danger
-        .strong
-        .color;
-    let unknown = palette
-        .background
-        .strongest
-        .color;
-    let (color, width) = match status {
-        Status::Unknown => (unknown, 1.0),
-        Status::Checked => (pale(success), STATUS),
-        Status::Rejected => (pale(danger), STATUS),
-        Status::Ran => (success, STATUS),
-        Status::Failed => (danger, STATUS),
+    let card = theme::container::card(theme);
+    let scheme = Scheme::of(theme);
+    let (success, error) = (scheme.success.color, scheme.error.color);
+    // paler for what a Check found and no Run
+    let color = match status {
+        Status::Unknown => return card,
+        Status::Checked => scheme.pale(success),
+        Status::Rejected => scheme.pale(error),
+        Status::Ran => success,
+        Status::Failed => error,
     };
-    let border = border::rounded(5)
+    let border = card
+        .border
         .color(color)
-        .width(width);
-    container::Style::default()
-        .background(paper)
-        .border(border)
+        .width(stroke::THICK);
+    card.border(border)
 }
 
 /// A small table: the button that has a Run save the frame of its node, lit when it does.
@@ -709,20 +664,11 @@ impl<Message> canvas::Program<Message> for Icon {
         bounds: Rectangle,
         _cursor: mouse::Cursor,
     ) -> Vec<canvas::Geometry> {
-        let palette = theme.palette();
+        let scheme = Scheme::of(theme);
+        // as a sign is in the button it is in, filled or not
         let color = match self.0 {
-            true => {
-                palette
-                    .primary
-                    .base
-                    .text
-            }
-            false => {
-                palette
-                    .background
-                    .base
-                    .text
-            }
+            true => scheme.primary.on,
+            false => scheme.on_surface_variant,
         };
         let Size { width, height } = bounds.size();
         let lines = Path::new(|path| {
@@ -732,11 +678,11 @@ impl<Message> canvas::Program<Message> for Icon {
             path.move_to(Point::new(5.0, 4.0));
             path.line_to(Point::new(5.0, height - 0.5));
         });
-        let stroke = Stroke::default()
+        let line = Stroke::default()
             .with_color(color)
-            .with_width(1.0);
+            .with_width(stroke::THIN);
         let mut frame = Frame::new(renderer, bounds.size());
-        frame.stroke(&lines, stroke);
+        frame.stroke(&lines, line);
         vec![frame.into_geometry()]
     }
 }

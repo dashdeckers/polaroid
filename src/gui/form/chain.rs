@@ -5,22 +5,11 @@ use std::iter::successors;
 
 use iced::widget::{column, container, mouse_area, row, space};
 use iced::{Center, Element, Fill, Function, Widget, padding};
+use polaroid_iced::theme::{Tone, control, extent, font, spacing};
 use serde_json::{Value, json};
 
-use super::{self as form, Form, PLAIN, put, small, told};
-use crate::gui::look::{
-    Face,
-    GAP,
-    INDENT,
-    REMOVE,
-    Tone,
-    code,
-    field,
-    fitted,
-    pick,
-    remove,
-    scrubbed,
-};
+use super::{self as form, Form, INDENT, PLAIN, put};
+use crate::gui::look::{add, clear, code, field, fitted, pick, scrubbed, told};
 use crate::methods::{self, Method};
 use crate::{reference, schema};
 
@@ -29,6 +18,9 @@ const FIRST: [&str; 3] = ["pl.col", "pl.lit", "alias"];
 
 /// What the methods that are in no namespace are offered under.
 const BASE: &str = "base";
+
+/// The width of the column before the lines of a chain, where a call is taken away.
+const REMOVE: f32 = control::S;
 
 /// Arguments longer than this are not written while folded away.
 const WRITTEN: usize = 32;
@@ -190,7 +182,7 @@ impl<'a> Form<'a, '_> {
             .map(|(method, node, pointer)| match method {
                 Some(method) => {
                     let remove = self.help.of(
-                        remove(asked(Message::Remove(pointer.clone()))),
+                        clear(asked(Message::Remove(pointer.clone()))),
                         "Takes this call out of the chain, and leaves what it was called on.",
                     );
                     (Some(remove), self.call(method, node, pointer))
@@ -201,14 +193,14 @@ impl<'a> Form<'a, '_> {
                     let function = code_pick(None, choices(None), label, "pl.…")
                         .on_select(move |method| asked(Message::Replace(pointer.clone(), method)));
                     let hole = row![function, named]
-                        .spacing(GAP)
+                        .spacing(spacing::XS)
                         .align_y(Center)
                         .boxed();
                     (None, hole)
                 }
                 None if reference(node).is_some() => {
                     let remove = self.help.of(
-                        remove(form::Message::Put(pointer.clone(), Value::Null)),
+                        clear(form::Message::Put(pointer.clone(), Value::Null)),
                         "Takes this name out of the chain, and leaves a hole.",
                     );
                     (Some(remove), self.named(expr, node, pointer, Tone::Given))
@@ -231,7 +223,7 @@ impl<'a> Form<'a, '_> {
                 .boxed()
             });
         column(lines)
-            .spacing(GAP)
+            .spacing(spacing::XS)
             .boxed()
     }
 
@@ -281,7 +273,7 @@ impl<'a> Form<'a, '_> {
                 name.take(),
                 after
             ]
-            .spacing(2)
+            .spacing(spacing::XXS)
             .align_y(Center)
         };
 
@@ -324,7 +316,7 @@ impl<'a> Form<'a, '_> {
                 // one that may be left out is taken out again where it is given
                 let leave = (arg.is_optional && given.is_some()).then(|| {
                     self.help.of(
-                        small("×", form::Message::Drop(inside.clone())),
+                        clear(form::Message::Drop(inside.clone())),
                         "Leaves this argument out again.",
                     )
                 });
@@ -337,14 +329,14 @@ impl<'a> Form<'a, '_> {
                     ),
                     leave
                 ]
-                .spacing(GAP)
+                .spacing(spacing::XS)
             });
         column![
             line(toggle("(").boxed()),
-            container(column(arguments).spacing(GAP)).padding(padding::left(INDENT)),
+            container(column(arguments).spacing(spacing::XS)).padding(padding::left(INDENT)),
             toggle(")"),
         ]
-        .spacing(GAP)
+        .spacing(spacing::XS)
         .boxed()
     }
 
@@ -364,7 +356,7 @@ impl<'a> Form<'a, '_> {
         let named = |schema: &'a Value| self.names(schema, value, &at, "@…", Tone::Given);
         let beside = |edited: Element<'a, form::Message>, schema| {
             row![edited, named(schema)]
-                .spacing(GAP)
+                .spacing(spacing::XS)
                 .align_y(Center)
                 .boxed()
         };
@@ -381,12 +373,12 @@ impl<'a> Form<'a, '_> {
                     .columns
                     .is_empty()
                 {
-                    let typed = field("column", name, Face::Code, Tone::Given)
+                    let typed = field("column", name, font::MONO, Tone::Given)
                         .on_input({
                             let put = put();
                             move |name| put(name.into())
                         })
-                        .width(Fill.max(150));
+                        .width(Fill.max(extent::S));
                     return Some(beside(typed.boxed(), &PLAIN[0]));
                 }
                 // it shows a name that is none of the columns, as one named before they were known
@@ -414,7 +406,7 @@ impl<'a> Form<'a, '_> {
                 let typed = methods::typed(node)?;
                 let number = schema::number(&typed);
                 // the field keeps its place, and so its focus, while what is typed is no number
-                let typed_in = fitted("value", typed, Face::Code, Tone::Given).on_input({
+                let typed_in = fitted("value", typed, font::MONO, Tone::Given).on_input({
                     let put = put();
                     move |typed| put(methods::literal_of(&typed))
                 });
@@ -451,7 +443,7 @@ impl<'a> Form<'a, '_> {
                 return row![
                     code("."),
                     self.help.of(
-                        small("+", asked(Message::Narrow(at, ""))),
+                        add(asked(Message::Narrow(at, ""))),
                         "Calls a method on the expression: pick its namespace, then the method.",
                     )
                 ]
@@ -492,7 +484,7 @@ impl<'a> Form<'a, '_> {
             code("."),
             method
         ]
-        .spacing(2)
+        .spacing(spacing::XXS)
         .align_y(Center)
         .boxed()
     }
@@ -545,7 +537,7 @@ fn code_pick<'a, T: Clone + PartialEq + 'a>(
         options,
         label,
         placeholder,
-        Face::Code,
+        font::MONO,
         Tone::Given,
     )
 }

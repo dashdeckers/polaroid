@@ -31,13 +31,14 @@ use iced::{
     system,
     task,
 };
-use polaroid_iced::{Menu, Surface, menu, scrub, split, surface, theme};
+use polaroid_iced::theme::{self, size};
+use polaroid_iced::{Menu, Surface, menu, scrub, split, surface};
 use serde_json::Value;
 
 use self::card::Edit;
 use self::drawer::Drawer;
 use self::known::Known;
-use self::look::{Help, NOTE, error};
+use self::look::{Help, error};
 use crate::polars::prelude::{DataFrame, DataType, PolarsResult, polars_err};
 use crate::{Catalog, Described, Node, Pipeline, Registry, schema};
 
@@ -842,7 +843,7 @@ impl Editor {
         let kept = self.known.size();
         let clear = column![
             text("Clear"),
-            text(bytes(kept)).size(NOTE),
+            text(bytes(kept)).size(size::NOTE),
         ]
         .align_x(Center);
         let frames = row![

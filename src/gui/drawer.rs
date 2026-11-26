@@ -6,10 +6,11 @@ use std::rc::Rc;
 use iced::widget::{button, column, container, row, scrollable, space};
 use iced::{Center, Element, Fill, Function, Widget};
 use polaroid_iced::leave;
+use polaroid_iced::theme::Tone;
 use serde_json::{Map, Value};
 
 use super::form::{self, Expressions, Form};
-use super::look::{self, Help, TITLE, cross, name_field, toggle};
+use super::look::{self, Help, cross, name_field, toggle};
 use crate::{Kind, Pipeline, Registry, methods};
 
 /// What the drawer shows of what a pipeline names, by the names.
@@ -226,9 +227,7 @@ impl Drawer {
                     leave(
                         name_field("name", typed, name, is_taken)
                             .on_input(Message::Name.with(name.clone()))
-                            .on_submit(Message::Rename(name.clone()))
-                            .size(TITLE)
-                            .padding(4),
+                            .on_submit(Message::Rename(name.clone())),
                         Message::Leave(name.clone()),
                     ),
                     "The name that cards and expressions use it by. Type another and press Enter \
@@ -254,7 +253,7 @@ impl Drawer {
                             .collect();
                         Some(look::aside(format!("takes {}", holes.join(", "))))
                     }
-                    Err(e) => Some(look::note(form::line(&e))),
+                    Err(e) => Some(look::note(form::line(&e), Tone::Refused)),
                 });
             // open it is edited, and closed it is written out
             let draft = section.and_then(|section| {

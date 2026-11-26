@@ -5,20 +5,21 @@ use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use iced::widget::{column, container, row};
-use iced::{Center, Element, Widget, padding};
+use iced::{Center, Element, Font, Widget, padding};
+use polaroid_iced::theme::{Tone, font, spacing};
 use serde_json::{Number, Value, json};
 
-use super::{Expressions, Form, Message, PLAIN, escaped, put, stepped};
-use crate::gui::look::{Face, GAP, INDENT, Tone, aside, code, fitted, pick, scrubbed};
+use super::{Expressions, Form, INDENT, Message, PLAIN, escaped, put, stepped};
+use crate::gui::look::{aside, code, fitted, pick, scrubbed};
 use crate::schema::{self, nudged};
 use crate::{Kind, Pipeline, Reference, Taken, methods, reference};
 
 impl<'a> Form<'a, '_> {
-    /// How what reads as code in it is written: an expression edited here is code.
-    fn face(self) -> Face {
+    /// The face that a name in it is written in: an expression edited here is code.
+    fn face(self) -> Font {
         match self.expressions {
-            Expressions::Named => Face::Plain,
-            Expressions::Chained => Face::Code,
+            Expressions::Named => font::SANS,
+            Expressions::Chained => font::MONO,
         }
     }
 
@@ -129,7 +130,7 @@ impl<'a> Form<'a, '_> {
         // a hole is named here, as a part of what fills it may be: `band.lo`, `rows[0]`
         if reference.kind == Kind::Argument {
             let typed = reference.to_string()[1..].to_owned();
-            let hole = fitted("hole", typed, Face::Code, tone)
+            let hole = fitted("hole", typed, font::MONO, tone)
                 .on_input(move |typed| Message::Put(at.clone(), hole_of(&typed)));
             return row![code("$"), hole]
                 .align_y(Center)
@@ -155,9 +156,9 @@ impl<'a> Form<'a, '_> {
         });
         let line = row![
             self.names(schema, value, &at, "", tone),
-            scrubbed(aside(written), moved, self.help)
+            scrubbed(aside(written).font(font::MONO), moved, self.help)
         ]
-        .spacing(GAP)
+        .spacing(spacing::XS)
         .align_y(Center);
 
         // what a call gives each hole of its expression, on a line of its own
@@ -186,15 +187,15 @@ impl<'a> Form<'a, '_> {
                     code(format!("{hole}=")),
                     self.value(taken, given, format!("{at}/with/{}", escaped(hole)))
                 ]
-                .spacing(GAP)
+                .spacing(spacing::XS)
                 .align_y(Center)
                 .boxed()
             });
         let given: Vec<_> = given.collect();
         let given = (!given.is_empty())
-            .then(|| container(column(given).spacing(GAP)).padding(padding::left(INDENT)));
+            .then(|| container(column(given).spacing(spacing::XS)).padding(padding::left(INDENT)));
         column![line, given]
-            .spacing(GAP)
+            .spacing(spacing::XS)
             .boxed()
     }
 }

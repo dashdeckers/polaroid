@@ -10,7 +10,7 @@ use iced::advanced::text::{self, Renderer as _};
 use iced::advanced::widget::{self, Tree, tree};
 use iced::advanced::{Shell, Text, Widget, mouse, overlay, renderer};
 use iced::alignment::Vertical;
-pub use iced::widget::pick_list::{Status, Style, StyleFn, default};
+pub use iced::widget::pick_list::{Status, Style, StyleFn};
 use iced::widget::row;
 use iced::{
     Center,

@@ -80,7 +80,7 @@ fn a_node_wired_badly_is_rejected() {
 }
 
 #[test]
-fn a_press_on_its_plus_lays_a_card_open() {
+fn a_press_on_its_toggle_lays_a_card_open() {
     let mut editor = chain(1);
     let node = |editor: &Editor| {
         editor
@@ -91,7 +91,7 @@ fn a_press_on_its_plus_lays_a_card_open() {
     assert!(!layout::is_open(&node(&editor)));
 
     let mut ui = simulator(editor.view());
-    ui.click("+")
+    ui.click(theme::sign::OPEN)
         .unwrap();
     for message in ui
         .into_messages()

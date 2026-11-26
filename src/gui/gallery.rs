@@ -7,10 +7,11 @@ use std::collections::{BTreeMap, HashMap};
 use iced::widget::{button, column, image, row, slider, space, svg, text};
 use iced::{Center, Element, Fill, Widget};
 use polaroid_iced::pick_list;
+use polaroid_iced::theme::size;
 #[cfg(feature = "plot")]
 use rustd3_iced::Plot;
 
-use super::look::{self, Help, NOTE, TEXT};
+use super::look::{self, Help};
 #[cfg(feature = "plot")]
 use crate::Drawer;
 use crate::polars::prelude::{Column, DataFrame, SortOptions};
@@ -386,7 +387,7 @@ impl Gallery {
         Some(
             column![
                 Element::from(plot),
-                text(says).size(NOTE)
+                text(says).size(size::NOTE)
             ]
             .spacing(GAP)
             .boxed(),
@@ -535,7 +536,7 @@ impl Gallery {
             .rows(state)
             .len();
         let browse = match left {
-            0 => row![text("no row has these values").size(NOTE)],
+            0 => row![text("no row has these values").size(size::NOTE)],
             1 => row![
                 space::horizontal(),
                 live,
@@ -601,8 +602,6 @@ impl Gallery {
                 pick_list(picked, places, |place: &usize| values[*place].clone())
                     .on_select(pick_one)
                     .placeholder("any")
-                    .text_size(TEXT)
-                    .padding(4)
                     .width(Fill)
                     .stepped()
             }
@@ -619,7 +618,7 @@ fn small<'a>(
     label: &'a str,
     message: Message,
 ) -> impl Widget<Message> + 'a {
-    button(text(label).size(TEXT))
+    button(text(label))
         .padding([2, 6])
         .style(button::text)
         .on_press(message)
@@ -635,7 +634,7 @@ fn stepped<'a>(
     let last = len.saturating_sub(1) as u32;
     row![
         slider(0..=last, place as u32, move |place| on_step(place as usize)),
-        text(says).size(NOTE),
+        text(says).size(size::NOTE),
     ]
     .spacing(GAP)
     .align_y(Center)

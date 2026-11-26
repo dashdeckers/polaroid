@@ -5,10 +5,11 @@ use std::sync::LazyLock;
 
 use iced::widget::{column, row, space};
 use iced::{Element, Widget};
+use polaroid_iced::theme::{Tone, font, spacing};
 use serde_json::{Map, Value};
 
 use super::{Form, Message, PLAIN, escaped, is_any};
-use crate::gui::look::{Face, GAP, Tone, field, lined, small, width};
+use crate::gui::look::{add, clear, field, lined, width};
 use crate::reference;
 use crate::schema::{default, resolve};
 
@@ -34,23 +35,23 @@ impl<'a> Form<'a, '_> {
                 let inside = format!("{at}/{}", escaped(key));
                 row![
                     self.help.of(
-                        small("×", Message::Drop(inside.clone())),
+                        clear(Message::Drop(inside.clone())),
                         "Takes this one out of the table."
                     ),
                     named(entries, key, at, wide),
                     self.placed(items, entry, inside, true)
                 ]
-                .spacing(GAP)
+                .spacing(spacing::XS)
                 .boxed()
             });
         // one more, to name: none while one waits for its name
         let add = (!entries.contains_key("")).then(|| {
-            let add = Message::Put(format!("{at}/"), default(self.defs, items));
+            let more = Message::Put(format!("{at}/"), default(self.defs, items));
             self.help
-                .of(small("+", add), "Adds one to the table, to name.")
+                .of(add(more), "Adds one to the table, to name.")
         });
         column(lines.chain(add))
-            .spacing(GAP)
+            .spacing(spacing::XS)
             .boxed()
     }
 
@@ -109,7 +110,7 @@ impl<'a> Form<'a, '_> {
             .iter()
             .map(|(step, _)| {
                 self.help.of(
-                    small("×", Message::Drop(format!("{at}/{step}"))),
+                    clear(Message::Drop(format!("{at}/{step}"))),
                     "Takes this row out.",
                 )
             });
@@ -126,8 +127,8 @@ impl<'a> Form<'a, '_> {
             .clone()
             .map(|key| {
                 let table = at.to_owned();
-                let rename = field("key", key.as_str(), Face::Plain, Tone::Given)
-                    .width(width(key, Face::Plain))
+                let rename = field("key", key.as_str(), font::BOLD, Tone::Given)
+                    .width(width(key, font::BOLD))
                     .on_input(move |typed| {
                         let renamed = each(value, |cells| renamed(cells, key, &typed));
                         Message::Put(table.clone(), renamed)
@@ -139,10 +140,8 @@ impl<'a> Form<'a, '_> {
                 });
                 let head = row![
                     rename,
-                    self.help.of(
-                        small("×", put(without)),
-                        "Takes this column out of every row."
-                    )
+                    self.help
+                        .of(clear(put(without)), "Takes this column out of every row.")
                 ];
                 let column = rows
                     .iter()
@@ -162,11 +161,10 @@ impl<'a> Form<'a, '_> {
                 cells.insert(String::new(), Value::Null);
                 Value::Object(cells)
             });
-            let add = small("+", put(wider));
-            let add = self
+            let more = self
                 .help
-                .of(add, "Adds a column to every row, to name.");
-            headed(add, [])
+                .of(add(put(wider)), "Adds a column to every row, to name.");
+            headed(more, [])
         });
         let end = match entries {
             Some(entries) if entries.contains_key("") => None,
@@ -179,7 +177,7 @@ impl<'a> Form<'a, '_> {
                 .map(|key| (key.clone(), Value::Null))
                 .collect();
             self.help
-                .of(small("+", Message::Put(end, blank)), "Adds a row.")
+                .of(add(Message::Put(end, blank)), "Adds a row.")
         });
         let columns = once(headed(space().boxed(), drops))
             .chain(names)
@@ -187,10 +185,10 @@ impl<'a> Form<'a, '_> {
             .chain(add_column);
         Some(
             column![
-                row(columns).spacing(GAP),
+                row(columns).spacing(spacing::XS),
                 add_row
             ]
-            .spacing(GAP)
+            .spacing(spacing::XS)
             .boxed(),
         )
     }
@@ -206,14 +204,14 @@ fn headed<'a>(
             .chain(cells)
             .map(lined),
     )
-    .spacing(GAP)
+    .spacing(spacing::XS)
     .boxed()
 }
 
 /// The width of a column of fields that holds the widest of `keys`.
 fn widest<'a>(keys: impl IntoIterator<Item = &'a String>) -> f32 {
     keys.into_iter()
-        .map(|key| width(key, Face::Plain))
+        .map(|key| width(key, font::SANS))
         .fold(0.0, f32::max)
 }
 
@@ -225,7 +223,7 @@ fn named<'a>(
     wide: f32,
 ) -> Element<'a, Message> {
     let table = at.to_owned();
-    field("key", key.as_str(), Face::Plain, Tone::Given)
+    field("key", key.as_str(), font::SANS, Tone::Given)
         .width(wide)
         .on_input(move |typed| Message::Put(table.clone(), renamed(entries, key, &typed)))
         .boxed()

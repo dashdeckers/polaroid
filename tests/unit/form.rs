@@ -347,17 +347,17 @@ fn arguments_are_written_until_they_are_laid_out() -> Result<(), Error> {
 fn a_value_is_given_the_default_or_missing() {
     let five = json!(5);
     // the default is told from what was given, though it be the same again
-    assert_eq!(Tone::of(&five, Some(&five), false), Tone::Default);
-    assert_eq!(Tone::of(&json!(6), Some(&five), false), Tone::Given);
-    assert_eq!(Tone::of(&five, None, false), Tone::Given);
+    assert_eq!(tone_of(&five, Some(&five), false), Tone::Default);
+    assert_eq!(tone_of(&json!(6), Some(&five), false), Tone::Given);
+    assert_eq!(tone_of(&five, None, false), Tone::Given);
 
     // nothing is missing where something has to be, and a null may be what is meant
-    assert_eq!(Tone::of(&Value::Null, None, false), Tone::Missing);
+    assert_eq!(tone_of(&Value::Null, None, false), Tone::Refused);
     // and a text that was typed and cleared is a text
-    assert_eq!(Tone::of(&json!(""), None, false), Tone::Given);
-    assert_eq!(Tone::of(&Value::Null, None, true), Tone::Given);
+    assert_eq!(tone_of(&json!(""), None, false), Tone::Given);
+    assert_eq!(tone_of(&Value::Null, None, true), Tone::Given);
     assert_eq!(
-        Tone::of(&Value::Null, Some(&Value::Null), true),
+        tone_of(&Value::Null, Some(&Value::Null), true),
         Tone::Default
     );
 }
