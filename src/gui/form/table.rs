@@ -8,7 +8,7 @@ use iced::{Element, Widget};
 use polaroid_iced::theme::{Tone, font, spacing};
 use serde_json::{Map, Value};
 
-use super::{Form, Message, PLAIN, escaped, is_any};
+use super::{ANY, Form, Message, escaped, is_any};
 use crate::gui::look::{add, clear, field, lined, width};
 use crate::reference;
 use crate::schema::{default, resolve};
@@ -147,7 +147,7 @@ impl<'a> Form<'a, '_> {
                     .iter()
                     .map(|(step, row)| {
                         let inside = format!("{at}/{step}/{}", escaped(key));
-                        self.placed(&PLAIN[4], &row[key], inside, true)
+                        self.placed(&ANY, &row[key], inside, true)
                     });
                 headed(head.boxed(), column)
             });

@@ -56,9 +56,6 @@ pub enum Change {
     Named(String),
 }
 
-/// Any JSON, as the schema of a value says it.
-static ANY: Value = Value::Null;
-
 impl Drawer {
     /// Does what `message` asks, to the drawer or to what `pipeline` names.
     pub fn update(
@@ -264,7 +261,7 @@ impl Drawer {
             let (value, held) = form::Draft::shown(draft, stored);
             let (schema, expressions, written) = match kind {
                 Kind::Expression => (&defs["Expr"], Expressions::Chained, methods::text(value)),
-                _ => (&ANY, Expressions::Named, value.to_string()),
+                _ => (&form::ANY, Expressions::Named, value.to_string()),
             };
             let body: Element<'a, Message> = match is_open {
                 true => Form {

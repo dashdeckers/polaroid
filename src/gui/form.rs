@@ -183,15 +183,11 @@ const KINDS: [&str; 5] = [
 const INDENT: f32 = spacing::L;
 
 /// The schemas of a text, a number, a whole number and a flag, and that of any JSON.
-static PLAIN: LazyLock<[Value; 5]> = LazyLock::new(|| {
-    [
-        json!({ "type": "string" }),
-        json!({ "type": "number" }),
-        json!({ "type": "integer" }),
-        json!({ "type": "boolean" }),
-        Value::Null,
-    ]
-});
+static TEXT: LazyLock<Value> = LazyLock::new(|| json!({ "type": "string" }));
+static NUMBER: LazyLock<Value> = LazyLock::new(|| json!({ "type": "number" }));
+static WHOLE: LazyLock<Value> = LazyLock::new(|| json!({ "type": "integer" }));
+static FLAG: LazyLock<Value> = LazyLock::new(|| json!({ "type": "boolean" }));
+pub static ANY: Value = Value::Null;
 
 /// How `value` stands, by the default of its schema and whether that takes a null.
 fn tone_of(
@@ -612,8 +608,8 @@ fn stepped<'a>(
 ) -> &'a Value {
     match (json_type(schema), number.is_f64()) {
         ("integer" | "number", _) => schema,
-        (_, true) => &PLAIN[1],
-        (_, false) => &PLAIN[2],
+        (_, true) => &*NUMBER,
+        (_, false) => &*WHOLE,
     }
 }
 

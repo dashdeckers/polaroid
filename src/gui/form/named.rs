@@ -9,7 +9,7 @@ use iced::{Center, Element, Font, Widget, padding};
 use polaroid_iced::theme::{Tone, font, spacing};
 use serde_json::{Number, Value, json};
 
-use super::{Expressions, Form, INDENT, Message, PLAIN, escaped, put, stepped};
+use super::{ANY, Expressions, FLAG, Form, INDENT, Message, NUMBER, TEXT, escaped, put, stepped};
 use crate::gui::look::{aside, code, fitted, pick, scrubbed};
 use crate::schema::{self, nudged};
 use crate::{Kind, Pipeline, Reference, Taken, methods, reference};
@@ -178,10 +178,10 @@ impl<'a> Form<'a, '_> {
                     .unwrap_or(&Value::Null);
                 let taken = match taken {
                     Taken::Expression => &self.defs["Expr"],
-                    Taken::Text => &PLAIN[0],
-                    Taken::Number => &PLAIN[1],
-                    Taken::Flag => &PLAIN[3],
-                    Taken::Any => &PLAIN[4],
+                    Taken::Text => &*TEXT,
+                    Taken::Number => &*NUMBER,
+                    Taken::Flag => &*FLAG,
+                    Taken::Any => &ANY,
                 };
                 row![
                     code(format!("{hole}=")),

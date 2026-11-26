@@ -72,7 +72,7 @@ impl Shown {
         pipeline: Pipeline,
     ) -> Self {
         Self {
-            schema: &PLAIN[4],
+            schema: &ANY,
             check: Rc::new(|_| Ok(())),
             ..Self::of("limit", value, pipeline)
         }
@@ -838,7 +838,7 @@ fn rows_of_one_shape_are_laid_out_as_a_grid() -> Result<(), Error> {
     // a list of such rows is one too, and rows of other keys or of more than cells are none
     let is_grid = |rows: Value| {
         form.form()
-            .grid(&PLAIN[4], kept(rows), "")
+            .grid(&ANY, kept(rows), "")
             .is_some()
     };
     assert!(is_grid(json!([{ "lo": 0 }, { "lo": 10 }])));

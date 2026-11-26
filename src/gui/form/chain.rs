@@ -8,7 +8,7 @@ use iced::{Center, Element, Fill, Function, Widget, padding};
 use polaroid_iced::theme::{Tone, control, extent, font, spacing};
 use serde_json::Value;
 
-use super::{self as form, Form, INDENT, PLAIN, put, stepped};
+use super::{self as form, ANY, Form, INDENT, TEXT, put, stepped};
 use crate::gui::look::{add, clear, code, field, fitted, pick, scrubbed, told};
 use crate::methods::{self, Method};
 use crate::{reference, schema};
@@ -363,7 +363,7 @@ impl<'a> Form<'a, '_> {
 
         match method.kind.as_str() {
             "/Column" | "/Literal" if reference(value).is_some() => {
-                Some(self.named(&PLAIN[4], value, at.clone(), Tone::Given))
+                Some(self.named(&ANY, value, at.clone(), Tone::Given))
             }
             "/Column" => {
                 let name = value
@@ -379,7 +379,7 @@ impl<'a> Form<'a, '_> {
                             move |name| put(name.into())
                         })
                         .width(Fill.max(extent::S));
-                    return Some(beside(typed.boxed(), &PLAIN[0]));
+                    return Some(beside(typed.boxed(), &*TEXT));
                 }
                 // it shows a name that is none of the columns, as one named before they were known
                 let selected = self
@@ -400,7 +400,7 @@ impl<'a> Form<'a, '_> {
                         move |name| put(name.into())
                     })
                     .stepped();
-                Some(beside(picked, &PLAIN[0]))
+                Some(beside(picked, &*TEXT))
             }
             "/Literal" => {
                 let typed = methods::typed(node)?;
@@ -415,11 +415,11 @@ impl<'a> Form<'a, '_> {
                     let number = Value::Number(number);
                     let put = put();
                     move |steps| {
-                        let moved = schema::nudged(stepped(&PLAIN[4], &number), &number, steps);
+                        let moved = schema::nudged(stepped(&ANY, &number), &number, steps);
                         put(methods::literal_of(&moved.to_string()))
                     }
                 });
-                Some(beside(scrubbed(typed_in, moved, self.help), &PLAIN[4]))
+                Some(beside(scrubbed(typed_in, moved, self.help), &ANY))
             }
             _ => None,
         }
