@@ -10,7 +10,7 @@ use polaroid_iced::pick_list;
 #[cfg(feature = "plot")]
 use rustd3_iced::Plot;
 
-use super::{Help, NOTE, TEXT, form};
+use super::look::{self, Help, NOTE, TEXT};
 #[cfg(feature = "plot")]
 use crate::Drawer;
 use crate::polars::prelude::{Column, DataFrame, SortOptions};
@@ -496,7 +496,7 @@ impl Gallery {
         #[cfg(not(feature = "plot"))]
         let _ = zoom;
 
-        let names = form::names(
+        let names = look::names(
             self.attributes
                 .iter()
                 .map(|attribute| {
@@ -510,7 +510,7 @@ impl Gallery {
             .iter()
             .map(|attribute| {
                 let filter = self.filter(state, attribute);
-                form::labelled(&attribute.name, names, None, filter)
+                look::labelled(&attribute.name, names, None, filter)
             });
         let save = picture
             .is_some()

@@ -7,6 +7,7 @@ mod form;
 mod gallery;
 mod known;
 mod layout;
+mod look;
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
@@ -14,25 +15,9 @@ use std::time::Duration;
 
 use iced::keyboard::key::Named;
 use iced::keyboard::{self, Key};
-use iced::widget::{
-    Button,
-    button,
-    column,
-    component,
-    container,
-    markdown,
-    row,
-    rule,
-    scrollable,
-    space,
-    stack,
-    text,
-    text_input,
-    tooltip,
-};
+use iced::widget::{button, column, component, container, markdown, row, rule, space, stack, text};
 use iced::{
     Center,
-    Element,
     Fill,
     Function,
     Point,
@@ -43,7 +28,6 @@ use iced::{
     Theme,
     Widget,
     clipboard,
-    padding,
     system,
     task,
 };
@@ -53,6 +37,7 @@ use serde_json::Value;
 use self::card::Edit;
 use self::drawer::Drawer;
 use self::known::Known;
+use self::look::{Help, NOTE, error};
 use crate::polars::prelude::{DataFrame, DataType, PolarsResult, polars_err};
 use crate::{Catalog, Described, Node, Pipeline, Registry, schema};
 
@@ -66,30 +51,6 @@ its corner; left on another for a moment, it swaps places with it when dropped, 
 
 While Help is on, everything says what it is for when the cursor rests on it. Press Help again \
 to turn that off.";
-
-/// Whether what the editor is made of says what it is for when hovered.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct Help(bool);
-
-impl Help {
-    /// `content`, which `says` what it is for when hovered while help is on.
-    pub fn of<'a, Message: 'a>(
-        self,
-        content: impl Widget<Message> + 'a,
-        says: &str,
-    ) -> Element<'a, Message> {
-        let says = self
-            .0
-            .then(|| says.to_owned());
-        // under it, where what Polars says of it, over it, is not hidden
-        form::told_at(content, says, tooltip::Position::Bottom)
-    }
-}
-
-/// The sizes of text: of a name to type, of an argument, and of what is said beside them.
-const TITLE: f32 = 14.0;
-const TEXT: f32 = 13.0;
-const NOTE: f32 = 12.0;
 
 /// How long Delay waits at the least for a change to be the last, and a step of a drag on it.
 const STILL: Duration = Duration::from_millis(500);
@@ -1005,29 +966,6 @@ impl Editor {
     }
 }
 
-/// The button that lays something open, or closes it if it is open.
-fn toggle<'a, Message: Clone + 'a>(
-    is_open: bool,
-    message: Message,
-) -> Button<'a, Message, &'static str> {
-    let sign = match is_open {
-        true => "−",
-        false => "+",
-    };
-    button(sign)
-        .style(button::text)
-        .padding([0, 6])
-        .on_press(message)
-}
-
-/// The button that deletes something.
-fn cross<'a, Message: Clone + 'a>(message: Message) -> Button<'a, Message, &'static str> {
-    button("×")
-        .style(button::danger)
-        .padding([0, 6])
-        .on_press(message)
-}
-
 /// A size in bytes as it reads: to a tenth below ten of its unit, and else to a whole one.
 fn bytes(size: usize) -> String {
     const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
@@ -1041,98 +979,6 @@ fn bytes(size: usize) -> String {
         true => format!("{value:.1} {}", UNITS[unit]),
         false => format!("{value:.0} {}", UNITS[unit]),
     }
-}
-
-/// How thick the bars are that an error is scrolled by.
-const BAR: f32 = 6.0;
-
-/// The most that an error takes of the height of what shows it.
-const ERROR: f32 = 120.0;
-
-/// An error, which can be selected to copy it; one that is long or wide is scrolled through.
-fn error<'a, Message: 'a>(message: &'a str) -> Element<'a, Message> {
-    let written = text(message)
-        .style(text::danger)
-        .wrapping(text::Wrapping::None)
-        .selectable(true);
-    let bar = || {
-        scrollable::Scrollbar::new()
-            .width(BAR)
-            .scroller_width(BAR)
-            .margin(0)
-    };
-    let direction = scrollable::Direction::Both {
-        vertical: bar(),
-        horizontal: bar(),
-    };
-    // the bars lie over the edges of what is seen, so the text ends clear of them
-    let clear = padding::right(BAR + 2.0).bottom(BAR + 2.0);
-    scrollable(container(written).padding(clear))
-        .direction(direction)
-        .width(Fill)
-        .height(Shrink.max(ERROR))
-        .style(|theme: &Theme, status| {
-            // and no text shows through them: it ends at a bar as at an edge
-            let paper = theme
-                .palette()
-                .background
-                .base
-                .color;
-            let mut style = scrollable::default(theme, status);
-            style
-                .vertical_rail
-                .background = Some(paper.into());
-            style
-                .horizontal_rail
-                .background = Some(paper.into());
-            style.gap = Some(paper.into());
-            style
-        })
-        .boxed()
-}
-
-/// A field for a name, given on Enter: what is `typed` until then, orange, or red if it is refused.
-fn name_field<'a, Message: Clone + 'a>(
-    placeholder: &'static str,
-    typed: Option<&str>,
-    name: &str,
-    is_taken: impl Fn(&str) -> bool,
-) -> text_input::TextInput<'a, Message> {
-    let is_typed = is_unsaved(typed, name);
-    let is_refused = is_refused(typed, name, is_taken);
-    let shown = typed
-        .unwrap_or(name)
-        .to_owned();
-    text_input(placeholder, shown).style(move |theme: &Theme, status| {
-        let mut style = text_input::default(theme, status);
-        if is_typed {
-            let palette = theme.palette();
-            let (refused, unsaved) = (palette.danger.base, palette.warning.base);
-            style.border.color = match is_refused {
-                true => refused.color,
-                false => unsaved.color,
-            };
-            style.border.width = 2.0;
-        }
-        style
-    })
-}
-
-/// Whether what is typed for a name is another than the name, which Enter is still to give.
-fn is_unsaved(
-    typed: Option<&str>,
-    name: &str,
-) -> bool {
-    typed.is_some_and(|typed| typed != name)
-}
-
-/// Whether what is typed for a name is one that Enter does not give: empty, or `is_taken`.
-fn is_refused(
-    typed: Option<&str>,
-    name: &str,
-    is_taken: impl Fn(&str) -> bool,
-) -> bool {
-    is_unsaved(typed, name) && typed.is_some_and(|typed| typed.is_empty() || is_taken(typed))
 }
 
 /// A simulator of `view`, set as the editor is.

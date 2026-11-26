@@ -1,4 +1,5 @@
 use super::known::Status;
+use super::look::{is_refused, is_unsaved};
 use super::*;
 
 /// A chain of `limit`s below a scan, each reading the one before.

@@ -8,8 +8,8 @@ use iced::widget::{column, container, row};
 use iced::{Center, Element, Widget, padding};
 use serde_json::{Number, Value, json};
 
-use super::look::{Face, GAP, INDENT, Tone, aside, code, fitted, pick, scrubbed};
 use super::{Expressions, Form, Message, PLAIN, escaped, put, stepped};
+use crate::gui::look::{Face, GAP, INDENT, Tone, aside, code, fitted, pick, scrubbed};
 use crate::schema::{self, nudged};
 use crate::{Kind, Pipeline, Reference, Taken, methods, reference};
 

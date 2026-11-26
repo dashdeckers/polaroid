@@ -7,8 +7,20 @@ use iced::widget::{column, container, mouse_area, row, space};
 use iced::{Center, Element, Fill, Function, Widget, padding};
 use serde_json::{Value, json};
 
-use super::look::{Face, GAP, INDENT, REMOVE, Tone, code, field, fitted, pick, remove, scrubbed};
 use super::{self as form, Form, PLAIN, put, small, told};
+use crate::gui::look::{
+    Face,
+    GAP,
+    INDENT,
+    REMOVE,
+    Tone,
+    code,
+    field,
+    fitted,
+    pick,
+    remove,
+    scrubbed,
+};
 use crate::methods::{self, Method};
 use crate::{reference, schema};
 

@@ -1,12 +1,45 @@
-//! How a form looks: its sizes, its colours, and each kind of widget that it is made of.
+//! How the editor looks: its sizes, its colours, and each kind of widget that it is made of.
 
 use iced::widget::text::IntoFragment;
 use iced::widget::text_input::TextInput;
-use iced::widget::{Text, button, checkbox, container, row, text, text_input, tooltip};
-use iced::{Center, Element, Font, Theme, Widget};
+use iced::widget::{
+    Button,
+    Text,
+    button,
+    checkbox,
+    container,
+    row,
+    scrollable,
+    text,
+    text_input,
+    tooltip,
+};
+use iced::{Center, Element, Fill, Font, Shrink, Theme, Widget, padding};
 use polaroid_iced::{PickList, handle, pick_list, width_of};
 
-use crate::gui::{Help, NOTE, TEXT};
+/// Whether what the editor is made of says what it is for when hovered.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Help(pub bool);
+
+impl Help {
+    /// `content`, which `says` what it is for when hovered while help is on.
+    pub fn of<'a, Message: 'a>(
+        self,
+        content: impl Widget<Message> + 'a,
+        says: &str,
+    ) -> Element<'a, Message> {
+        let says = self
+            .0
+            .then(|| says.to_owned());
+        // under it, where what Polars says of it, over it, is not hidden
+        told_at(content, says, tooltip::Position::Bottom)
+    }
+}
+
+/// The sizes of text: of a name to type, of an argument, and of what is said beside them.
+pub const TITLE: f32 = 14.0;
+pub const TEXT: f32 = 13.0;
+pub const NOTE: f32 = 12.0;
 
 /// The height of a line that holds a field.
 const LINE: f32 = 26.0;
@@ -321,4 +354,119 @@ pub fn lined<'a, Message: 'a>(content: impl Widget<Message> + 'a) -> Element<'a,
         .height(LINE)
         .align_y(Center)
         .boxed()
+}
+
+/// The button that lays something open, or closes it if it is open.
+pub fn toggle<'a, Message: Clone + 'a>(
+    is_open: bool,
+    message: Message,
+) -> Button<'a, Message, &'static str> {
+    let sign = match is_open {
+        true => "−",
+        false => "+",
+    };
+    button(sign)
+        .style(button::text)
+        .padding([0, 6])
+        .on_press(message)
+}
+
+/// The button that deletes something.
+pub fn cross<'a, Message: Clone + 'a>(message: Message) -> Button<'a, Message, &'static str> {
+    button("×")
+        .style(button::danger)
+        .padding([0, 6])
+        .on_press(message)
+}
+
+/// How thick the bars are that an error is scrolled by.
+const BAR: f32 = 6.0;
+
+/// The most that an error takes of the height of what shows it.
+const ERROR: f32 = 120.0;
+
+/// An error, which can be selected to copy it; one that is long or wide is scrolled through.
+pub fn error<'a, Message: 'a>(message: &'a str) -> Element<'a, Message> {
+    let written = text(message)
+        .style(text::danger)
+        .wrapping(text::Wrapping::None)
+        .selectable(true);
+    let bar = || {
+        scrollable::Scrollbar::new()
+            .width(BAR)
+            .scroller_width(BAR)
+            .margin(0)
+    };
+    let direction = scrollable::Direction::Both {
+        vertical: bar(),
+        horizontal: bar(),
+    };
+    // the bars lie over the edges of what is seen, so the text ends clear of them
+    let clear = padding::right(BAR + 2.0).bottom(BAR + 2.0);
+    scrollable(container(written).padding(clear))
+        .direction(direction)
+        .width(Fill)
+        .height(Shrink.max(ERROR))
+        .style(|theme: &Theme, status| {
+            // and no text shows through them: it ends at a bar as at an edge
+            let paper = theme
+                .palette()
+                .background
+                .base
+                .color;
+            let mut style = scrollable::default(theme, status);
+            style
+                .vertical_rail
+                .background = Some(paper.into());
+            style
+                .horizontal_rail
+                .background = Some(paper.into());
+            style.gap = Some(paper.into());
+            style
+        })
+        .boxed()
+}
+
+/// A field for a name, given on Enter: what is `typed` until then, orange, or red if it is refused.
+pub fn name_field<'a, Message: Clone + 'a>(
+    placeholder: &'static str,
+    typed: Option<&str>,
+    name: &str,
+    is_taken: impl Fn(&str) -> bool,
+) -> text_input::TextInput<'a, Message> {
+    let is_typed = is_unsaved(typed, name);
+    let is_refused = is_refused(typed, name, is_taken);
+    let shown = typed
+        .unwrap_or(name)
+        .to_owned();
+    text_input(placeholder, shown).style(move |theme: &Theme, status| {
+        let mut style = text_input::default(theme, status);
+        if is_typed {
+            let palette = theme.palette();
+            let (refused, unsaved) = (palette.danger.base, palette.warning.base);
+            style.border.color = match is_refused {
+                true => refused.color,
+                false => unsaved.color,
+            };
+            style.border.width = 2.0;
+        }
+        style
+    })
+}
+
+/// Whether what is typed for a name is another than the name, which Enter is still to give.
+pub fn is_unsaved(
+    typed: Option<&str>,
+    name: &str,
+) -> bool {
+    typed.is_some_and(|typed| typed != name)
+}
+
+/// Whether what is typed for a name is one that Enter does not give: empty, or `is_taken`.
+pub fn is_refused(
+    typed: Option<&str>,
+    name: &str,
+    is_taken: impl Fn(&str) -> bool,
+) -> bool {
+    is_unsaved(typed, name) && typed.is_some_and(|typed| typed.is_empty() || is_taken(typed))
 }

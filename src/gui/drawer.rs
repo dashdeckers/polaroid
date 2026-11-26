@@ -9,7 +9,7 @@ use polaroid_iced::leave;
 use serde_json::{Map, Value};
 
 use super::form::{self, Expressions, Form};
-use super::{Help, TITLE, cross, name_field, toggle};
+use super::look::{self, Help, TITLE, cross, name_field, toggle};
 use crate::{Kind, Pipeline, Registry, methods};
 
 /// What the drawer shows of what a pipeline names, by the names.
@@ -252,9 +252,9 @@ impl Drawer {
                             .iter()
                             .map(|(hole, taken)| format!("{hole}: {taken}"))
                             .collect();
-                        Some(form::aside(format!("takes {}", holes.join(", "))))
+                        Some(look::aside(format!("takes {}", holes.join(", "))))
                     }
-                    Err(e) => Some(form::note(form::line(&e))),
+                    Err(e) => Some(look::note(form::line(&e))),
                 });
             // open it is edited, and closed it is written out
             let draft = section.and_then(|section| {
@@ -283,7 +283,7 @@ impl Drawer {
                 .view(schema)
                 .map(Message::Form.with(name.clone()))
                 .boxed(),
-                false => form::aside(written).boxed(),
+                false => look::aside(written).boxed(),
             };
             column![head, takes, body]
                 .spacing(6)

@@ -1,7 +1,6 @@
 //! A form for a JSON value, laid out by its JSON Schema; a null is a hole to be filled.
 
 mod chain;
-mod look;
 mod named;
 mod table;
 
@@ -12,9 +11,23 @@ use iced::widget::{column, row};
 use iced::{Center, Element, Function, Widget};
 use serde_json::{Value, json};
 
-use self::look::{Face, GAP, field, fitted, pick, scrubbed, small, tick, told};
-pub use self::look::{Tone, aside, labelled, names, note, picked, told_at};
-use super::Help;
+use super::look::{
+    Face,
+    GAP,
+    Help,
+    Tone,
+    aside,
+    field,
+    fitted,
+    labelled,
+    names,
+    note,
+    pick,
+    scrubbed,
+    small,
+    tick,
+    told,
+};
 use crate::schema::{blank, default, json_type, nudged, optional, read, resolve, variants};
 use crate::{Pipeline, methods, reference};
 

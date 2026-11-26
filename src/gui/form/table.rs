@@ -7,8 +7,8 @@ use iced::widget::{column, row, space};
 use iced::{Element, Widget};
 use serde_json::{Map, Value};
 
-use super::look::{Face, GAP, Tone, field, lined, small, width};
 use super::{Form, Message, PLAIN, escaped, is_any};
+use crate::gui::look::{Face, GAP, Tone, field, lined, small, width};
 use crate::reference;
 use crate::schema::{default, resolve};
 

@@ -32,24 +32,11 @@ use iced::{
 use polaroid_iced::{Asked, Heading, leave, pick_list, width_of};
 use serde_json::Value;
 
-use super::form::{Expressions, Form, Tone};
+use super::form::{Expressions, Form};
 use super::gallery::{self, Gallery};
 use super::known::{Known, Status};
-use super::{
-    Editor,
-    Help,
-    Message,
-    NOTE,
-    TEXT,
-    TITLE,
-    cross,
-    drawer,
-    error,
-    form,
-    layout,
-    name_field,
-    toggle,
-};
+use super::look::{self, Help, NOTE, TEXT, TITLE, Tone, cross, error, name_field, toggle};
+use super::{Editor, Message, drawer, form, layout};
 use crate::polars::prelude::{AnyValue, DataFrame, DataType};
 use crate::{Described, Node, Pipeline, Registry, schema};
 
@@ -391,7 +378,7 @@ impl<'a> Component<'a, Message> for Card<'a> {
             .reads()
             .iter()
             .copied();
-        let names = form::names(reads.chain(args));
+        let names = look::names(reads.chain(args));
 
         let head = self.head(typed, is_open);
         let inputs = self.inputs(names, is_open);
@@ -584,9 +571,9 @@ impl<'a> Card<'a> {
                         .text_size(TEXT)
                         .padding(FIELD)
                         .width(Fill)
-                        .style(form::picked(tone))
+                        .style(look::picked(tone))
                 });
-                container(form::labelled(name, names, None, wired))
+                container(look::labelled(name, names, None, wired))
                     .id(anchor(slot))
                     .boxed()
             });
