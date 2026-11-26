@@ -101,7 +101,7 @@ impl<'a> Form<'a, '_> {
             .boxed()
     }
 
-    /// The rows of a list or table of any JSON as a grid, if each is a table of the same keys.
+    /// Two or more rows of a list or table of any JSON as a grid, if all have the same keys.
     pub(super) fn grid(
         self,
         items: &Value,
@@ -143,6 +143,7 @@ impl<'a> Form<'a, '_> {
         };
         let is_grid = is_any(resolve(self.defs, items))
             && keys.len() > 0
+            && rows.len() > 1
             && rows
                 .iter()
                 .all(|(_, row)| is_row(row));

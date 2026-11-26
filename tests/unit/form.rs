@@ -883,9 +883,11 @@ fn rows_of_one_shape_are_laid_out_as_a_grid() -> Result<(), Error> {
     };
     assert!(is_grid(json!([{ "lo": 0 }, { "lo": 10 }])));
     assert!(!is_grid(json!([{ "lo": 0 }, { "hi": 10 }])));
-    assert!(!is_grid(json!({ "a": { "lo": [0] } })));
+    assert!(!is_grid(json!({ "a": { "lo": [0] }, "b": { "lo": [1] } })));
+    // nor is one row alone, which is a table in a table
+    assert!(!is_grid(json!({ "a": { "lo": 0 } })));
     assert!(!is_grid(json!({ "a": 1 })));
-    assert!(!is_grid(json!([])));
+    assert!(!is_grid(json!([{ "$value": "top" }, { "$value": "top" }])));
     // nor is a name, which JSON writes as a table
     assert!(!is_grid(json!([{ "$value": "top" }])));
     Ok(())
