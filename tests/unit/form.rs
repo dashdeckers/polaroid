@@ -926,3 +926,44 @@ fn a_key_is_typed_on_through_one_that_another_entry_has() -> Result<(), Error> {
     }
     Ok(())
 }
+
+#[test]
+fn a_value_is_put_at_a_pointer_in_what_is_made_to_hold_it() {
+    // a place in a list that is not there makes the list, and a key the table
+    let mut root = json!({});
+    put(&mut root, "/a/0", Some(json!(1)));
+    put(&mut root, "/b/c", Some(json!(true)));
+    assert_eq!(root, json!({ "a": [1], "b": { "c": true } }));
+
+    // the end of a list takes one more, a place in it another, and beyond it nothing
+    put(&mut root, "/a/1", Some(json!(2)));
+    put(&mut root, "/a/0", Some(json!(5)));
+    put(&mut root, "/a/7", Some(json!(9)));
+    assert_eq!(root["a"], json!([5, 2]));
+
+    // what is taken out leaves what held it, and nothing is made to take out of
+    put(&mut root, "/a/0", None);
+    put(&mut root, "/b/c", None);
+    put(&mut root, "/x/y", None);
+    assert_eq!(root, json!({ "a": [2], "b": {} }));
+
+    put(&mut root, "", Some(json!(3)));
+    assert_eq!(root, json!(3));
+}
+
+#[test]
+fn a_draft_holds_for_as_long_as_the_value_that_it_is_an_edit_of_stays() {
+    let (one, two, three) = (json!(1), json!(2), json!(3));
+    let draft = Draft {
+        of: one.clone(),
+        value: two.clone(),
+        why: "no".to_owned(),
+    };
+    assert_eq!(Draft::shown(Some(&draft), &one), (&two, Some("no")));
+    assert_eq!(Draft::shown(Some(&draft), &three), (&three, None));
+
+    // and it is taken once it is whole, as an edit of that value alone
+    assert_eq!(draft.taken(&one, &|_| Ok(())), Some(&two));
+    assert_eq!(draft.taken(&one, &|_| Err(String::new())), None);
+    assert_eq!(draft.taken(&three, &|_| Ok(())), None);
+}

@@ -1380,3 +1380,34 @@ fn a_draft_is_taken_once_a_check_finds_what_it_waited_for() {
             .is_empty()
     );
 }
+
+#[test]
+fn a_value_that_a_node_using_it_would_refuse_is_not_taken() {
+    let mut editor = chain(2);
+    editor
+        .pipeline
+        .values
+        .insert("top".to_owned(), serde_json::json!(2));
+    let named = serde_json::json!({ "n": { "$value": "top" } });
+    let _ = editor.update(Message::Edit("n1".to_owned(), Edit::Args(named)));
+    let put = |editor: &mut Editor, value: Value| {
+        let put = form::Message::Put(String::new(), value);
+        let _ = editor.update(Message::Drawer(drawer::Message::Form(
+            "top".to_owned(),
+            put,
+        )));
+    };
+    let top = |editor: &Editor| {
+        editor
+            .pipeline
+            .values["top"]
+            .clone()
+    };
+
+    // a text is no number of rows: the limit that names it keeps the number
+    put(&mut editor, serde_json::json!("x"));
+    assert_eq!(top(&editor), 2);
+    // and a number that it takes is the value
+    put(&mut editor, serde_json::json!(7));
+    assert_eq!(top(&editor), 7);
+}
