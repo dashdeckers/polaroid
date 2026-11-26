@@ -137,6 +137,7 @@ impl Shown {
             state: &self.state,
             defs: &self.catalog.defs,
             pipeline: self.pipeline,
+            offers: kept(Offers::default()),
             columns: &self.columns,
             expressions: self.expressions,
             check: &self.check,

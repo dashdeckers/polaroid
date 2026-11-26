@@ -4,6 +4,7 @@ mod chain;
 mod named;
 mod table;
 
+use std::cell::OnceCell;
 use std::rc::Rc;
 use std::sync::LazyLock;
 
@@ -151,6 +152,12 @@ pub enum Expressions {
     Chained,
 }
 
+/// A name that a field may hold, as it is written and as the JSON it is.
+type Offer = Rc<(String, Value)>;
+
+/// The names that the fields of a form may hold, once a field has listed them.
+pub type Offers = OnceCell<Vec<Offer>>;
+
 /// A form as it is laid out: what every part of it is laid out with.
 #[derive(Clone, Copy)]
 pub struct Form<'a, 'c> {
@@ -158,6 +165,8 @@ pub struct Form<'a, 'c> {
     pub defs: &'a Value,
     /// The pipeline, whose expressions and values a field may name.
     pub pipeline: &'a Pipeline,
+    /// Those names, which are listed once for all its fields.
+    pub offers: &'c Offers,
     /// The columns that are there to name: none until a Check found them.
     pub columns: &'c [String],
     pub expressions: Expressions,

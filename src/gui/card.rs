@@ -379,6 +379,7 @@ impl<'a> Component<'a, Message> for Card<'a> {
                     state: &state.form,
                     defs: self.defs,
                     pipeline: self.pipeline,
+                    offers: &form::Offers::default(),
                     columns: &self.columns,
                     expressions: Expressions::Named,
                     check: &self.check(),

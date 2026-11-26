@@ -268,6 +268,7 @@ impl Drawer {
                     state: section.map_or(&closed, |section| &section.form),
                     defs,
                     pipeline,
+                    offers: &form::Offers::default(),
                     columns,
                     expressions,
                     check: &check(pipeline, registry, name),

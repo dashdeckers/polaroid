@@ -9,7 +9,20 @@ use iced::{Center, Element, Font, Widget, padding};
 use polaroid_iced::theme::{Tone, font, spacing};
 use serde_json::{Number, Value, json};
 
-use super::{ANY, Expressions, FLAG, Form, INDENT, Message, NUMBER, TEXT, escaped, put, stepped};
+use super::{
+    ANY,
+    Expressions,
+    FLAG,
+    Form,
+    INDENT,
+    Message,
+    NUMBER,
+    Offer,
+    TEXT,
+    escaped,
+    put,
+    stepped,
+};
 use crate::gui::look::{aside, code, fitted, pick, scrubbed};
 use crate::schema::{self, nudged};
 use crate::{Kind, Pipeline, Reference, Taken, methods, reference};
@@ -23,46 +36,40 @@ impl<'a> Form<'a, '_> {
         }
     }
 
-    /// Every name that a field of `schema` may hold, as it is written and as the JSON it is.
-    fn offers(
-        self,
-        schema: &Value,
-    ) -> Vec<(String, Value)> {
-        // where an expression stands, a value stands as the literal that it is
-        let is_expression = std::ptr::eq(schema, &self.defs["Expr"]);
-        let offer = |reference: Reference| {
-            let named = Value::from(&reference);
-            let named = match is_expression && reference.kind == Kind::Value {
-                true => json!({ "Literal": named }),
-                false => named,
-            };
-            (reference.to_string(), named)
+    /// Every name that a field may hold: listed when a field first offers them.
+    fn offers(self) -> Vec<Offer> {
+        let listed = || {
+            let offer =
+                |reference: Reference| Rc::new((reference.to_string(), Value::from(&reference)));
+            let mut offers: Vec<Offer> = self
+                .pipeline
+                .expressions
+                .keys()
+                .map(|name| offer(Reference::to(Kind::Expression, name)))
+                .collect();
+            for (name, value) in &self.pipeline.values {
+                parts(name, value, String::new(), &mut |part| {
+                    offers.push(offer(part))
+                });
+            }
+            // an expression edited here may have holes: those it has, and one more
+            if self.expressions == Expressions::Chained {
+                let mut holes = Vec::new();
+                holes_in(self.value, &mut holes);
+                let new = (1..)
+                    .map(|n| format!("hole_{n}"))
+                    .find(|new| !holes.contains(&new.as_str()))
+                    .expect("some number is free");
+                let holes = holes
+                    .into_iter()
+                    .chain([new.as_str()]);
+                offers.extend(holes.map(|hole| offer(Reference::to(Kind::Argument, hole))));
+            }
+            offers
         };
-        let mut offers: Vec<(String, Value)> = self
-            .pipeline
-            .expressions
-            .keys()
-            .map(|name| offer(Reference::to(Kind::Expression, name)))
-            .collect();
-        for (name, value) in &self.pipeline.values {
-            parts(name, value, String::new(), &mut |part| {
-                offers.push(offer(part))
-            });
-        }
-        // an expression edited here may have holes: those it has, and one more
-        if self.expressions == Expressions::Chained {
-            let mut holes = Vec::new();
-            holes_in(self.value, &mut holes);
-            let new = (1..)
-                .map(|n| format!("hole_{n}"))
-                .find(|new| !holes.contains(&new.as_str()))
-                .expect("some number is free");
-            let holes = holes
-                .into_iter()
-                .chain([new.as_str()]);
-            offers.extend(holes.map(|hole| offer(Reference::to(Kind::Argument, hole))));
-        }
-        offers
+        self.offers
+            .get_or_init(listed)
+            .clone()
     }
 
     /// A list of the names that the field at `at` may hold: one the core refuses there is greyed.
@@ -74,16 +81,27 @@ impl<'a> Form<'a, '_> {
         placeholder: &str,
         tone: Tone,
     ) -> Option<Element<'a, Message>> {
-        let offers = self.offers(schema);
-        let selected = reference(value).map(|reference| (reference.to_string(), value.clone()));
+        let offers = self.offers();
+        let selected =
+            reference(value).map(|reference| Rc::new((reference.to_string(), value.clone())));
         if offers.is_empty() && selected.is_none() {
             return None;
         }
+        // where an expression stands, a value stands as the literal that it is
+        let is_expression = std::ptr::eq(schema, &self.defs["Expr"]);
+        let placed = move |named: &Value| {
+            let is_value = reference(named).is_some_and(|named| named.kind == Kind::Value);
+            match is_expression && is_value {
+                true => json!({ "Literal": named }),
+                false => named.clone(),
+            }
+        };
         let (pipeline, root, check) = (self.pipeline, self.value, Rc::clone(self.check));
         let (put_at, tried_at) = (at.to_owned(), at.to_owned());
         // each is asked of the core once, when the list opens
         let asked = RefCell::new(BTreeMap::new());
-        let why = move |(label, named): &(String, Value)| {
+        let why = move |offer: &Offer| {
+            let (label, named) = &**offer;
             asked
                 .borrow_mut()
                 .entry(label.clone())
@@ -100,14 +118,14 @@ impl<'a> Form<'a, '_> {
                         return None;
                     }
                     let mut tried = root.clone();
-                    put(&mut tried, &tried_at, Some(named.clone()));
+                    put(&mut tried, &tried_at, Some(placed(named)));
                     check(&tried).err()
                 })
                 .clone()
         };
-        let label = |(label, _): &(String, Value)| label.clone();
+        let label = |offer: &Offer| offer.0.clone();
         let pick = pick(selected, offers, label, placeholder, self.face(), tone)
-            .on_select(move |(_, named)| Message::Put(put_at.clone(), named))
+            .on_select(move |offer: Offer| Message::Put(put_at.clone(), placed(&offer.1)))
             .disabled(why);
         Some(self.help.of(
             pick,
