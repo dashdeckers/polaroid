@@ -8,6 +8,7 @@ mod scrub;
 mod seen;
 mod split;
 mod surface;
+mod switch;
 mod table;
 pub mod theme;
 
@@ -18,4 +19,5 @@ pub use pick_list::{PickList, pick_list};
 pub use scrub::{HANDLE, Scrub, handle, scrub};
 pub use split::{Split, split};
 pub use surface::{Card, Surface, card, surface};
+pub use switch::{Switch, switch};
 pub use table::{Asked, Heading, Table, table};
