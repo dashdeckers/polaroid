@@ -87,6 +87,6 @@ members = [
 [workspace.dependencies]
 iced = { git = "https://github.com/iced-rs/iced", rev = "98bd48fe011efc0ec5819fee0fa7673a7169ff11" }
 iced_test = { git = "https://github.com/iced-rs/iced", rev = "98bd48fe011efc0ec5819fee0fa7673a7169ff11" }
-rustd3-core = { git = "https://github.com/dashdeckers/rustd3", rev = "8dec594c34acae4f9fb7bf498bb2c429218c2a07" }
-rustd3-figure = { git = "https://github.com/dashdeckers/rustd3", rev = "8dec594c34acae4f9fb7bf498bb2c429218c2a07" }
-rustd3-iced = { git = "https://github.com/dashdeckers/rustd3", rev = "8dec594c34acae4f9fb7bf498bb2c429218c2a07" }
+rustd3-core = { git = "https://github.com/dashdeckers/rustd3", rev = "5edef322597a2a63bd87640b1c39a0279fa77f91" }
+rustd3-figure = { git = "https://github.com/dashdeckers/rustd3", rev = "5edef322597a2a63bd87640b1c39a0279fa77f91" }
+rustd3-iced = { git = "https://github.com/dashdeckers/rustd3", rev = "5edef322597a2a63bd87640b1c39a0279fa77f91" }

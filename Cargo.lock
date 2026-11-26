@@ -5479,7 +5479,7 @@ dependencies = [
 [[package]]
 name = "rustd3-core"
 version = "0.1.0"
-source = "git+https://github.com/dashdeckers/rustd3?rev=8dec594c34acae4f9fb7bf498bb2c429218c2a07#8dec594c34acae4f9fb7bf498bb2c429218c2a07"
+source = "git+https://github.com/dashdeckers/rustd3?rev=5edef322597a2a63bd87640b1c39a0279fa77f91#5edef322597a2a63bd87640b1c39a0279fa77f91"
 dependencies = [
  "jiff",
  "thiserror 2.0.21",
@@ -5489,7 +5489,7 @@ dependencies = [
 [[package]]
 name = "rustd3-figure"
 version = "0.1.0"
-source = "git+https://github.com/dashdeckers/rustd3?rev=8dec594c34acae4f9fb7bf498bb2c429218c2a07#8dec594c34acae4f9fb7bf498bb2c429218c2a07"
+source = "git+https://github.com/dashdeckers/rustd3?rev=5edef322597a2a63bd87640b1c39a0279fa77f91#5edef322597a2a63bd87640b1c39a0279fa77f91"
 dependencies = [
  "krilla",
  "kurbo",
@@ -5507,17 +5507,18 @@ dependencies = [
 [[package]]
 name = "rustd3-fonts"
 version = "0.1.0"
-source = "git+https://github.com/dashdeckers/rustd3?rev=8dec594c34acae4f9fb7bf498bb2c429218c2a07#8dec594c34acae4f9fb7bf498bb2c429218c2a07"
+source = "git+https://github.com/dashdeckers/rustd3?rev=5edef322597a2a63bd87640b1c39a0279fa77f91#5edef322597a2a63bd87640b1c39a0279fa77f91"
 
 [[package]]
 name = "rustd3-iced"
 version = "0.1.0"
-source = "git+https://github.com/dashdeckers/rustd3?rev=8dec594c34acae4f9fb7bf498bb2c429218c2a07#8dec594c34acae4f9fb7bf498bb2c429218c2a07"
+source = "git+https://github.com/dashdeckers/rustd3?rev=5edef322597a2a63bd87640b1c39a0279fa77f91#5edef322597a2a63bd87640b1c39a0279fa77f91"
 dependencies = [
  "iced_core",
  "iced_widget",
  "rustd3-core",
  "rustd3-figure",
+ "rustd3-fonts",
  "thiserror 2.0.21",
 ]
 
