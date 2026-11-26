@@ -53,8 +53,13 @@ fn a_number_is_moved_by_steps_of_its_size_within_what_its_schema_takes() {
 
 #[test]
 fn a_number_is_read_as_a_person_types_it_on_the_way() {
-    let read = |typed: &str| read(typed).map(|number| json!(number));
-    // whole, which a field of either kind takes, or not
+    // as it is written where nothing asks for a whole number
+    let written = |typed: &str| read(typed, false).map(|number| json!(number));
+    assert_eq!(written("1"), Some(json!(1)));
+    assert_eq!(written("1.0"), Some(json!(1.0)));
+    assert_eq!(written("1e3"), Some(json!(1000.0)));
+    // and whole where a whole number is asked for, if it is one
+    let read = |typed: &str| read(typed, true).map(|number| json!(number));
     for (typed, number) in [
         ("1.", json!(1)),
         (" 900.00 ", json!(900)),

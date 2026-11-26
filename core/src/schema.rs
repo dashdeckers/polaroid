@@ -10,8 +10,13 @@ pub fn number(typed: &str) -> Option<Number> {
         .filter(|number| number.to_string() == typed)
 }
 
-/// The number that a person means by `typed`, on the way to it or not: `1.`, `1e3`, or `1,5`.
-pub fn read(typed: &str) -> Option<Number> {
+/// The number that `typed` writes, on the way to one or not: `1.`, `1e3`, or `1,5`.
+///
+/// One written with a point or an exponent is whole only where `is_whole` asks for whole numbers.
+pub fn read(
+    typed: &str,
+    is_whole: bool,
+) -> Option<Number> {
     let typed = typed.trim();
     // a comma is the point where there is none
     let typed = match typed.contains('.') {
@@ -25,8 +30,8 @@ pub fn read(typed: &str) -> Option<Number> {
         .parse::<f64>()
         .ok()
         .filter(|number| number.is_finite())?;
-    // one that is whole is an integer, which a field of either kind takes
-    match number.fract() == 0.0 && number.abs() < 2f64.powi(53) {
+    // one that is whole is an integer where a whole number is asked for
+    match is_whole && number.fract() == 0.0 && number.abs() < 2f64.powi(53) {
         true => Some((number as i64).into()),
         false => Number::from_f64(number),
     }

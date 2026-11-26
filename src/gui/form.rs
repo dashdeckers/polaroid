@@ -154,7 +154,7 @@ impl State {
                 put(&mut edited, &at, Some(new));
             }
             Message::Type(at, typed) => {
-                let new = read(&typed).map_or(Value::Null, Value::from);
+                let new = read(&typed, true).map_or(Value::Null, Value::from);
                 put(&mut edited, &at, Some(new));
                 self.typing = Some((at, typed));
             }
@@ -659,7 +659,7 @@ impl<'a> Form<'a, '_> {
         let typing = self.typing(&at);
         // text that writes no number is none, and shown as one that is missing
         let tone = match &typing {
-            Some(typed) if !typed.is_empty() && read(typed).is_none() => Tone::Refused,
+            Some(typed) if !typed.is_empty() && read(typed, true).is_none() => Tone::Refused,
             _ => tone,
         };
         let typed = typing.unwrap_or_else(|| match value {
