@@ -504,6 +504,9 @@ impl<'a> Form<'a, '_> {
         value: &'a Value,
         at: &str,
     ) -> Element<'a, Message> {
+        if let Some(grid) = self.grid(items, value, at) {
+            return grid;
+        }
         let elements = value
             .as_array()
             .map(Vec::as_slice)

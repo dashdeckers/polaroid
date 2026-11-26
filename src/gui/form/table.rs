@@ -1,14 +1,16 @@
-//! A table: an object of any keys, each key beside its value.
+//! A table: an object of any keys, each key beside its value; and rows of one shape as a grid.
 
+use std::iter::once;
 use std::sync::LazyLock;
 
-use iced::widget::{column, row};
+use iced::widget::{column, row, space};
 use iced::{Element, Widget};
 use serde_json::{Map, Value};
 
-use super::look::{Face, GAP, Tone, field, small, width};
-use super::{Form, Message, escaped};
-use crate::schema::default;
+use super::look::{Face, GAP, Tone, field, lined, small, width};
+use super::{Form, Message, PLAIN, escaped, is_any};
+use crate::reference;
+use crate::schema::{default, resolve};
 
 impl<'a> Form<'a, '_> {
     /// The entries of a table, each to rename and take away, over a button to add one.
@@ -19,6 +21,9 @@ impl<'a> Form<'a, '_> {
         at: &str,
     ) -> Element<'a, Message> {
         static EMPTY: LazyLock<Map<String, Value>> = LazyLock::new(Map::new);
+        if let Some(grid) = self.grid(items, value, at) {
+            return grid;
+        }
         let entries = value
             .as_object()
             .unwrap_or(&EMPTY);
@@ -48,6 +53,161 @@ impl<'a> Form<'a, '_> {
             .spacing(GAP)
             .boxed()
     }
+
+    /// The rows of a list or table of any JSON as a grid, if each is a table of the same keys.
+    pub(super) fn grid(
+        self,
+        items: &Value,
+        value: &'a Value,
+        at: &str,
+    ) -> Option<Element<'a, Message>> {
+        // each row by the step of the pointer to it, and the keys that the first has
+        let rows: Vec<(String, &'a Value)> = match value {
+            Value::Array(rows) => rows
+                .iter()
+                .enumerate()
+                .map(|(i, row)| (i.to_string(), row))
+                .collect(),
+            Value::Object(rows) => rows
+                .iter()
+                .map(|(key, row)| (escaped(key), row))
+                .collect(),
+            _ => return None,
+        };
+        let keys = rows
+            .first()?
+            .1
+            .as_object()?
+            .keys();
+        // a name is no table, though JSON writes it as one; a cell that holds more is no cell
+        let is_name = |value: &Value| reference(value).is_some();
+        let is_cell = |cell: &Value| !cell.is_array() && !cell.is_object() || is_name(cell);
+        let is_row = |row: &Value| {
+            row.as_object()
+                .is_some_and(|cells| {
+                    cells
+                        .keys()
+                        .eq(keys.clone())
+                        && cells
+                            .values()
+                            .all(is_cell)
+                })
+                && !is_name(row)
+        };
+        let is_grid = is_any(resolve(self.defs, items))
+            && keys.len() > 0
+            && rows
+                .iter()
+                .all(|(_, row)| is_row(row));
+        if !is_grid {
+            return None;
+        }
+
+        let put = |rows: Value| Message::Put(at.to_owned(), rows);
+        // what takes a row out, then the keys of the rows of a table
+        let drops = rows
+            .iter()
+            .map(|(step, _)| {
+                self.help.of(
+                    small("×", Message::Drop(format!("{at}/{step}"))),
+                    "Takes this row out.",
+                )
+            });
+        let entries = value.as_object();
+        let names = entries.map(|entries| {
+            let wide = widest(entries.keys());
+            let names = entries
+                .keys()
+                .map(|key| named(entries, key, at, wide));
+            headed(space().boxed(), names)
+        });
+        // then a column of each key, under what renames it and takes it out in every row
+        let cells = keys
+            .clone()
+            .map(|key| {
+                let table = at.to_owned();
+                let rename = field("key", key.as_str(), Face::Plain, Tone::Given)
+                    .width(width(key, Face::Plain))
+                    .on_input(move |typed| {
+                        let renamed = each(value, |cells| renamed(cells, key, &typed));
+                        Message::Put(table.clone(), renamed)
+                    });
+                let without = each(value, |cells| {
+                    let mut cells = cells.clone();
+                    cells.shift_remove(key);
+                    Value::Object(cells)
+                });
+                let head = row![
+                    rename,
+                    self.help.of(
+                        small("×", put(without)),
+                        "Takes this column out of every row."
+                    )
+                ];
+                let column = rows
+                    .iter()
+                    .map(|(step, row)| {
+                        let inside = format!("{at}/{step}/{}", escaped(key));
+                        self.placed(&PLAIN[4], &row[key], inside, true)
+                    });
+                headed(head.boxed(), column)
+            });
+        // and what adds a column and a row, to name: none while one waits for its name
+        let add_column = (!keys
+            .clone()
+            .any(String::is_empty))
+        .then(|| {
+            let wider = each(value, |cells| {
+                let mut cells = cells.clone();
+                cells.insert(String::new(), Value::Null);
+                Value::Object(cells)
+            });
+            let add = small("+", put(wider));
+            let add = self
+                .help
+                .of(add, "Adds a column to every row, to name.");
+            headed(add, [])
+        });
+        let end = match entries {
+            Some(entries) if entries.contains_key("") => None,
+            Some(_) => Some(format!("{at}/")),
+            None => Some(format!("{at}/{}", rows.len())),
+        };
+        let add_row = end.map(|end| {
+            let blank = keys
+                .clone()
+                .map(|key| (key.clone(), Value::Null))
+                .collect();
+            self.help
+                .of(small("+", Message::Put(end, blank)), "Adds a row.")
+        });
+        let columns = once(headed(space().boxed(), drops))
+            .chain(names)
+            .chain(cells)
+            .chain(add_column);
+        Some(
+            column![
+                row(columns).spacing(GAP),
+                add_row
+            ]
+            .spacing(GAP)
+            .boxed(),
+        )
+    }
+}
+
+/// A column of a grid: `head` over `cells`, each in a line of one height.
+fn headed<'a>(
+    head: Element<'a, Message>,
+    cells: impl IntoIterator<Item = Element<'a, Message>>,
+) -> Element<'a, Message> {
+    column(
+        once(head)
+            .chain(cells)
+            .map(lined),
+    )
+    .spacing(GAP)
+    .boxed()
 }
 
 /// The width of a column of fields that holds the widest of `keys`.
@@ -87,4 +247,26 @@ pub(super) fn renamed(
             false => (key.clone(), value.clone()),
         })
         .collect()
+}
+
+/// `rows`, a list or a table of tables, with each of them as `change` leaves it.
+pub(super) fn each(
+    rows: &Value,
+    change: impl Fn(&Map<String, Value>) -> Value,
+) -> Value {
+    let changed = |row: &Value| {
+        row.as_object()
+            .map_or(Value::Null, &change)
+    };
+    match rows {
+        Value::Array(rows) => rows
+            .iter()
+            .map(changed)
+            .collect(),
+        Value::Object(rows) => rows
+            .iter()
+            .map(|(key, row)| (key.clone(), changed(row)))
+            .collect(),
+        _ => Value::Null,
+    }
 }

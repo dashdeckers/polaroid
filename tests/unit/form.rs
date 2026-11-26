@@ -810,3 +810,42 @@ fn any_json_is_laid_out_as_what_it_is() -> Result<(), Error> {
     assert_eq!(form.value, json!({ "lo": null, "of": ["a"], "a/b~": 1 }));
     Ok(())
 }
+
+#[test]
+fn rows_of_one_shape_are_laid_out_as_a_grid() -> Result<(), Error> {
+    let bands = json!({ "cheap": { "lo": 0, "hi": 10 }, "dear": { "lo": 10, "hi": 1000 } });
+    let mut form = Shown::any(bands.clone(), Pipeline::default());
+    // each key once, over its column, and each row on a line
+    let mut ui = simulator(form.view());
+    let mut at = |shown: &str| -> Result<iced::Rectangle, Error> {
+        Ok(ui
+            .find(shown)?
+            .bounds())
+    };
+    let (lo, hi, dear, most) = (at("lo")?, at("hi")?, at("dear")?, at("1000")?);
+    assert!((lo.y - hi.y).abs() < 1.0 && lo.x < hi.x, "{lo:?} {hi:?}");
+    assert!((dear.center_y() - most.center_y()).abs() < 4.0);
+    assert!((hi.x - most.x).abs() < 1.0, "{hi:?} {most:?}");
+
+    // a cell is put where it is in its row, and a key is another in every row at once
+    form.send(Message::Put("/cheap/lo".to_owned(), json!(1)));
+    assert_eq!(form.value["cheap"], json!({ "lo": 1, "hi": 10 }));
+    let renamed = table::each(&bands, |cells| table::renamed(cells, "lo", "from"));
+    let from = json!({ "cheap": { "from": 0, "hi": 10 }, "dear": { "from": 10, "hi": 1000 } });
+    assert_eq!(renamed, from);
+
+    // a list of such rows is one too, and rows of other keys or of more than cells are none
+    let is_grid = |rows: Value| {
+        form.form()
+            .grid(&PLAIN[4], kept(rows), "")
+            .is_some()
+    };
+    assert!(is_grid(json!([{ "lo": 0 }, { "lo": 10 }])));
+    assert!(!is_grid(json!([{ "lo": 0 }, { "hi": 10 }])));
+    assert!(!is_grid(json!({ "a": { "lo": [0] } })));
+    assert!(!is_grid(json!({ "a": 1 })));
+    assert!(!is_grid(json!([])));
+    // nor is a name, which JSON writes as a table
+    assert!(!is_grid(json!([{ "$value": "top" }])));
+    Ok(())
+}

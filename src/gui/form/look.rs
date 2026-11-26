@@ -314,3 +314,11 @@ pub fn labelled<'a, Message: 'a>(
         .spacing(8)
         .boxed()
 }
+
+/// `content` in a line of the height of a field, as the cells of a table are.
+pub fn lined<'a, Message: 'a>(content: impl Widget<Message> + 'a) -> Element<'a, Message> {
+    container(content)
+        .height(LINE)
+        .align_y(Center)
+        .boxed()
+}
