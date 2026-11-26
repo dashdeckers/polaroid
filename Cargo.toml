@@ -89,4 +89,5 @@ iced = { git = "https://github.com/iced-rs/iced", rev = "98bd48fe011efc0ec5819fe
 iced_test = { git = "https://github.com/iced-rs/iced", rev = "98bd48fe011efc0ec5819fee0fa7673a7169ff11" }
 rustd3-core = { git = "https://github.com/dashdeckers/rustd3", rev = "5edef322597a2a63bd87640b1c39a0279fa77f91" }
 rustd3-figure = { git = "https://github.com/dashdeckers/rustd3", rev = "5edef322597a2a63bd87640b1c39a0279fa77f91" }
+rustd3-fonts = { git = "https://github.com/dashdeckers/rustd3", rev = "5edef322597a2a63bd87640b1c39a0279fa77f91" }
 rustd3-iced = { git = "https://github.com/dashdeckers/rustd3", rev = "5edef322597a2a63bd87640b1c39a0279fa77f91" }

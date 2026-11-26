@@ -9,6 +9,7 @@ mod seen;
 mod split;
 mod surface;
 mod table;
+pub mod theme;
 
 pub use leave::{Leave, leave};
 pub use measure::width_of;

@@ -8,6 +8,8 @@ iced = { workspace = true, features = [
     "advanced",
     "canvas",
 ] }
+# the faces the editor is drawn in, which its plots are drawn in too
+rustd3-fonts = { workspace = true }
 
 [dev-dependencies]
 iced_test = { workspace = true }
