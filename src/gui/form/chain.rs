@@ -6,9 +6,9 @@ use std::iter::successors;
 use iced::widget::{column, container, mouse_area, row, space};
 use iced::{Center, Element, Fill, Function, Widget, padding};
 use polaroid_iced::theme::{Tone, control, extent, font, spacing};
-use serde_json::{Value, json};
+use serde_json::Value;
 
-use super::{self as form, Form, INDENT, PLAIN, put};
+use super::{self as form, Form, INDENT, PLAIN, put, stepped};
 use crate::gui::look::{add, clear, code, field, fitted, pick, scrubbed, told};
 use crate::methods::{self, Method};
 use crate::{reference, schema};
@@ -412,13 +412,10 @@ impl<'a> Form<'a, '_> {
                 });
                 // a number has a handle that moves it, and it stays whole if it was
                 let moved = number.map(|number| {
-                    let kind = match number.is_f64() {
-                        true => "number",
-                        false => "integer",
-                    };
+                    let number = Value::Number(number);
                     let put = put();
                     move |steps| {
-                        let moved = schema::nudged(&json!({ "type": kind }), &json!(number), steps);
+                        let moved = schema::nudged(stepped(&PLAIN[4], &number), &number, steps);
                         put(methods::literal_of(&moved.to_string()))
                     }
                 });
