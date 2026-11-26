@@ -216,10 +216,7 @@ impl Known {
             .as_ref()
             .err()?;
         // the first line says it, before the plan that failed
-        why.to_string()
-            .lines()
-            .next()
-            .map(str::to_owned)
+        Some(super::form::line(why))
     }
 
     /// Lets go of every frame that is saved, as if no Run had computed any node.
