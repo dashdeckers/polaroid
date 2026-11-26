@@ -4,20 +4,20 @@
 use std::cell::OnceCell;
 use std::collections::{BTreeMap, HashMap};
 
-use iced::widget::{button, column, image, row, slider, space, svg, text};
+use iced::widget::{column, image, row, slider, space, svg, text};
 use iced::{Center, Element, Fill, Widget};
 use polaroid_iced::pick_list;
-use polaroid_iced::theme::size;
+use polaroid_iced::theme::{self, size, spacing};
 #[cfg(feature = "plot")]
 use rustd3_iced::Plot;
 
-use super::look::{self, Help};
+use super::look::{self, Help, clear, small};
 #[cfg(feature = "plot")]
 use crate::Drawer;
 use crate::polars::prelude::{Column, DataFrame, SortOptions};
 
 /// The space between the lines of a gallery.
-const GAP: f32 = 6.0;
+const GAP: f32 = spacing::S;
 
 /// An image to show: of pixels, or of shapes, which stay sharp at any size.
 #[derive(Debug)]
@@ -563,7 +563,7 @@ impl Gallery {
         };
         Some(
             column![
-                column(attributes).spacing(5),
+                column(attributes).spacing(spacing::XS),
                 picture,
                 browse
                     .spacing(GAP)
@@ -606,22 +606,12 @@ impl Gallery {
                     .stepped()
             }
         };
-        let clear = picked.map(|_| small("×", pick(None)));
+        let clear = picked.map(|_| clear(pick(None)));
         row![control, clear]
-            .spacing(5)
+            .spacing(spacing::XS)
             .align_y(Center)
             .boxed()
     }
-}
-
-fn small<'a>(
-    label: &'a str,
-    message: Message,
-) -> impl Widget<Message> + 'a {
-    button(text(label))
-        .padding([2, 6])
-        .style(button::text)
-        .on_press(message)
 }
 
 /// A slider through `len` places that is at `place`, beside what says where that is.
@@ -633,7 +623,8 @@ fn stepped<'a>(
 ) -> Element<'a, Message> {
     let last = len.saturating_sub(1) as u32;
     row![
-        slider(0..=last, place as u32, move |place| on_step(place as usize)),
+        slider(0..=last, place as u32, move |place| on_step(place as usize))
+            .style(theme::slider::line),
         text(says).size(size::NOTE),
     ]
     .spacing(GAP)

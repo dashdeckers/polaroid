@@ -3,19 +3,20 @@
 use std::collections::HashMap;
 
 use iced::{Point, Size};
+use polaroid_iced::theme::{extent, surface};
 use serde_json::json;
 
 use crate::{Node, Pipeline};
 
 /// The width of a closed card.
-pub const WIDTH: f32 = 220.0;
+pub const WIDTH: f32 = extent::M;
 /// The width of an open card until it is resized; it is as tall as what it holds.
-const OPEN: f32 = 520.0;
+const OPEN: f32 = extent::XXL;
 
 /// Where the first card is placed from the corner, and how far the next are beside and below it.
-const EDGE: f32 = 20.0;
-const BESIDE: f32 = 70.0;
-const BELOW: f32 = 160.0;
+const EDGE: f32 = surface::EDGE;
+const BESIDE: f32 = surface::BESIDE;
+const BELOW: f32 = surface::BELOW;
 
 /// Where a node's card is drawn, as its `ui` says.
 pub fn position(node: &Node) -> Point {

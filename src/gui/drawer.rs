@@ -3,14 +3,14 @@
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
-use iced::widget::{button, column, container, row, scrollable, space};
+use iced::widget::{column, container, row, scrollable, space, text};
 use iced::{Center, Element, Fill, Function, Widget};
 use polaroid_iced::leave;
-use polaroid_iced::theme::Tone;
+use polaroid_iced::theme::{self, Tone, font, size, spacing};
 use serde_json::{Map, Value};
 
 use super::form::{self, Expressions, Form};
-use super::look::{self, Help, cross, name_field, toggle};
+use super::look::{self, Help, add, cross, name_field, toggle};
 use crate::{Kind, Pipeline, Registry, methods};
 
 /// What the drawer shows of what a pipeline names, by the names.
@@ -239,7 +239,7 @@ impl Drawer {
                     "Deletes it; what used it is left without one.",
                 ),
             ]
-            .spacing(6)
+            .spacing(spacing::XS)
             .align_y(Center);
             // what a call of an expression that has holes gives, or why it is no sound one
             let takes = (kind == Kind::Expression)
@@ -282,17 +282,19 @@ impl Drawer {
                 .view(schema)
                 .map(Message::Form.with(name.clone()))
                 .boxed(),
-                false => look::aside(written).boxed(),
+                false => look::aside(written)
+                    .font(font::MONO)
+                    .boxed(),
             };
             column![head, takes, body]
-                .spacing(6)
+                .spacing(spacing::XS)
                 .boxed()
         };
         let group = |title: &'a str, kind: Kind, named: &'a Map<String, Value>, says: &str| {
             let head = row![
-                title,
+                text(title).size(size::HEADING),
                 space::horizontal(),
-                help.of(button("New").on_press(Message::New(kind)), says),
+                help.of(add(Message::New(kind)), says),
             ]
             .align_y(Center);
             let sections = named
@@ -300,9 +302,9 @@ impl Drawer {
                 .map(|(name, stored)| section(kind, name, stored));
             column![
                 head,
-                column(sections).spacing(14)
+                column(sections).spacing(spacing::L)
             ]
-            .spacing(10)
+            .spacing(spacing::M)
             .width(Fill)
         };
         let named = column![
@@ -320,10 +322,18 @@ impl Drawer {
                  list or a table, for expressions and cards to name.",
             ),
         ]
-        .spacing(20);
+        .spacing(spacing::XL);
         // the scrollbar beside what is named, not over it
-        container(scrollable(named).spacing(4))
-            .padding(10)
+        let bar = scrollable::Scrollbar::new()
+            .width(theme::BAR)
+            .scroller_width(theme::BAR)
+            .spacing(spacing::XS);
+        let named = scrollable(named)
+            .direction(scrollable::Direction::Vertical(bar))
+            .style(theme::scrollable::thin);
+        container(named)
+            .padding(spacing::M)
+            .style(theme::container::sheet)
             .width(Fill)
             .height(Fill)
     }
