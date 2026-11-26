@@ -1,7 +1,8 @@
 //! An expression laid out as its chain of calls: the root, then one call to a line.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::iter::successors;
+use std::sync::LazyLock;
 
 use iced::widget::{column, container, mouse_area, row, space};
 use iced::{Center, Element, Fill, Function, Widget, padding};
@@ -449,25 +450,11 @@ impl<'a> Form<'a, '_> {
             }
         };
 
-        let mut namespaces: Vec<&'static str> = Vec::new();
-        for method in methods::methods() {
-            let is_new = method
-                .receiver
-                .is_some()
-                && !method
-                    .namespace
-                    .is_empty()
-                && !namespaces.contains(&method.namespace);
-            if is_new {
-                namespaces.push(method.namespace);
-            }
-        }
-        // the methods of the expression itself come first, under a name of their own
-        namespaces.insert(0, "");
         let named = |namespace: &&str| match *namespace {
             "" => BASE.to_owned(),
             namespace => namespace.to_owned(),
         };
+        let namespaces = NAMESPACES.clone();
         let namespace = code_pick(Some(narrowed), namespaces, named, "namespace").on_select({
             let at = at.clone();
             move |namespace| asked(Message::Narrow(at.clone(), namespace))
@@ -492,23 +479,50 @@ fn asked(message: Message) -> form::Message {
     form::Message::Chain(message)
 }
 
-/// The functions, or the methods of `namespace`, the most picked first.
-fn choices(namespace: Option<&str>) -> Vec<&'static Method> {
-    let mut choices: Vec<_> = methods::methods()
-        .iter()
-        .filter(|method| {
-            method
+/// The namespaces of the methods as they are met, after that of the expression itself.
+static NAMESPACES: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
+    let mut namespaces = vec![""];
+    for method in methods::methods() {
+        if method
+            .receiver
+            .is_some()
+            && !namespaces.contains(&method.namespace)
+        {
+            namespaces.push(method.namespace);
+        }
+    }
+    namespaces
+});
+
+/// The functions, and the methods of each namespace, the most picked first.
+static CHOICES: LazyLock<BTreeMap<Option<&'static str>, Vec<&'static Method>>> =
+    LazyLock::new(|| {
+        let mut choices: BTreeMap<_, Vec<_>> = BTreeMap::new();
+        for method in methods::methods() {
+            let namespace = method
                 .receiver
                 .as_ref()
-                .map(|_| method.namespace)
-                == namespace
-        })
-        .collect();
-    choices.sort_by_cached_key(|method| {
-        let label = label(method);
-        (!FIRST.contains(&label.as_str()), label)
+                .map(|_| method.namespace);
+            choices
+                .entry(namespace)
+                .or_default()
+                .push(method);
+        }
+        for choices in choices.values_mut() {
+            choices.sort_by_cached_key(|method| {
+                let label = label(method);
+                (!FIRST.contains(&label.as_str()), label)
+            });
+        }
+        choices
     });
-    choices
+
+/// The functions, or the methods of `namespace`, the most picked first.
+fn choices(namespace: Option<&str>) -> Vec<&'static Method> {
+    CHOICES
+        .get(&namespace)
+        .cloned()
+        .unwrap_or_default()
 }
 
 /// What a Method is picked by: its name, or the full name of a function.
