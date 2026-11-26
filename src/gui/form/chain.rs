@@ -3,26 +3,17 @@
 use std::collections::BTreeSet;
 use std::iter::successors;
 
-use iced::widget::{button, column, container, mouse_area, row, space, text_input};
-use iced::{Center, Element, Fill, Font, Function, Widget, padding};
-use polaroid_iced::{PickList, handle, pick_list};
+use iced::widget::{column, container, mouse_area, row, space};
+use iced::{Center, Element, Fill, Function, Widget, padding};
 use serde_json::{Value, json};
 
-use super::{self as form, Form, Tone, small};
+use super::look::{Face, GAP, INDENT, REMOVE, Tone, code, field, fitted, pick, remove, scrubbed};
+use super::{self as form, Form, PLAIN, put, small, told};
 use crate::methods::{self, Method};
-use crate::schema;
+use crate::{reference, schema};
 
 /// What is picked the most, and so offered first.
 const FIRST: [&str; 3] = ["pl.col", "pl.lit", "alias"];
-
-/// The size of text that reads as code.
-const CODE: f32 = 16.0;
-
-/// How far a call is set in from its root, and arguments from their call.
-const INDENT: f32 = 20.0;
-
-/// The width of the column before the lines of a chain, where a call is taken away.
-const REMOVE: f32 = 22.0;
 
 /// What the methods that are in no namespace are offered under.
 const BASE: &str = "base";
@@ -55,12 +46,12 @@ pub enum Message {
 }
 
 impl State {
-    /// Does what `message` asks to the expressions in `value`, and returns whether it changed.
+    /// Does what `message` asks to the expressions in `value`.
     pub fn update(
         &mut self,
         message: Message,
         value: &mut Value,
-    ) -> bool {
+    ) {
         match message {
             Message::Toggle(at) => {
                 if !self
@@ -70,15 +61,18 @@ impl State {
                     self.expanded
                         .insert(at);
                 }
-                false
             }
-            Message::Narrow(at, namespace) => {
-                self.namespace = Some((at, namespace));
-                false
-            }
+            Message::Narrow(at, namespace) => self.namespace = Some((at, namespace)),
             Message::Call(at, method) => {
+                // an input that was left out is given from nothing
+                if value
+                    .pointer(&at)
+                    .is_none()
+                {
+                    put(value, &at, Some(Value::Null));
+                }
                 let Some(node) = value.pointer_mut(&at) else {
-                    return false;
+                    return;
                 };
                 *node = method.call(node.take());
 
@@ -94,7 +88,6 @@ impl State {
                     self.expanded
                         .insert(at);
                 }
-                true
             }
             // another call in its place is a call on what it leaves; the same again is no change
             Message::Replace(at, method) => {
@@ -102,15 +95,14 @@ impl State {
                     .pointer(&at)
                     .and_then(methods::read)
                     == Some(method);
-                if is_same {
-                    return false;
+                if !is_same {
+                    self.update(Message::Remove(at.clone()), value);
+                    self.update(Message::Call(at, method), value);
                 }
-                self.update(Message::Remove(at.clone()), value);
-                self.update(Message::Call(at, method), value)
             }
             Message::Remove(at) => {
                 let Some(node) = value.pointer_mut(&at) else {
-                    return false;
+                    return;
                 };
                 let old = methods::read(node).and_then(|method| {
                     method
@@ -122,7 +114,6 @@ impl State {
                     .map(Value::take)
                     .unwrap_or_default();
                 self.relocate(&at, old, "");
-                true
             }
         }
     }
@@ -159,12 +150,13 @@ impl State {
 }
 
 impl<'a> Form<'a, '_> {
-    /// The expression `value` at the pointer `at` as its chain; a hole offers the functions.
+    /// The expression `value` at the pointer `at` as its chain; a hole offers what may fill it.
     pub(super) fn chain(
         self,
         value: &'a Value,
         at: String,
     ) -> Element<'a, form::Message> {
+        let expr = &self.defs["Expr"];
         // the nodes from the last call back to the root, each with the Method it is a call of
         let read = |node: &'a Value, pointer: String| (methods::read(node), node, pointer);
         let links: Vec<_> = successors(Some(read(value, at.clone())), |(method, node, pointer)| {
@@ -179,7 +171,7 @@ impl<'a> Form<'a, '_> {
         })
         .collect();
 
-        // each line, after what takes its call away if it is one
+        // each line, after what takes it away if it is a call or a name
         let lines = links
             .into_iter()
             .rev()
@@ -191,16 +183,25 @@ impl<'a> Form<'a, '_> {
                     );
                     (Some(remove), self.call(method, node, pointer))
                 }
+                // a hole offers the functions, and the names of the pipeline beside them
                 None if node.is_null() => {
-                    let hole = pick(None, choices(None), label, "pl.…")
-                        .on_select(move |method| asked(Message::Replace(pointer.clone(), method)))
+                    let named = self.names(expr, node, &pointer, "@…", Tone::Given);
+                    let function = code_pick(None, choices(None), label, "pl.…")
+                        .on_select(move |method| asked(Message::Replace(pointer.clone(), method)));
+                    let hole = row![function, named]
+                        .spacing(GAP)
+                        .align_y(Center)
                         .boxed();
                     (None, hole)
                 }
-                None => (
-                    None,
-                    self.plain(&self.defs["Expr"], node, pointer, Tone::Given),
-                ),
+                None if reference(node).is_some() => {
+                    let remove = self.help.of(
+                        remove(form::Message::Put(pointer.clone(), Value::Null)),
+                        "Takes this name out of the chain, and leaves a hole.",
+                    );
+                    (Some(remove), self.named(expr, node, pointer, Tone::Given))
+                }
+                None => (None, self.plain(expr, node, pointer, Tone::Given)),
             });
         let add = (!value.is_null()).then(|| (None, self.add(at)));
         let lines = lines
@@ -218,7 +219,7 @@ impl<'a> Form<'a, '_> {
                 .boxed()
             });
         column(lines)
-            .spacing(5)
+            .spacing(GAP)
             .boxed()
     }
 
@@ -239,7 +240,7 @@ impl<'a> Form<'a, '_> {
             Some("") => ".".to_owned(),
             Some(namespace) => format!(".{namespace}."),
         };
-        let name = pick(Some(method), choices(called), label, "").on_select({
+        let name = code_pick(Some(method), choices(called), label, "").on_select({
             let at = at.clone();
             move |method| asked(Message::Replace(at.clone(), method))
         });
@@ -260,7 +261,7 @@ impl<'a> Form<'a, '_> {
         let says = method
             .doc
             .map(|doc| doc.says.to_owned());
-        let name = form::told(name, says);
+        let name = told(name, says);
         let mut name = Some(name);
         let mut line = |after: Element<'a, form::Message>| {
             row![
@@ -303,32 +304,39 @@ impl<'a> Form<'a, '_> {
             .iter()
             .chain(&method.options)
             .map(|arg| {
-                let value = node
-                    .pointer(&arg.at)
-                    .unwrap_or(&Value::Null);
+                let inside = format!("{at}{}", arg.at);
+                let given = node.pointer(&arg.at);
                 let says = method
                     .says_of(&arg.name)
                     .map(str::to_owned);
+                // one that may be left out is taken out again where it is given
+                let leave = (arg.is_optional && given.is_some()).then(|| {
+                    self.help.of(
+                        small("×", form::Message::Drop(inside.clone())),
+                        "Leaves this argument out again.",
+                    )
+                });
                 row![
-                    form::told(code(format!("{}=", arg.name)), says),
+                    told(code(format!("{}=", arg.name)), says),
                     self.value(
                         schema::pointer(self.defs, expr, &arg.at),
-                        value,
-                        format!("{at}{}", arg.at)
-                    )
+                        given.unwrap_or(&Value::Null),
+                        inside
+                    ),
+                    leave
                 ]
-                .spacing(5)
+                .spacing(GAP)
             });
         column![
             line(toggle("(").boxed()),
-            container(column(arguments).spacing(5)).padding(padding::left(INDENT)),
+            container(column(arguments).spacing(GAP)).padding(padding::left(INDENT)),
             toggle(")"),
         ]
-        .spacing(5)
+        .spacing(GAP)
         .boxed()
     }
 
-    /// The argument of a `col` or a plain `lit`, to edit in place: a column or a value.
+    /// The argument of a `col` or a plain `lit`, to edit in place: a column or a value, or a name.
     fn inline(
         self,
         method: &Method,
@@ -339,29 +347,39 @@ impl<'a> Form<'a, '_> {
             .options
             .first()?;
         let value = node.pointer(&option.at)?;
-        let put = || form::Message::Put.with(format!("{at}{}", option.at));
+        let at = format!("{at}{}", option.at);
+        let put = || form::Message::Put.with(at.clone());
+        let named = |schema: &'a Value| self.names(schema, value, &at, "@…", Tone::Given);
+        let beside = |edited: Element<'a, form::Message>, schema| {
+            row![edited, named(schema)]
+                .spacing(GAP)
+                .align_y(Center)
+                .boxed()
+        };
 
         match method.kind.as_str() {
+            "/Column" | "/Literal" if reference(value).is_some() => {
+                Some(self.named(&PLAIN[4], value, at.clone(), Tone::Given))
+            }
             "/Column" => {
                 let name = value
                     .as_str()
                     .unwrap_or_default();
-                let columns = self
-                    .expressions
-                    .columns();
-                if columns.is_empty() {
-                    return Some(
-                        text_input("column", name)
-                            .on_input({
-                                let put = put();
-                                move |name| put(name.into())
-                            })
-                            .width(Fill.max(150))
-                            .boxed(),
-                    );
+                if self
+                    .columns
+                    .is_empty()
+                {
+                    let typed = field("column", name, Face::Code, Tone::Given)
+                        .on_input({
+                            let put = put();
+                            move |name| put(name.into())
+                        })
+                        .width(Fill.max(150));
+                    return Some(beside(typed.boxed(), &PLAIN[0]));
                 }
                 // it shows a name that is none of the columns, as one named before they were known
-                let selected = columns
+                let selected = self
+                    .columns
                     .iter()
                     .find(|column| *column == name)
                     .cloned();
@@ -369,47 +387,38 @@ impl<'a> Form<'a, '_> {
                     "" => "column…",
                     name => name,
                 };
-                Some(
-                    pick_list(selected, columns.to_vec(), String::clone)
-                        .on_select({
-                            let put = put();
-                            move |name| put(name.into())
-                        })
-                        .placeholder(placeholder.to_owned())
-                        .stepped(),
-                )
+                let columns = self
+                    .columns
+                    .to_vec();
+                let picked = code_pick(selected, columns, String::clone, placeholder)
+                    .on_select({
+                        let put = put();
+                        move |name| put(name.into())
+                    })
+                    .stepped();
+                Some(beside(picked, &PLAIN[0]))
             }
             "/Literal" => {
                 let typed = methods::typed(node)?;
                 let number = schema::number(&typed);
-                let width = form::fitted(&typed, CODE);
-                let field = text_input("value", typed)
-                    .on_input({
-                        let put = put();
-                        move |typed| put(methods::literal_of(&typed))
-                    })
-                    .width(width);
+                // the field keeps its place, and so its focus, while what is typed is no number
+                let typed_in = fitted("value", typed, Face::Code, Tone::Given).on_input({
+                    let put = put();
+                    move |typed| put(methods::literal_of(&typed))
+                });
                 // a number has a handle that moves it, and it stays whole if it was
-                let scrub = number.map(|number| {
+                let moved = number.map(|number| {
                     let kind = match number.is_f64() {
                         true => "number",
                         false => "integer",
                     };
                     let put = put();
-                    let on_scrub = move |steps| {
+                    move |steps| {
                         let moved = schema::nudged(&json!({ "type": kind }), &json!(number), steps);
                         put(methods::literal_of(&moved.to_string()))
-                    };
-                    self.help
-                        .of(handle().on_scrub(on_scrub), form::DRAG)
+                    }
                 });
-                // the field keeps its place, and so its focus, while what is typed is no number
-                Some(
-                    row![field, scrub]
-                        .spacing(2)
-                        .align_y(Center)
-                        .boxed(),
-                )
+                Some(beside(scrubbed(typed_in, moved, self.help), &PLAIN[4]))
             }
             _ => None,
         }
@@ -458,11 +467,11 @@ impl<'a> Form<'a, '_> {
             "" => BASE.to_owned(),
             namespace => namespace.to_owned(),
         };
-        let namespace = pick(Some(narrowed), namespaces, named, "namespace").on_select({
+        let namespace = code_pick(Some(narrowed), namespaces, named, "namespace").on_select({
             let at = at.clone();
             move |namespace| asked(Message::Narrow(at.clone(), namespace))
         });
-        let method = pick(None, choices(Some(narrowed)), label, "method")
+        let method = code_pick(None, choices(Some(narrowed)), label, "method")
             .on_select(move |method| asked(Message::Call(at.clone(), method)));
 
         row![
@@ -475,15 +484,6 @@ impl<'a> Form<'a, '_> {
         .align_y(Center)
         .boxed()
     }
-}
-
-/// The button before a line that takes its call away.
-fn remove<'a>(message: form::Message) -> Element<'a, form::Message> {
-    button(code("×"))
-        .padding([2, 6])
-        .style(button::text)
-        .on_press(message)
-        .boxed()
 }
 
 /// What a chain asks for, as the form that it is part of passes it on.
@@ -522,22 +522,18 @@ fn label(method: &&Method) -> String {
 }
 
 /// A pick list of code, which shows `selected`, or else `placeholder`.
-fn pick<'a, T: Clone + PartialEq + 'a>(
+fn code_pick<'a, T: Clone + PartialEq + 'a>(
     selected: Option<T>,
     options: Vec<T>,
     label: impl Fn(&T) -> String + 'a,
     placeholder: &str,
-) -> PickList<'a, T, form::Message> {
-    pick_list(selected, options, label)
-        .placeholder(placeholder)
-        .padding([2, 6])
-        .text_size(CODE)
-        .font(Font::MONOSPACE)
-}
-
-/// Text that reads as code.
-fn code<'a>(text: impl Into<String>) -> iced::widget::Text<'a> {
-    iced::widget::text(text.into())
-        .size(CODE)
-        .font(Font::MONOSPACE)
+) -> polaroid_iced::PickList<'a, T, form::Message> {
+    pick(
+        selected,
+        options,
+        label,
+        placeholder,
+        Face::Code,
+        Tone::Given,
+    )
 }

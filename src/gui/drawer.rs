@@ -1,36 +1,39 @@
-//! The drawer of expressions: each under its name, to edit there and to use by that name in a card.
+//! The drawer of what a pipeline names: its expressions and values, each edited under its name.
 
 use std::collections::BTreeMap;
+use std::rc::Rc;
 
-use iced::widget::{button, column, container, row, scrollable, space, text};
-use iced::{Center, Fill, Function, Widget};
+use iced::widget::{button, column, container, row, scrollable, space};
+use iced::{Center, Element, Fill, Function, Widget};
 use polaroid_iced::leave;
 use serde_json::{Map, Value};
 
-use super::form::{self, Expressions};
-use super::{Help, NOTE, TITLE, cross, name_field, toggle};
-use crate::{Pipeline, methods};
+use super::form::{self, Expressions, Form};
+use super::{Help, TITLE, cross, name_field, toggle};
+use crate::{Kind, Pipeline, Registry, methods};
 
-/// What the drawer shows of the expressions of a pipeline, by their names.
+/// What the drawer shows of what a pipeline names, by the names.
 #[derive(Default)]
 pub struct Drawer {
     sections: BTreeMap<String, Section>,
 }
 
-/// What the drawer shows of an expression that the pipeline does not hold; closed at first.
+/// What the drawer shows of an expression or a value that the pipeline does not hold.
 #[derive(Default)]
 struct Section {
     is_open: bool,
     form: form::State,
     /// The name as it is being typed, until its field is left.
     name: Option<String>,
+    /// It as it is edited, if the pipeline does not take that yet.
+    draft: Option<form::Draft>,
 }
 
-/// What is done to the expression of a name.
+/// What is done to the expression or the value of a name.
 #[derive(Debug, Clone)]
 pub enum Message {
-    /// An empty expression is added, under a name that is free.
-    New,
+    /// An empty expression or value is added, under a name that is free.
+    New(Kind),
     /// Its editor is laid open, or closed if it is open.
     Toggle(String),
     Name(String, String),
@@ -38,6 +41,8 @@ pub enum Message {
     /// The field of its name lost the focus.
     Leave(String),
     Form(String, form::Message),
+    /// It holds this value at this pointer, as a card that names it moved a number of it.
+    Put(String, String, Value),
     Delete(String),
 }
 
@@ -46,25 +51,32 @@ pub enum Change {
     Nothing,
     /// The pipeline is another, but no node computes anything else.
     Pipeline,
-    /// The expression of this name is another or gone, for every node that uses it.
-    Expression(String),
+    /// What is named this is another or gone, for every node that uses it.
+    Named(String),
 }
 
+/// Any JSON, as the schema of a value says it.
+static ANY: Value = Value::Null;
+
 impl Drawer {
-    /// Does what `message` asks, to the drawer or to the expressions of `pipeline`.
+    /// Does what `message` asks, to the drawer or to what `pipeline` names.
     pub fn update(
         &mut self,
         message: Message,
         pipeline: &mut Pipeline,
+        registry: &Registry,
     ) -> Change {
-        let expressions = &mut pipeline.expressions;
         match message {
-            Message::New => {
+            Message::New(kind) => {
+                let (named, stem) = match kind {
+                    Kind::Value => (&pipeline.values, "value"),
+                    _ => (&pipeline.expressions, "expression"),
+                };
                 let name = (1..)
-                    .map(|n| format!("expression_{n}"))
-                    .find(|name| !expressions.contains_key(name))
+                    .map(|n| format!("{stem}_{n}"))
+                    .find(|name| !named.contains_key(name))
                     .expect("some number is free");
-                expressions.insert(name.clone(), Value::Null);
+                holding(pipeline, kind == Kind::Value).insert(name.clone(), Value::Null);
                 self.section(name)
                     .is_open = true;
                 Change::Pipeline
@@ -105,31 +117,69 @@ impl Drawer {
                 Change::Nothing
             }
             Message::Form(name, message) => {
-                let Some(expression) = expressions.get_mut(&name) else {
+                let is_value = pipeline
+                    .values
+                    .contains_key(&name);
+                let Some(stored) = holding(pipeline, is_value)
+                    .get(&name)
+                    .cloned()
+                else {
                     return Change::Nothing;
                 };
-                // the form may only show its value another way
-                let is_changed = self
-                    .section(name.clone())
+                let section = self.section(name.clone());
+                let check = check(pipeline, registry, &name);
+                let draft = section
+                    .draft
+                    .as_ref();
+                let change = section
                     .form
-                    .update(message, expression);
-                match is_changed {
-                    true => Change::Expression(name),
-                    false => Change::Nothing,
+                    .update(message, &stored, draft, &*check);
+                drop(check);
+                match change {
+                    form::Change::Nothing => Change::Nothing,
+                    // until the pipeline takes it, the nodes that use it have it as it was
+                    form::Change::Draft(draft) => {
+                        section.draft = Some(draft);
+                        Change::Nothing
+                    }
+                    form::Change::Value(value) => {
+                        section.draft = None;
+                        if value == stored {
+                            return Change::Nothing;
+                        }
+                        holding(pipeline, is_value).insert(name.clone(), value);
+                        Change::Named(name)
+                    }
+                    form::Change::Named(name, at, value) => {
+                        self.update(Message::Put(name, at, value), pipeline, registry)
+                    }
                 }
+            }
+            Message::Put(name, at, value) => {
+                let is_value = pipeline
+                    .values
+                    .contains_key(&name);
+                let Some(named) = holding(pipeline, is_value).get_mut(&name) else {
+                    return Change::Nothing;
+                };
+                form::put(named, &at, Some(value));
+                Change::Named(name)
             }
             Message::Delete(name) => {
                 self.sections
                     .remove(&name);
-                match expressions.shift_remove(&name) {
-                    Some(_) => Change::Expression(name),
+                let is_value = pipeline
+                    .values
+                    .contains_key(&name);
+                match holding(pipeline, is_value).shift_remove(&name) {
+                    Some(_) => Change::Named(name),
                     None => Change::Nothing,
                 }
             }
         }
     }
 
-    /// What is shown of the expression of a name.
+    /// What is shown of the expression or the value of a name.
     fn section(
         &mut self,
         name: String,
@@ -139,93 +189,185 @@ impl Drawer {
             .or_default()
     }
 
-    /// The expressions each under its name; `columns` are those they may name.
+    /// The expressions and the values each under its name; `columns` are those they may name.
     pub fn view<'a>(
-        &self,
+        &'a self,
         defs: &'a Value,
-        expressions: &'a Map<String, Value>,
+        pipeline: &'a Pipeline,
+        registry: &'a Registry,
         columns: &[String],
         help: Help,
     ) -> impl Widget<Message> + use<'a> {
-        let closed = Section::default();
-        let sections = expressions
-            .iter()
-            .map(|(name, expression)| {
-                let section = self
-                    .sections
-                    .get(name)
-                    .unwrap_or(&closed);
-                let typed = section
+        let closed = form::State::default();
+        let is_taken = |name: &str| {
+            pipeline
+                .expressions
+                .contains_key(name)
+                || pipeline
+                    .values
+                    .contains_key(name)
+        };
+        let section = |kind: Kind, name: &'a String, stored: &'a Value| {
+            let section = self
+                .sections
+                .get(name);
+            let is_open = section.is_some_and(|section| section.is_open);
+            let typed = section.and_then(|section| {
+                section
                     .name
-                    .as_deref();
-                let head = row![
-                    help.of(
-                        toggle(section.is_open, Message::Toggle(name.clone())),
-                        "Lays the expression open to edit it, or closes it to its text.",
-                    ),
-                    help.of(
-                        leave(
-                            name_field("name", typed, name, |name| {
-                                expressions.contains_key(name)
-                            })
+                    .as_deref()
+            });
+            let head = row![
+                help.of(
+                    toggle(is_open, Message::Toggle(name.clone())),
+                    "Lays it open to edit it, or closes it to what it is written as.",
+                ),
+                help.of(
+                    leave(
+                        name_field("name", typed, name, is_taken)
                             .on_input(Message::Name.with(name.clone()))
                             .on_submit(Message::Rename(name.clone()))
                             .size(TITLE)
                             .padding(4),
-                            Message::Leave(name.clone()),
-                        ),
-                        "The name that cards pick the expression by. Type another and press \
-                         Enter to rename it, wherever it is used; the border is orange until \
-                         then, and red while the name is empty or another's. Leaving the field \
-                         shows the name again.",
+                        Message::Leave(name.clone()),
                     ),
-                    help.of(
-                        cross(Message::Delete(name.clone())),
-                        "Deletes the expression; the cards that used it are left without one.",
-                    ),
-                ]
-                .spacing(6)
-                .align_y(Center);
-                // open it is edited, and closed it is written out
-                let body = match section.is_open {
-                    true => {
-                        let schema = &defs["Expr"];
-                        let chained = Expressions::Chained(columns);
-                        form::view(&section.form, defs, schema, expression, chained, 0.0, help)
-                            .map(Message::Form.with(name.clone()))
-                            .boxed()
+                    "The name that cards and expressions use it by. Type another and press Enter \
+                     to rename it, wherever it is used; the border is orange until then, and red \
+                     while the name is empty or another's. Leaving the field shows the name again.",
+                ),
+                help.of(
+                    cross(Message::Delete(name.clone())),
+                    "Deletes it; what used it is left without one.",
+                ),
+            ]
+            .spacing(6)
+            .align_y(Center);
+            // what a call of an expression that has holes gives, or why it is no sound one
+            let takes = (kind == Kind::Expression)
+                .then(|| pipeline.holes(name))
+                .and_then(|holes| match holes {
+                    Ok(holes) if holes.is_empty() => None,
+                    Ok(holes) => {
+                        let holes: Vec<String> = holes
+                            .iter()
+                            .map(|(hole, taken)| format!("{hole}: {taken}"))
+                            .collect();
+                        Some(form::aside(format!("takes {}", holes.join(", "))))
                     }
-                    false => text(methods::text(expression))
-                        .size(NOTE)
-                        .style(text::secondary)
-                        .boxed(),
-                };
-                column![head, body]
-                    .spacing(6)
-                    .boxed()
+                    Err(e) => Some(form::note(form::line(&e))),
+                });
+            // open it is edited, and closed it is written out
+            let draft = section.and_then(|section| {
+                section
+                    .draft
+                    .as_ref()
             });
-        let head = row![
-            "Expressions",
-            space::horizontal(),
-            help.of(
-                button("New").on_press(Message::New),
-                "Adds an empty expression, under a name that is free.",
-            ),
-        ]
-        .align_y(Center);
-        let sections = column(sections)
-            .spacing(14)
-            .width(Fill);
-        container(
+            let (value, held) = form::Draft::shown(draft, stored);
+            let (schema, expressions, written) = match kind {
+                Kind::Expression => (&defs["Expr"], Expressions::Chained, methods::text(value)),
+                _ => (&ANY, Expressions::Named, value.to_string()),
+            };
+            let body: Element<'a, Message> = match is_open {
+                true => Form {
+                    state: section.map_or(&closed, |section| &section.form),
+                    defs,
+                    pipeline,
+                    columns,
+                    expressions,
+                    check: &check(pipeline, registry, name),
+                    value,
+                    held,
+                    names: 0.0,
+                    help,
+                }
+                .view(schema)
+                .map(Message::Form.with(name.clone()))
+                .boxed(),
+                false => form::aside(written).boxed(),
+            };
+            column![head, takes, body]
+                .spacing(6)
+                .boxed()
+        };
+        let group = |title: &'a str, kind: Kind, named: &'a Map<String, Value>, says: &str| {
+            let head = row![
+                title,
+                space::horizontal(),
+                help.of(button("New").on_press(Message::New(kind)), says),
+            ]
+            .align_y(Center);
+            let sections = named
+                .iter()
+                .map(|(name, stored)| section(kind, name, stored));
             column![
                 head,
-                // the scrollbar beside the expressions, not over them
-                scrollable(sections).spacing(4),
+                column(sections).spacing(14)
             ]
-            .spacing(10),
-        )
-        .padding(10)
-        .width(Fill)
-        .height(Fill)
+            .spacing(10)
+            .width(Fill)
+        };
+        let named = column![
+            group(
+                "Expressions",
+                Kind::Expression,
+                &pipeline.expressions,
+                "Adds an empty expression, under a name that is free.",
+            ),
+            group(
+                "Values",
+                Kind::Value,
+                &pipeline.values,
+                "Adds an empty value, under a name that is free: a number, a text, a flag, a \
+                 list or a table, for expressions and cards to name.",
+            ),
+        ]
+        .spacing(20);
+        // the scrollbar beside what is named, not over it
+        container(scrollable(named).spacing(4))
+            .padding(10)
+            .width(Fill)
+            .height(Fill)
     }
+}
+
+/// The expressions of `pipeline`, or its values.
+fn holding(
+    pipeline: &mut Pipeline,
+    is_value: bool,
+) -> &mut Map<String, Value> {
+    match is_value {
+        true => &mut pipeline.values,
+        false => &mut pipeline.expressions,
+    }
+}
+
+/// Whether `pipeline` takes `name` as it is edited: sound alone, and taken by each of its users.
+fn check<'a>(
+    pipeline: &'a Pipeline,
+    registry: &'a Registry,
+    name: &'a str,
+) -> form::Check<'a> {
+    Rc::new(move |edited| {
+        let mut tried = pipeline.clone();
+        let is_value = tried
+            .values
+            .contains_key(name);
+        holding(&mut tried, is_value).insert(name.to_owned(), edited.clone());
+        if !is_value {
+            tried
+                .holes(name)
+                .map_err(|e| form::line(&e))?;
+        }
+        let users = tried.users(name);
+        tried
+            .nodes
+            .iter()
+            .filter(|node| users.contains(&node.id.as_str()))
+            .try_for_each(|node| {
+                registry
+                    .resolved(&node.block, &node.args, &tried)
+                    .map(drop)
+                    .map_err(|e| format!("{}: {}", node.id, form::line(&e)))
+            })
+    })
 }

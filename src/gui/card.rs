@@ -1,5 +1,7 @@
 //! The card of a node: its id, inputs and args, and what is known of it.
 
+use std::rc::Rc;
+
 use iced::advanced::widget;
 use iced::widget::canvas::{self, Frame, Path, Stroke};
 use iced::widget::{
@@ -28,11 +30,11 @@ use iced::{
     mouse,
 };
 use polaroid_iced::{Asked, Heading, leave, pick_list, width_of};
-use serde_json::{Map, Value};
+use serde_json::Value;
 
-use super::form::{Expressions, Tone};
+use super::form::{Expressions, Form, Tone};
 use super::gallery::{self, Gallery};
-use super::known::Status;
+use super::known::{Known, Status};
 use super::{
     Editor,
     Help,
@@ -41,6 +43,7 @@ use super::{
     TEXT,
     TITLE,
     cross,
+    drawer,
     error,
     form,
     layout,
@@ -48,7 +51,7 @@ use super::{
     toggle,
 };
 use crate::polars::prelude::{AnyValue, DataFrame, DataType};
-use crate::{Described, Node, schema};
+use crate::{Described, Node, Pipeline, Registry, schema};
 
 /// The space around what a card holds, and between its lines.
 const PAD: f32 = 10.0;
@@ -122,6 +125,13 @@ impl Editor {
                     self.shown
                         .insert(new.clone(), shown);
                 }
+                if let Some(draft) = self
+                    .drafts
+                    .remove(id)
+                {
+                    self.drafts
+                        .insert(new.clone(), draft);
+                }
                 self.forget(|node| node.id == new);
             }
             Edit::Wire(slot, source) => {
@@ -147,12 +157,20 @@ impl Editor {
                 }
             }
             Edit::Args(args) => {
+                // no draft of them is left, and the same again are no edit
+                self.drafts
+                    .remove(id);
+                if self.pipeline.nodes[index].args == args {
+                    return;
+                }
                 self.forget(|node| node.id == id);
                 self.pipeline.nodes[index].args = args;
             }
             Edit::Toggle => layout::toggle(&mut nodes[index]),
             Edit::Delete => {
                 self.shown
+                    .remove(id);
+                self.drafts
                     .remove(id);
                 self.forget(|node| node.id == id);
                 self.pipeline
@@ -172,10 +190,12 @@ impl Editor {
             node,
             defs: &self.catalog.defs,
             block: self.block(&node.block),
-            nodes: &self.pipeline.nodes,
-            expressions: &self
-                .pipeline
-                .expressions,
+            pipeline: &self.pipeline,
+            registry: &self.registry,
+            known: &self.known,
+            draft: self
+                .drafts
+                .get(&node.id),
             is_output: self
                 .pipeline
                 .outputs
@@ -233,10 +253,13 @@ pub struct Card<'a> {
     defs: &'a Value,
     /// What the catalog says of its block, if there is such a block.
     block: Option<&'a Described>,
-    /// Every node of the pipeline, of which it may read the others.
-    nodes: &'a [Node],
-    /// The expressions by name, which its args pick from.
-    expressions: &'a Map<String, Value>,
+    /// The pipeline, of which it may read the other nodes and name the expressions and values.
+    pipeline: &'a Pipeline,
+    /// What say whether its block and a Check take args.
+    registry: &'a Registry,
+    known: &'a Known,
+    /// Its args as they are edited, if those are not taken yet.
+    draft: Option<&'a form::Draft>,
     is_output: bool,
     status: Status,
     found: Option<Result<&'a Vec<(String, DataType)>, &'a String>>,
@@ -309,18 +332,22 @@ impl<'a> Component<'a, Message> for Card<'a> {
                 return Some(Message::Gallery(self.node.id.clone(), show));
             }
             Event::Form(message) => {
-                let mut args = self
-                    .node
-                    .args
-                    .clone();
-                // the form may only show its value another way
-                let is_changed = state
+                let check = self.check();
+                let change = state
                     .form
-                    .update(message, &mut args);
-                if !is_changed {
-                    return None;
-                }
-                Edit::Args(args)
+                    .update(message, &self.node.args, self.draft, &*check);
+                let id = self.node.id.clone();
+                return match change {
+                    form::Change::Nothing => None,
+                    form::Change::Value(args) => Some(Message::Edit(id, Edit::Args(args))),
+                    // until its block and a Check take them, nothing runs and what it showed stays
+                    form::Change::Draft(draft) => Some(Message::Draft(id, draft)),
+                    // what is named is edited where it is named, for every node that names it
+                    form::Change::Named(name, at, value) => {
+                        let put = drawer::Message::Put(name, at, value);
+                        Some(Message::Drawer(put))
+                    }
+                };
             }
             Event::Edit(edit) => edit,
             Event::Table(Asked::Copy(text)) => return Some(Message::Copy(text)),
@@ -384,16 +411,20 @@ impl<'a> Component<'a, Message> for Card<'a> {
                     markdown::view(doc.items(), settings, self.theme.clone()).map(|_| Event::Link)
                 });
                 // an expression is picked by its name, and edited in the drawer
-                let named = Expressions::Named(self.expressions, &self.columns);
-                let form = form::view(
-                    &state.form,
-                    self.defs,
-                    schema,
-                    &node.args,
-                    named,
+                let (value, held) = form::Draft::shown(self.draft, &node.args);
+                let form = Form {
+                    state: &state.form,
+                    defs: self.defs,
+                    pipeline: self.pipeline,
+                    columns: &self.columns,
+                    expressions: Expressions::Named,
+                    check: &self.check(),
+                    value,
+                    held,
                     names,
-                    self.help,
-                )
+                    help: self.help,
+                }
+                .view(schema)
                 .map(Event::Form);
                 column![
                     head,
@@ -437,6 +468,20 @@ impl<'a> Component<'a, Message> for Card<'a> {
 }
 
 impl<'a> Card<'a> {
+    /// What says whether args are taken: by its block, and by a Check of it on what it reads.
+    pub(super) fn check(&self) -> form::Check<'a> {
+        let (registry, pipeline, known, node) =
+            (self.registry, self.pipeline, self.known, self.node);
+        Rc::new(move |args| {
+            registry
+                .resolved(&node.block, args, pipeline)
+                .map_err(|e| form::line(&e))?;
+            known
+                .refuses(registry, pipeline, node, args)
+                .map_or(Ok(()), Err)
+        })
+    }
+
     /// The names of the frames that its block reads, in order.
     fn reads(&self) -> &'static [&'static str] {
         self.block
@@ -477,7 +522,8 @@ impl<'a> Card<'a> {
             self.help.of(
                 leave(
                     name_field("id", typed, &self.node.id, |id| {
-                        self.nodes
+                        self.pipeline
+                            .nodes
                             .iter()
                             .any(|node| node.id == id)
                     })
@@ -526,6 +572,7 @@ impl<'a> Card<'a> {
                 };
                 let wired = is_open.then(|| {
                     let others: Vec<&str> = self
+                        .pipeline
                         .nodes
                         .iter()
                         .map(|other| other.id.as_str())

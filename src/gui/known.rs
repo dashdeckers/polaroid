@@ -2,6 +2,8 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
+use serde_json::Value;
+
 use super::Columns;
 use super::gallery::Gallery;
 use crate::polars::prelude::{DataFrame, DataType, Field, Schema};
@@ -160,6 +162,64 @@ impl Known {
                 Some((id.clone(), DataFrame::empty_with_schema(&schema)))
             })
             .collect()
+    }
+
+    /// Why a Check would refuse `node` with `args`, built alone on the columns found of its inputs.
+    pub fn refuses(
+        &self,
+        registry: &Registry,
+        pipeline: &Pipeline,
+        node: &Node,
+        args: &Value,
+    ) -> Option<String> {
+        // a node that reads no other reads the disk, which is left to a Check
+        if node
+            .inputs
+            .is_empty()
+        {
+            return None;
+        }
+        let found = self.found();
+        let read: HashMap<String, DataFrame> = node
+            .inputs
+            .iter()
+            .map(|input| {
+                Some((
+                    input.clone(),
+                    found
+                        .get(input)?
+                        .clone(),
+                ))
+            })
+            .collect::<Option<_>>()?;
+        // the nodes it reads stand for themselves, and it is built alone on them
+        let nodes = pipeline
+            .nodes
+            .iter()
+            .filter(|other| read.contains_key(&other.id))
+            .cloned()
+            .chain([Node {
+                args: args.clone(),
+                ..node.clone()
+            }])
+            .collect();
+        let alone = Pipeline {
+            nodes,
+            outputs: Vec::new(),
+            ..pipeline.clone()
+        };
+        let schemas = alone
+            .schemas_from(registry, &read)
+            .ok()?;
+        let why = schemas
+            .get(node.id.as_str())?
+            .as_ref()
+            .err()?;
+        // the first line says it, before the plan that failed
+        why.to_string()
+            .lines()
+            .next()
+            .map(str::to_owned)
     }
 
     /// Lets go of every frame that is saved, as if no Run had computed any node.

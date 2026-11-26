@@ -181,6 +181,8 @@ struct Editor {
     still: Duration,
     /// Which of the images of its frame the card of a node shows, by its id.
     shown: BTreeMap<String, gallery::State>,
+    /// The args of a node as they are edited, which are not taken yet, by its id.
+    drafts: BTreeMap<String, form::Draft>,
     drawer: Drawer,
     is_drawer_shown: bool,
     help: Help,
@@ -204,6 +206,8 @@ enum Message {
     Add(String, Point),
     CloseMenu,
     Edit(String, Edit),
+    /// The args of this node as they are edited wait to be taken.
+    Draft(String, form::Draft),
     /// Text to put on the clipboard.
     Copy(String),
     Save,
@@ -280,6 +284,7 @@ impl Editor {
             mode: Mode::Manual,
             still: STILL,
             shown: BTreeMap::new(),
+            drafts: BTreeMap::new(),
             is_drawer_shown: true,
             help: Help::default(),
             zoom: 1.0,
@@ -342,6 +347,11 @@ impl Editor {
                 if is_change {
                     return self.follow();
                 }
+            }
+            // a draft is no edit: nothing of it is saved or run
+            Message::Draft(id, draft) => {
+                self.drafts
+                    .insert(id, draft);
             }
             Message::Load => {
                 let file = dialog().pick_file();
@@ -435,12 +445,12 @@ impl Editor {
             Message::Drawer(message) => {
                 let change = self
                     .drawer
-                    .update(message, &mut self.pipeline);
+                    .update(message, &mut self.pipeline, &self.registry);
                 match change {
                     drawer::Change::Nothing => return Task::none(),
                     drawer::Change::Pipeline => {}
-                    // what is known of a node holds for the expressions it was computed with
-                    drawer::Change::Expression(name) => {
+                    // what is known of a node holds for what it named as it was computed
+                    drawer::Change::Named(name) => {
                         let users: Vec<String> = self
                             .pipeline
                             .users(&name)
@@ -667,6 +677,7 @@ impl Editor {
         self.path = path;
         self.pipeline = pipeline;
         self.known = Known::default();
+        self.drafts.clear();
         self.job = None;
         self.menu = None;
         self.is_dirty = is_dirty;
@@ -754,9 +765,6 @@ impl Editor {
     }
 
     fn view(&self) -> impl Widget<Message> {
-        let expressions = &self
-            .pipeline
-            .expressions;
         // every column that a Check found, for the expressions to name
         let ids = self
             .pipeline
@@ -768,7 +776,13 @@ impl Editor {
             .names(ids);
         let drawer = self
             .drawer
-            .view(&self.catalog.defs, expressions, &columns, self.help)
+            .view(
+                &self.catalog.defs,
+                &self.pipeline,
+                &self.registry,
+                &columns,
+                self.help,
+            )
             .map(Message::Drawer);
         let graph = stack![self.graph(), self.menu()];
         let problem = self
@@ -902,7 +916,8 @@ impl Editor {
                 button("Expressions")
                     .style(button::secondary)
                     .on_press(Message::ToggleDrawer),
-                "Shows or hides the drawer of expressions on the left. Drag its edge to resize it.",
+                "Shows or hides the drawer of expressions and values on the left. Drag its edge to \
+                 resize it.",
             ),
             help.of(
                 button("Help")

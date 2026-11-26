@@ -1,15 +1,22 @@
 //! A form for a JSON value, laid out by its JSON Schema; a null is a hole to be filled.
 
 mod chain;
+mod look;
+mod named;
+mod table;
 
-use iced::widget::{button, checkbox, column, container, row, text, text_input, tooltip};
-use iced::{Center, Element, Fill, Font, Function, Theme, Widget};
-use polaroid_iced::{handle, pick_list, width_of};
-use serde_json::{Map, Value, json};
+use std::rc::Rc;
+use std::sync::LazyLock;
 
-use super::{Help, NOTE, TEXT};
-use crate::schema::{blank, default, json_type, nudged, number, optional, resolve, variants};
-use crate::{marked, marker, methods};
+use iced::widget::{column, row};
+use iced::{Center, Element, Function, Widget};
+use serde_json::{Value, json};
+
+use self::look::{Face, GAP, field, fitted, pick, scrubbed, small, tick, told};
+pub use self::look::{Tone, aside, labelled, names, note, picked, told_at};
+use super::Help;
+use crate::schema::{blank, default, json_type, nudged, optional, read, resolve, variants};
+use crate::{Pipeline, methods, reference};
 
 /// What a form shows that its value does not hold.
 #[derive(Debug, Default)]
@@ -25,119 +32,150 @@ pub struct State {
 pub enum Message {
     /// Put a value at a JSON pointer.
     Put(String, Value),
-    /// Put the number that this text writes at a JSON pointer, or none if it writes none yet.
+    /// Put the number that this text writes at a JSON pointer, or none if it writes none.
     Type(String, String),
-    /// Take the array element at a JSON pointer away.
+    /// Take what is at a JSON pointer out of its list or table.
     Drop(String),
     /// What the chain of an expression in it asks for.
     Chain(chain::Message),
+    /// Put a value at a JSON pointer in what is named this in the pipeline.
+    Name(String, String, Value),
+}
+
+/// Whether the owner of a value takes it as it is edited, or why not in a line: the core says.
+pub type Check<'a> = Rc<dyn Fn(&Value) -> Result<(), String> + 'a>;
+
+/// A value as it is edited that its owner does not take yet.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Draft {
+    /// The value that it is an edit of, which it holds for no longer than that stays.
+    of: Value,
+    value: Value,
+    why: String,
+}
+
+impl Draft {
+    /// What a form shows of `value`: it as `draft` has it edited, and why that is not taken.
+    pub fn shown<'a>(
+        draft: Option<&'a Self>,
+        value: &'a Value,
+    ) -> (&'a Value, Option<&'a str>) {
+        match draft.filter(|draft| draft.of == *value) {
+            Some(draft) => (&draft.value, Some(&draft.why)),
+            None => (value, None),
+        }
+    }
+}
+
+/// What an update of a form leaves its owner to do.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Change {
+    Nothing,
+    /// The value is this now, and no draft of it is left.
+    Value(Value),
+    /// The value stays, and this edit of it waits until it is taken.
+    Draft(Draft),
+    /// What is named this in the pipeline holds this value at this pointer.
+    Named(String, String, Value),
 }
 
 impl State {
-    /// Does what `message` asks to `value`, and returns whether it changed.
+    /// Does what `message` asks to `value` as `draft` has it edited; `check` says if it is taken.
     pub fn update(
         &mut self,
         message: Message,
-        value: &mut Value,
-    ) -> bool {
+        value: &Value,
+        draft: Option<&Draft>,
+        check: &dyn Fn(&Value) -> Result<(), String>,
+    ) -> Change {
         // a number is being typed for as long as nothing else is done
         self.typing = None;
+        let (shown, _) = Draft::shown(draft, value);
+        let mut edited = shown.clone();
         match message {
-            Message::Put(at, new) => put(value, &at, Some(new)),
+            Message::Name(name, at, new) => return Change::Named(name, at, new),
+            Message::Put(at, new) => put(&mut edited, &at, Some(new)),
             Message::Type(at, typed) => {
-                let new = number(&typed).map_or(Value::Null, Value::from);
-                let is_changed = value
-                    .pointer(&at)
-                    .is_none_or(|old| *old != new);
-                put(value, &at, Some(new));
+                let new = read(&typed).map_or(Value::Null, Value::from);
+                put(&mut edited, &at, Some(new));
                 self.typing = Some((at, typed));
-                return is_changed;
             }
             Message::Drop(at) => {
-                put(value, &at, None);
-                // the later elements move down, away from what the chains under the array show
-                let array = at
+                put(&mut edited, &at, None);
+                // the later elements move down, away from what the chains under the list show
+                let list = at
                     .rsplit_once('/')
-                    .map_or("", |(array, _)| array);
+                    .map_or("", |(list, _)| list);
                 self.chain
-                    .relocate(array, None, "");
+                    .relocate(list, None, "");
             }
-            Message::Chain(message) => {
-                return self
-                    .chain
-                    .update(message, value);
-            }
+            Message::Chain(message) => self
+                .chain
+                .update(message, &mut edited),
         }
-        true
+        // the form may only show its value another way
+        if edited == *shown {
+            return Change::Nothing;
+        }
+        // its owner takes it once the core does, or if the core takes what it has no more
+        match check(&edited) {
+            Err(why) if edited != *value && check(value).is_ok() => Change::Draft(Draft {
+                of: value.clone(),
+                value: edited,
+                why,
+            }),
+            _ => Change::Value(edited),
+        }
     }
 }
 
 /// How a form shows the expressions in its value.
-#[derive(Clone, Copy)]
-pub enum Expressions<'a, 'c> {
-    /// Each is picked by its name from these, and is not edited here; these columns are read.
-    Named(&'a Map<String, Value>, &'c [String]),
-    /// Each is edited here as a chain of calls, which may name these columns.
-    Chained(&'c [String]),
-}
-
-impl<'c> Expressions<'_, 'c> {
-    /// The columns that are there to name.
-    fn columns(self) -> &'c [String] {
-        match self {
-            Self::Named(_, columns) | Self::Chained(columns) => columns,
-        }
-    }
-}
-
-/// The form for `value`, by `schema`.
-///
-/// The names of its arguments are in a column of the width `names` at the least.
-pub fn view<'a>(
-    state: &State,
-    defs: &'a Value,
-    schema: &'a Value,
-    value: &'a Value,
-    expressions: Expressions<'a, '_>,
-    names: f32,
-    help: Help,
-) -> impl Widget<Message> + use<'a> {
-    let form = Form {
-        state,
-        defs,
-        expressions,
-        names,
-        help,
-    };
-    form.value(schema, value, String::new())
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Expressions {
+    /// Each is picked by its name, and is not edited here.
+    Named,
+    /// Each is edited here as a chain of calls, which may have holes.
+    Chained,
 }
 
 /// A form as it is laid out: what every part of it is laid out with.
 #[derive(Clone, Copy)]
-struct Form<'a, 'c> {
-    state: &'c State,
-    defs: &'a Value,
-    expressions: Expressions<'a, 'c>,
+pub struct Form<'a, 'c> {
+    pub state: &'c State,
+    pub defs: &'a Value,
+    /// The pipeline, whose expressions and values a field may name.
+    pub pipeline: &'a Pipeline,
+    /// The columns that are there to name: none until a Check found them.
+    pub columns: &'c [String],
+    pub expressions: Expressions,
+    /// What says whether the whole value is taken, as with a name put in it.
+    pub check: &'c Check<'a>,
+    /// The whole value that it shows, and why that is not taken if it is a draft.
+    pub value: &'a Value,
+    pub held: Option<&'a str>,
     /// The least width of the column of the names of the arguments.
-    names: f32,
-    help: Help,
+    pub names: f32,
+    pub help: Help,
 }
 
-/// What the handle beside a number says it is for.
-const DRAG: &str = "Drag up for more and down for less; faster moves it by more.";
+/// Why there are no columns to pick from.
+const UNKNOWN: &str = "The columns are known once a Check found them: Check, then pick one.";
 
-/// The height of a line that holds a field.
-const LINE: f32 = 26.0;
+/// The kinds of plain JSON that a value of any is picked as.
+const KINDS: [&str; 5] = [
+    "number", "text", "flag", "list", "table",
+];
 
-/// How a value stands to what its schema asks for, which tells how it is shown.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Tone {
-    Given,
-    /// It is the default, and shown in grey.
-    Default,
-    /// There is none where there has to be one, and it is shown in red.
-    Missing,
-}
+/// The schemas of a text, a number, a whole number and a flag, and that of any JSON.
+static PLAIN: LazyLock<[Value; 5]> = LazyLock::new(|| {
+    [
+        json!({ "type": "string" }),
+        json!({ "type": "number" }),
+        json!({ "type": "integer" }),
+        json!({ "type": "boolean" }),
+        Value::Null,
+    ]
+});
 
 impl Tone {
     /// The tone of `value`, by the default of its schema and whether that takes a null.
@@ -155,242 +193,147 @@ impl Tone {
     }
 }
 
-/// The style of a field to type in, by the tone of its value.
-fn typed_in(tone: Tone) -> impl Fn(&Theme, text_input::Status) -> text_input::Style {
-    move |theme, status| {
-        let palette = theme.palette();
-        let mut style = text_input::default(theme, status);
-        match tone {
-            Tone::Given => {}
-            Tone::Default => style.value = style.placeholder,
-            Tone::Missing => {
-                style.border.color = palette
-                    .danger
-                    .base
-                    .color
-            }
-        }
-        style
-    }
-}
-
-/// The style of a box to tick, by the tone of whether it is ticked.
-fn ticked(
-    tone: Tone,
-    is_ticked: bool,
-) -> impl Fn(&Theme, checkbox::Status) -> checkbox::Style {
-    move |theme, status| {
-        let palette = theme.palette();
-        let mut style = checkbox::primary(theme, status);
-        let grey = palette
-            .background
-            .strong
-            .color;
-        match tone {
-            Tone::Given => {}
-            Tone::Default => {
-                style.border.color = grey;
-                if is_ticked {
-                    style.background = grey.into();
-                }
-            }
-            Tone::Missing => {
-                style.border.color = palette
-                    .danger
-                    .base
-                    .color
-            }
-        }
-        style
-    }
-}
-
-/// The style of a list to pick from, by the tone of what is picked.
-pub fn picked(tone: Tone) -> impl Fn(&Theme, pick_list::Status) -> pick_list::Style {
-    move |theme, status| {
-        let palette = theme.palette();
-        let mut style = pick_list::default(theme, status);
-        match tone {
-            Tone::Given => {}
-            Tone::Default => style.text_color = style.placeholder_color,
-            Tone::Missing => {
-                style.border.color = palette
-                    .danger
-                    .base
-                    .color
-            }
-        }
-        style
-    }
-}
-
-/// The width of a column that holds the widest of the names of some arguments.
-pub fn names<'a>(names: impl IntoIterator<Item = &'a str>) -> f32 {
-    names
-        .into_iter()
-        .map(|name| width_of(name, TEXT, Font::DEFAULT))
-        .fold(0.0, f32::max)
-}
-
-/// A description as its paragraphs, each on one line for the text to wrap as it fits.
-fn flowed(described: &str) -> String {
-    described
-        .split("\n\n")
-        .map(|paragraph| paragraph.replace('\n', " "))
-        .collect::<Vec<_>>()
-        .join("\n\n")
-}
-
-/// `content`, which tells what Polars `says` of it when hovered, if it says anything.
-pub fn told<'a, Message: 'a>(
-    content: impl Widget<Message> + 'a,
-    says: Option<String>,
-) -> Element<'a, Message> {
-    told_at(content, says, tooltip::Position::Top)
-}
-
-/// `content`, which tells what is said of it when hovered, on this side of it.
-pub fn told_at<'a, Message: 'a>(
-    content: impl Widget<Message> + 'a,
-    says: Option<String>,
-    side: tooltip::Position,
-) -> Element<'a, Message> {
-    let Some(says) = says else {
-        return content.boxed();
-    };
-    let says = container(text(says).size(NOTE))
-        .width(280)
-        .padding(6)
-        .style(container::bordered_box);
-    tooltip(content, says)
-        .position(side)
-        .boxed()
-}
-
-/// An argument on a line: its name in a column of the width `names`, then its value.
-///
-/// Its name tells what it is for when hovered.
-pub fn labelled<'a, Message: 'a>(
-    name: &'a str,
-    names: f32,
-    described: Option<&'a str>,
-    value: impl Widget<Message> + 'a,
-) -> Element<'a, Message> {
-    let name = text(name)
-        .size(TEXT)
-        .wrapping(text::Wrapping::None)
-        .ellipsis(text::Ellipsis::End);
-    // level with the first line of a value of many, as a list is
-    let name = container(name)
-        .width(names)
-        .height(LINE)
-        .align_y(Center);
-    let name = told(name, described.map(flowed));
-    row![name, value]
-        .spacing(8)
-        .boxed()
-}
-
-/// The expression at the pointer `at` as the name of one of `named`, to pick another by.
-fn name<'a>(
-    named: &'a Map<String, Value>,
-    value: &'a Value,
-    at: String,
-    tone: Tone,
-) -> Element<'a, Message> {
-    let name = marked(value);
-    let names: Vec<&str> = named
-        .keys()
-        .map(String::as_str)
-        .collect();
-    let written = match name.and_then(|name| named.get(name)) {
-        Some(expression) => methods::text(expression),
-        // one that has no name is written as it is, until a name takes its place
-        None if name.is_none() && !value.is_null() => methods::text(value),
-        None => String::new(),
-    };
-    row![
-        pick_list(name, names, ToString::to_string)
-            .on_select(move |name: &str| Message::Put(at.clone(), marker(name)))
-            .placeholder("expression…")
-            .text_size(TEXT)
-            .padding(4)
-            .style(picked(tone))
-            .stepped(),
-        // in what room is left, cut short
-        text(written)
-            .size(NOTE)
-            .width(Fill)
-            .wrapping(text::Wrapping::None)
-            .ellipsis(text::Ellipsis::End)
-            .style(text::secondary),
-    ]
-    .spacing(8)
-    .align_y(Center)
-    .boxed()
-}
-
-/// The name of a column at the pointer `at`, to pick another of `columns` by.
-fn column_of<'a>(
-    columns: &[String],
-    value: &Value,
-    at: String,
-    tone: Tone,
-) -> Element<'a, Message> {
-    // one that is not among them is shown all the same
-    let name = value
-        .as_str()
-        .map(str::to_owned);
-    pick_list(name, columns.to_vec(), String::clone)
-        .on_select(move |name: String| Message::Put(at.clone(), name.into()))
-        .placeholder("column…")
-        .text_size(TEXT)
-        .padding(4)
-        .style(picked(tone))
-        .stepped()
-}
-
 impl<'a> Form<'a, '_> {
-    /// The form for the value at the pointer `at`: an expression as a chain, a nullable to clear.
+    /// The form for its value, by `schema`, over why that is not taken if no field says it.
+    pub fn view(
+        self,
+        schema: &'a Value,
+    ) -> impl Widget<Message> + use<'a> {
+        let fields = resolve(self.defs, schema)["properties"].as_object();
+        // a field that it names in backticks says it
+        let is_said = |why: &str| {
+            fields
+                .into_iter()
+                .flatten()
+                .any(|(name, _)| why.contains(&format!("`{name}`")))
+        };
+        let waits = self
+            .held
+            .filter(|why| !is_said(why))
+            .map(|why| note(format!("Not applied until it is whole: {why}")));
+        column![
+            self.value(schema, self.value, String::new()),
+            waits
+        ]
+        .spacing(GAP)
+    }
+
+    /// The form for the value at the pointer `at`: a name, an expression, or by its schema.
     fn value(
         self,
         schema: &'a Value,
         value: &'a Value,
         at: String,
     ) -> Element<'a, Message> {
+        self.placed(schema, value, at, false)
+    }
+
+    /// As [`Self::value`]; any JSON `in_row` of a list or table is taken out there, not cleared.
+    fn placed(
+        self,
+        schema: &'a Value,
+        value: &'a Value,
+        at: String,
+        in_row: bool,
+    ) -> Element<'a, Message> {
         // a default beside a `$ref` is the field's own
         let default = schema.get("default");
         let schema = resolve(self.defs, schema);
         let default = default.or(schema.get("default"));
         let inner = optional(schema).map(|inner| resolve(self.defs, inner));
-        let clear = (inner.is_some() && !value.is_null()).then(|| {
+        let shown = inner.unwrap_or(schema);
+        // any JSON may be none, and a field left out is its default, shown in grey
+        let is_free = is_any(shown);
+        let is_nullable = inner.is_some() || is_free;
+        let value = match (value, default) {
+            (Value::Null, Some(default)) if !is_nullable => default,
+            _ => value,
+        };
+        let is_named = reference(value).is_some();
+        let can_clear = is_named || is_nullable && !(is_free && in_row);
+        let clear = (can_clear && !value.is_null()).then(|| {
             let clear = small("×", Message::Put(at.clone(), Value::Null));
             self.help
-                .of(clear, "Clears the value: it may be left out.")
+                .of(clear, "Clears the value, to give another or leave it out.")
         });
-        let tone = Tone::of(value, default, inner.is_some());
+        // why the whole is not taken is said at the field that it names in backticks
+        let why = self
+            .held
+            .filter(|why| !at.is_empty() && why.contains(&format!("`{}`", &at[1..])));
+        let tone = match why {
+            Some(_) => Tone::Missing,
+            None => Tone::of(value, default, is_nullable),
+        };
 
-        let shown = inner.unwrap_or(schema);
         // a schema that resolves to the one definition of an expression is that very value
         let is_expression = std::ptr::eq(shown, &self.defs["Expr"]);
-        // and to that of the name of a column one of the columns, where they are known
-        let columns = self
-            .expressions
-            .columns();
-        let is_column = std::ptr::eq(shown, &self.defs["ColumnName"]) && !columns.is_empty();
-        let form = match (is_expression, self.expressions) {
-            (true, Expressions::Named(named, _)) => name(named, value, at, tone),
-            (true, Expressions::Chained(_)) => self.chain(value, at),
-            (false, _) if is_column => column_of(columns, value, at, tone),
-            (false, _) => self.plain(shown, value, at, tone),
+        let is_column = std::ptr::eq(shown, &self.defs["ColumnName"]);
+        let named = |placeholder| self.names(shown, value, &at, placeholder, tone);
+        let form = match self.expressions {
+            _ if is_named => self.named(shown, value, at.clone(), tone),
+            Expressions::Chained if is_expression => self.chain(value, at.clone()),
+            Expressions::Named if is_expression => {
+                // one that has no name is written as it is, until a name takes its place
+                let written = (!value.is_null()).then(|| aside(methods::text(value)));
+                row![named("expression…"), written]
+                    .spacing(8)
+                    .align_y(Center)
+                    .boxed()
+            }
+            // the whole of what a form is for is not a name, unless it is any JSON
+            _ if at.is_empty() && !is_free => self.plain(shown, value, at.clone(), tone),
+            _ => {
+                let field = match is_column {
+                    true => self.column(value, at.clone(), tone),
+                    false => self.plain(shown, value, at.clone(), tone),
+                };
+                // what can be cleared, or emptied as a list or a table, is named once it is
+                let is_given = match value {
+                    Value::Null => false,
+                    Value::Array(items) => !items.is_empty(),
+                    Value::Object(fields) => !fields.is_empty(),
+                    _ => is_nullable,
+                };
+                let named = (!is_given)
+                    .then(|| named("@…"))
+                    .flatten();
+                row![field, named]
+                    .spacing(GAP)
+                    .align_y(Center)
+                    .boxed()
+            }
         };
-        if inner.is_none() {
-            return form;
-        }
-        row![form, clear]
-            .spacing(5)
+        // the same widgets whatever it holds, so that what has the focus keeps it
+        row![form, clear, why.map(note)]
+            .spacing(GAP)
             .align_y(Center)
             .boxed()
+    }
+
+    /// The name of a column at the pointer `at`, to pick another of the columns that are read by.
+    fn column(
+        self,
+        value: &Value,
+        at: String,
+        tone: Tone,
+    ) -> Element<'a, Message> {
+        // one that is not among them is shown all the same
+        let name = value
+            .as_str()
+            .map(str::to_owned);
+        let columns = self
+            .columns
+            .to_vec();
+        let pick = pick(name, columns, String::clone, "column…", Face::Plain, tone)
+            .on_select(move |name: String| Message::Put(at.clone(), name.into()));
+        // none to pick from until a Check finds them, which it says
+        match self
+            .columns
+            .is_empty()
+        {
+            true => told(pick, Some(UNKNOWN.to_owned())),
+            false => pick.stepped(),
+        }
     }
 
     /// The form for a value by nothing but its schema, or the hole it leaves.
@@ -416,8 +359,25 @@ impl<'a> Form<'a, '_> {
             return self.variant(variants, value, at, tone);
         }
 
-        match json_type(schema) {
-            "object" => self.fields(schema, value, &at),
+        // any JSON is laid out as what it is, and a number being typed stays one
+        let kind = match (json_type(schema), value) {
+            ("", _)
+                if self
+                    .typing(&at)
+                    .is_some() =>
+            {
+                "number"
+            }
+            ("", Value::Bool(_)) => "boolean",
+            ("", Value::Number(_)) => "number",
+            ("", Value::String(_)) => "string",
+            ("", Value::Array(_)) => "array",
+            ("", Value::Object(_)) => "object",
+            (kind, _) => kind,
+        };
+        match kind {
+            "object" if schema["properties"].is_object() => self.fields(schema, value, &at),
+            "object" => self.table(&schema["additionalProperties"], value, &at),
             "array" => match schema["prefixItems"].as_array() {
                 Some(items) => row(items
                     .iter()
@@ -427,30 +387,44 @@ impl<'a> Form<'a, '_> {
                 .boxed(),
                 None => self.list(&schema["items"], value, &at),
             },
-            "boolean" => {
-                // none yet is an empty box, which a press ticks
-                let is_ticked = value
+            // none yet is an empty box, which a press ticks
+            "boolean" => tick(
+                value
                     .as_bool()
-                    .unwrap_or_default();
-                checkbox(is_ticked)
-                    .on_toggle(move |on| put(on.into()))
-                    .style(ticked(tone, is_ticked))
-                    .boxed()
-            }
+                    .unwrap_or_default(),
+                tone,
+                move |on| put(on.into()),
+            ),
             "integer" | "number" => self.typed(schema, value, at, tone),
-            "string" => text_input(
+            "string" => field(
                 "",
                 value
                     .as_str()
                     .unwrap_or_default(),
+                Face::Plain,
+                tone,
             )
             .on_input(move |typed| put(typed.into()))
-            .size(TEXT)
-            .padding(4)
-            .style(typed_in(tone))
             .boxed(),
-            // a shape the form does not know
-            _ => text(value.to_string()).boxed(),
+            // none of any JSON yet: its kind is picked, and it starts empty
+            _ => pick(
+                None,
+                KINDS.to_vec(),
+                ToString::to_string,
+                "value…",
+                Face::Plain,
+                tone,
+            )
+            .on_select(move |kind| {
+                put(match kind {
+                    "number" => json!(0),
+                    "text" => json!(""),
+                    "flag" => json!(false),
+                    "list" => json!([]),
+                    _ => json!({}),
+                })
+            })
+            .boxed(),
         }
     }
 
@@ -474,17 +448,14 @@ impl<'a> Form<'a, '_> {
                 None => value == name,
             });
         let put = Message::Put.with(at.clone());
-        let pick = pick_list(selected, variants, |(name, _)| name.to_string())
+        let worded = |(name, _): &(&str, Option<&Value>)| worded(name);
+        let pick = pick(selected, variants, worded, "pick…", Face::Plain, tone)
             .on_select(move |(name, payload)| {
                 put(match payload {
                     Some(payload) => json!({ name: default(defs, payload) }),
                     None => name.into(),
                 })
             })
-            .placeholder("pick…")
-            .text_size(TEXT)
-            .padding(4)
-            .style(picked(tone))
             .stepped();
 
         match selected {
@@ -492,7 +463,7 @@ impl<'a> Form<'a, '_> {
                 pick,
                 self.value(payload, &value[name], format!("{at}/{name}"))
             ]
-            .spacing(5)
+            .spacing(GAP)
             .boxed(),
             _ => pick,
         }
@@ -522,11 +493,11 @@ impl<'a> Form<'a, '_> {
             let field = nested.value(field, &value[name], format!("{at}/{name}"));
             labelled(name, wide, described, field)
         }))
-        .spacing(5)
+        .spacing(GAP)
         .boxed()
     }
 
-    /// The elements of an array of any length, each to take away, over a button to add one.
+    /// The elements of a list of any length, each to take away, over a button to add one.
     fn list(
         self,
         items: &'a Value,
@@ -549,9 +520,9 @@ impl<'a> Form<'a, '_> {
                         small("×", Message::Drop(at.clone())),
                         "Takes this one out of the list."
                     ),
-                    self.value(items, element, at)
+                    self.placed(items, element, at, true)
                 ]
-                .spacing(5)
+                .spacing(GAP)
                 .boxed()
             });
         column(lines)
@@ -559,13 +530,23 @@ impl<'a> Form<'a, '_> {
                 self.help
                     .of(small("+", add), "Adds one to the list."),
             )
-            .spacing(5)
+            .spacing(GAP)
             .boxed()
     }
 
+    /// The text of the number that is being typed at the pointer `at`, if one is.
+    fn typing(
+        self,
+        at: &str,
+    ) -> Option<String> {
+        self.state
+            .typing
+            .as_ref()
+            .filter(|(pointer, _)| pointer == at)
+            .map(|(_, typed)| typed.clone())
+    }
+
     /// A field for a number: as it is being typed there, or else as the number that it is.
-    ///
-    /// It is as wide as its text, beside a handle that moves the number as a slider would.
     fn typed(
         self,
         schema: &'a Value,
@@ -573,15 +554,10 @@ impl<'a> Form<'a, '_> {
         at: String,
         tone: Tone,
     ) -> Element<'a, Message> {
-        let typing = self
-            .state
-            .typing
-            .as_ref()
-            .filter(|(pointer, _)| *pointer == at)
-            .map(|(_, typed)| typed.clone());
+        let typing = self.typing(&at);
         // text that writes no number is none, and shown as one that is missing
         let tone = match &typing {
-            Some(typed) if !typed.is_empty() && number(typed).is_none() => Tone::Missing,
+            Some(typed) if !typed.is_empty() && read(typed).is_none() => Tone::Missing,
             _ => tone,
         };
         let typed = typing.unwrap_or_else(|| match value {
@@ -589,35 +565,63 @@ impl<'a> Form<'a, '_> {
             Value::Null => String::new(),
             number => number.to_string(),
         });
-        let width = fitted(&typed, TEXT);
-        let field = text_input("", typed)
-            .on_input(Message::Type.with(at.clone()))
-            .width(width)
-            .size(TEXT)
-            .padding(4)
-            .style(typed_in(tone));
+        // as wide as its text, beside a handle that moves the number as a slider would
+        let field = fitted("", typed, Face::Plain, tone).on_input(Message::Type.with(at.clone()));
+        let schema = stepped(schema, value);
         let moved = move |steps| Message::Put(at.clone(), nudged(schema, value, steps));
-        row![
-            field,
-            self.help
-                .of(handle().on_scrub(moved), DRAG)
-        ]
-        .spacing(2)
-        .align_y(Center)
-        .boxed()
+        scrubbed(field, Some(moved), self.help)
     }
 }
 
-/// The width of a field to type in that holds `typed` at this size, with room for a few more.
-fn fitted(
-    typed: &str,
-    size: f32,
-) -> f32 {
-    (width_of(typed, size, Font::DEFAULT) + 24.0).max(48.0)
+/// Whether `schema`, with its `$ref` followed, takes any JSON.
+fn is_any(schema: &Value) -> bool {
+    json_type(schema).is_empty() && variants(schema).is_empty()
 }
 
-/// Puts `new` at the pointer `at`, or removes the element there; a missing field or end is added.
-fn put(
+/// The schema that a number is moved by: that of its field, or of any JSON what the number is.
+fn stepped<'a>(
+    schema: &'a Value,
+    number: &Value,
+) -> &'a Value {
+    match (json_type(schema), number.is_f64()) {
+        ("integer" | "number", _) => schema,
+        (_, true) => &PLAIN[1],
+        (_, false) => &PLAIN[2],
+    }
+}
+
+/// The name of a variant in lower case words, however it is written: `TopRight` as `top right`.
+fn worded(name: &str) -> String {
+    let mut worded = String::new();
+    for (i, letter) in name
+        .chars()
+        .enumerate()
+    {
+        if letter.is_uppercase() && i > 0 {
+            worded.push(' ');
+        }
+        worded.extend(letter.to_lowercase());
+    }
+    worded
+}
+
+/// A key as a part of a JSON pointer.
+fn escaped(key: &str) -> String {
+    key.replace('~', "~0")
+        .replace('/', "~1")
+}
+
+/// Why something is refused, in the first line that says it.
+pub fn line(why: &impl std::fmt::Display) -> String {
+    why.to_string()
+        .lines()
+        .next()
+        .unwrap_or_default()
+        .to_owned()
+}
+
+/// Puts `new` at the pointer `at`, or takes out what is there; what holds it is made if missing.
+pub fn put(
     root: &mut Value,
     at: &str,
     new: Option<Value>,
@@ -626,10 +630,26 @@ fn put(
         *root = new.unwrap_or_default();
         return;
     };
+    let key = key
+        .replace("~1", "/")
+        .replace("~0", "~");
+    let is_missing = root
+        .pointer(parent)
+        .is_none_or(Value::is_null);
+    if is_missing && new.is_some() {
+        let empty = match key.parse::<usize>() {
+            Ok(_) => json!([]),
+            Err(_) => json!({}),
+        };
+        put(root, parent, Some(empty));
+    }
 
     match (root.pointer_mut(parent), new) {
         (Some(Value::Object(fields)), Some(new)) => {
-            fields.insert(key.to_owned(), new);
+            fields.insert(key, new);
+        }
+        (Some(Value::Object(fields)), None) => {
+            fields.shift_remove(&key);
         }
         (Some(Value::Array(items)), new) => {
             if let Ok(index) = key.parse::<usize>()
@@ -644,16 +664,6 @@ fn put(
         }
         _ => {}
     }
-}
-
-fn small(
-    label: &str,
-    message: Message,
-) -> impl Widget<Message> {
-    button(label)
-        .padding([5, 8])
-        .style(button::text)
-        .on_press(message)
 }
 
 #[cfg(test)]

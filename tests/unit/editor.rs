@@ -590,7 +590,7 @@ fn an_expression_is_renamed_edited_and_deleted_for_the_nodes_that_use_it() {
         let _ = editor.update(Message::Checked(Ok(checks)));
     };
 
-    drawer(&mut editor, drawer::Message::New);
+    drawer(&mut editor, drawer::Message::New(crate::Kind::Expression));
     drawer(
         &mut editor,
         drawer::Message::Name("expression_1".to_owned(), "few".to_owned()),
@@ -678,7 +678,7 @@ fn a_card_picks_an_expression_by_its_name() {
     let _ = editor.update(Message::ToggleDrawer);
     let mut ui = simulator(editor.view());
     assert!(
-        ui.find("large")
+        ui.find("@large")
             .is_ok()
     );
     assert!(
@@ -832,7 +832,7 @@ fn a_name_is_marked_while_what_is_typed_for_it_is_another() {
     let drawer = |editor: &mut Editor, message| {
         let _ = editor.update(Message::Drawer(message));
     };
-    drawer(&mut editor, drawer::Message::New);
+    drawer(&mut editor, drawer::Message::New(crate::Kind::Expression));
     let name = || "expression_1".to_owned();
     drawer(&mut editor, drawer::Message::Name(name(), "few".to_owned()));
     simulator(editor.view())
@@ -847,7 +847,7 @@ fn a_name_is_marked_while_what_is_typed_for_it_is_another() {
     );
 
     // one that is taken stays typed on Enter, until its field is left
-    drawer(&mut editor, drawer::Message::New);
+    drawer(&mut editor, drawer::Message::New(crate::Kind::Expression));
     drawer(&mut editor, drawer::Message::Name(name(), "few".to_owned()));
     drawer(&mut editor, drawer::Message::Rename(name()));
     let shows_its_name = |editor: &Editor| {
@@ -1037,5 +1037,243 @@ fn a_check_that_follows_a_change_looks_at_the_nodes_alone_whose_columns_are_not_
             .keys()
             .collect::<Vec<_>>(),
         ["n0"]
+    );
+}
+
+/// All that was asked of a simulator.
+fn asked(ui: iced_test::Simulator<'_, Message>) -> Vec<Message> {
+    ui.into_messages()
+        .collect()
+}
+
+#[test]
+fn args_that_their_block_does_not_take_wait_as_a_draft_on_the_card() {
+    use iced::keyboard::key::Named;
+
+    let mut editor = chain(2);
+    let _ = editor.update(Message::Edit("n1".to_owned(), Edit::Toggle));
+    let checks = ["n0", "n1"]
+        .map(|id| (id.to_owned(), Ok(vec![])))
+        .into();
+    let _ = editor.update(Message::Checked(Ok(checks)));
+    let n = |editor: &Editor| {
+        editor
+            .pipeline
+            .nodes[1]
+            .args["n"]
+            .clone()
+    };
+
+    // its number erased is none, which a limit does not take: the node keeps what it has
+    let mut ui = simulator(editor.view());
+    ui.click("5")
+        .unwrap();
+    ui.tap_key(Named::End);
+    ui.tap_key(Named::Backspace);
+    for message in asked(ui) {
+        let _ = editor.update(message);
+    }
+    assert_eq!(n(&editor), 5);
+    assert!(
+        editor
+            .drafts
+            .contains_key("n1")
+    );
+    // and nothing is forgotten of what was found
+    assert_eq!(
+        status(&editor),
+        [
+            Status::Checked,
+            Status::Checked
+        ]
+    );
+    assert!(
+        simulator(editor.view())
+            .find("5")
+            .is_err()
+    );
+
+    // another typed in its place is taken, and no draft is left
+    let _ = editor.update(Message::Edit(
+        "n1".to_owned(),
+        Edit::Args(serde_json::json!({ "n": 7 })),
+    ));
+    assert_eq!(n(&editor), 7);
+    assert!(
+        editor
+            .drafts
+            .is_empty()
+    );
+    assert_eq!(
+        status(&editor),
+        [
+            Status::Checked,
+            Status::Unknown
+        ]
+    );
+}
+
+#[test]
+fn a_card_offers_no_name_that_a_check_of_its_node_would_refuse() {
+    use crate::polars::prelude::{col, lit};
+
+    let mut editor = chain(1);
+    let named = |name: &str| serde_json::to_value(col(name).gt(lit(1))).unwrap();
+    editor
+        .pipeline
+        .expressions
+        .extend([
+            ("good".to_owned(), named("a")),
+            ("bad".to_owned(), named("nope")),
+        ]);
+    let _ = editor.update(Message::Add("filter".to_owned(), Point::new(300.0, 20.0)));
+    let filter = || "filter_1".to_owned();
+    let _ = editor.update(Message::Edit(filter(), Edit::Wire(0, "n0".to_owned())));
+    let good = serde_json::json!({ "predicates": [crate::marker("good")] });
+    let bad = serde_json::json!({ "predicates": [crate::marker("bad")] });
+    let _ = editor.update(Message::Edit(filter(), Edit::Args(good.clone())));
+    let _ = editor.update(Message::Edit(filter(), Edit::Toggle));
+    let _ = editor.update(Message::ToggleDrawer);
+
+    // until the columns it reads are found, its block alone says what it takes
+    let check = |editor: &Editor, args: &Value| {
+        let card = editor.card(
+            &editor
+                .pipeline
+                .nodes[1],
+        );
+        (card.check())(args)
+    };
+    assert_eq!(check(&editor, &bad), Ok(()));
+
+    let columns = vec![("a".to_owned(), DataType::Int64)];
+    let checks = [
+        ("n0".to_owned(), Ok(columns.clone())),
+        (filter(), Ok(columns)),
+    ]
+    .into();
+    let _ = editor.update(Message::Checked(Ok(checks)));
+    assert_eq!(check(&editor, &good), Ok(()));
+    let why = check(&editor, &bad).expect_err("a column that is not there is refused");
+    assert!(why.contains("nope"), "{why}");
+
+    // so listed it is greyed, and a press on it picks nothing
+    let mut ui = simulator(editor.view());
+    ui.click("@good")
+        .unwrap();
+    ui.click("@bad")
+        .unwrap();
+    assert_eq!(
+        ui.into_messages()
+            .count(),
+        0
+    );
+}
+
+#[test]
+fn a_value_is_named_in_the_drawer_and_moved_from_the_card_that_names_it() {
+    let mut editor = chain(2);
+    let drawer = |editor: &mut Editor, message: drawer::Message| {
+        let _ = editor.update(Message::Drawer(message));
+    };
+    let value = |editor: &Editor| {
+        editor
+            .pipeline
+            .values["value_1"]
+            .clone()
+    };
+    drawer(&mut editor, drawer::Message::New(crate::Kind::Value));
+    assert_eq!(value(&editor), Value::Null);
+
+    // none yet, its kind is picked in the drawer, where it is laid open
+    let mut ui = simulator(editor.view());
+    ui.click("value…")
+        .unwrap();
+    ui.click("number")
+        .unwrap();
+    for message in asked(ui) {
+        let _ = editor.update(message);
+    }
+    assert_eq!(value(&editor), 0);
+
+    // a card that names it moves it where it is named, and what was found of the node is let go
+    let named = serde_json::json!({ "n": { "$value": "value_1" } });
+    let _ = editor.update(Message::Edit("n1".to_owned(), Edit::Args(named)));
+    let _ = editor.update(Message::Edit("n1".to_owned(), Edit::Toggle));
+    let checks = ["n0", "n1"]
+        .map(|id| (id.to_owned(), Ok(vec![])))
+        .into();
+    let _ = editor.update(Message::Checked(Ok(checks)));
+    let put = drawer::Message::Put("value_1".to_owned(), String::new(), 3.into());
+    drawer(&mut editor, put);
+    assert_eq!(value(&editor), 3);
+    assert_eq!(
+        status(&editor),
+        [
+            Status::Checked,
+            Status::Unknown
+        ]
+    );
+    let _ = editor.update(Message::ToggleDrawer);
+    assert!(
+        simulator(editor.view())
+            .find("@value_1")
+            .is_ok()
+    );
+
+    // edited to what the node that uses it does not take, it waits and the node has it as it was
+    let text = form::Message::Put(String::new(), "three".into());
+    drawer(
+        &mut editor,
+        drawer::Message::Form("value_1".to_owned(), text),
+    );
+    assert_eq!(value(&editor), 3);
+    let whole = form::Message::Put(String::new(), 4.into());
+    drawer(
+        &mut editor,
+        drawer::Message::Form("value_1".to_owned(), whole),
+    );
+    assert_eq!(value(&editor), 4);
+
+    // and it shares its names with the expressions
+    drawer(&mut editor, drawer::Message::New(crate::Kind::Expression));
+    let name = drawer::Message::Name("expression_1".to_owned(), "value_1".to_owned());
+    drawer(&mut editor, name);
+    drawer(
+        &mut editor,
+        drawer::Message::Rename("expression_1".to_owned()),
+    );
+    assert!(
+        editor
+            .pipeline
+            .expressions
+            .contains_key("expression_1")
+    );
+}
+
+#[test]
+fn an_expression_is_given_a_hole_in_the_drawer_which_says_what_it_takes() {
+    let mut editor = chain(1);
+    let _ = editor.update(Message::Drawer(drawer::Message::New(
+        crate::Kind::Expression,
+    )));
+    let mut ui = simulator(editor.view());
+    ui.click("@…")
+        .unwrap();
+    ui.click("$hole_1")
+        .unwrap();
+    for message in asked(ui) {
+        let _ = editor.update(message);
+    }
+    assert_eq!(
+        editor
+            .pipeline
+            .expressions["expression_1"],
+        serde_json::json!({ "$arg": "hole_1" })
+    );
+    assert!(
+        simulator(editor.view())
+            .find("takes hole_1: an expression")
+            .is_ok()
     );
 }
