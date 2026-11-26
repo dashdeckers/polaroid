@@ -313,18 +313,19 @@ pub fn lined<'a, Message: 'a>(content: impl Widget<Message> + 'a) -> Element<'a,
         .boxed()
 }
 
+/// A thin bar that scrolls what is too long for its box.
+pub fn bar() -> scrollable::Scrollbar {
+    scrollable::Scrollbar::new()
+        .width(theme::BAR)
+        .scroller_width(theme::BAR)
+}
+
 /// An error in its box, which can be selected to copy it; one long or wide is scrolled through.
 pub fn error<'a, Message: 'a>(message: &'a str) -> Element<'a, Message> {
     let written = text(message)
         .style(theme::text::error)
         .wrapping(text::Wrapping::None)
         .selectable(true);
-    let bar = || {
-        scrollable::Scrollbar::new()
-            .width(theme::BAR)
-            .scroller_width(theme::BAR)
-            .margin(0)
-    };
     let direction = scrollable::Direction::Both {
         vertical: bar(),
         horizontal: bar(),

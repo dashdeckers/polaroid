@@ -321,10 +321,7 @@ impl Drawer {
         ]
         .spacing(spacing::XL);
         // the scrollbar beside what is named, not over it
-        let bar = scrollable::Scrollbar::new()
-            .width(theme::BAR)
-            .scroller_width(theme::BAR)
-            .spacing(spacing::XS);
+        let bar = look::bar().spacing(spacing::XS);
         let named = scrollable(named)
             .direction(scrollable::Direction::Vertical(bar))
             .style(theme::scrollable::thin);

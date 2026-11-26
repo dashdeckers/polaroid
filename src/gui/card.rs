@@ -7,7 +7,7 @@ use iced::widget::canvas::{self, Frame, Path, Stroke};
 use iced::widget::{Component, canvas as draw, column, container, markdown, row, space, text};
 use iced::{Center, Fill, Point, Rectangle, Renderer, Size, Theme, Widget, mouse};
 use polaroid_iced::theme::{self, Scheme, Tone, control, font, icon, size, spacing, stroke};
-use polaroid_iced::{Asked, Heading, leave, pick_list, width_of};
+use polaroid_iced::{Asked, Heading, leave, width_of};
 use serde_json::Value;
 
 use super::form::{Expressions, Form};
@@ -538,11 +538,17 @@ impl<'a> Card<'a> {
                         .map(|other| other.id.as_str())
                         .filter(|id| *id != node.id)
                         .collect();
-                    pick_list(source, others, ToString::to_string)
-                        .on_select(wire)
-                        .placeholder("unwired")
-                        .width(Fill)
-                        .style(theme::pick_list::toned(tone))
+                    let unwired = "unwired";
+                    look::pick(
+                        source,
+                        others,
+                        ToString::to_string,
+                        unwired,
+                        font::SANS,
+                        tone,
+                    )
+                    .on_select(wire)
+                    .width(Fill)
                 });
                 container(look::labelled(name, label_width, None, wired))
                     .id(anchor(slot))
