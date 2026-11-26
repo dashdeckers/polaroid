@@ -368,12 +368,14 @@ fn a_value_is_given_the_default_or_missing() {
 #[test]
 fn a_number_that_is_being_typed_is_shown_as_typed_and_put_as_far_as_it_goes() -> Result<(), Error> {
     let mut form = Shown::of("limit", json!({ "n": 1 }), Pipeline::default());
-    let typed = |text: &str| Message::Type("/n".to_owned(), text.to_owned());
+    let typed = |text: &str| Message::Type("/n".to_owned(), text.to_owned(), true);
 
     // on its way to a number it is the number so far, and is shown as it was typed
     assert_eq!(form.send(typed("1.")), Change::Nothing);
     simulator(form.view()).find("1.")?;
     assert_eq!(form.send(typed("15")), Change::Value(json!({ "n": 15 })));
+    // and with a point it is whole still, where whole numbers alone are taken
+    assert_eq!(form.send(typed("16.0")), Change::Value(json!({ "n": 16 })));
 
     // what else is done ends the typing, and the field shows the value again
     form.send(typed("15."));
@@ -390,7 +392,7 @@ fn a_number_that_is_being_typed_is_shown_as_typed_and_put_as_far_as_it_goes() ->
 #[test]
 fn an_edit_that_is_not_taken_waits_as_a_draft() {
     let mut form = Shown::of("limit", json!({ "n": 1 }), Pipeline::default());
-    let typed = |text: &str| Message::Type("/n".to_owned(), text.to_owned());
+    let typed = |text: &str| Message::Type("/n".to_owned(), text.to_owned(), true);
 
     // none where its block takes a number: the node keeps the one it has
     assert!(matches!(form.send(typed("")), Change::Draft(_)));
@@ -725,7 +727,7 @@ fn a_call_lays_out_a_line_for_each_hole_of_its_expression() -> Result<(), Error>
     ui.find("digits=")?;
 
     // a hole that stands where a number does is given one, typed in
-    let typed = Message::Type("/exprs/0/with/digits".to_owned(), "2".to_owned());
+    let typed = Message::Type("/exprs/0/with/digits".to_owned(), "2".to_owned(), false);
     let given = json!({ "exprs": [{ "$expr": "rounded", "with": { "digits": 2 } }] });
     assert_eq!(form.send(typed), Change::Value(given));
     simulator(form.view()).find("2")?;
@@ -824,8 +826,14 @@ fn any_json_is_laid_out_as_what_it_is() -> Result<(), Error> {
     }
     assert_eq!(form.value["lo"], 15);
 
+    // typed, it is whole as it is written: with a point it is not
+    let typed = |text: &str| Message::Type("/lo".to_owned(), text.to_owned(), false);
+    form.send(typed("1"));
+    assert!(form.value["lo"].is_i64());
+    form.send(typed("1.0"));
+    assert!(form.value["lo"].is_f64());
     // a number that is typed stays one while it is none
-    form.send(Message::Type("/lo".to_owned(), String::new()));
+    form.send(Message::Type("/lo".to_owned(), String::new(), false));
     simulator(form.view()).find(polaroid_iced::HANDLE)?;
     // and a key is another in its place
     let entries = table

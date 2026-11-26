@@ -49,8 +49,8 @@ pub struct State {
 pub enum Message {
     /// Put a value at a JSON pointer.
     Put(String, Value),
-    /// Put the number that this text writes at a JSON pointer, or none if it writes none.
-    Type(String, String),
+    /// Put the number that this text writes at a JSON pointer, whole if a whole one is asked for.
+    Type(String, String, bool),
     /// Hold this text as the key being typed for the entry at a JSON pointer: another has it.
     Key(String, String),
     /// Take what is at a JSON pointer out of its list or table.
@@ -153,8 +153,8 @@ impl State {
                     .relocate(&at, None, "");
                 put(&mut edited, &at, Some(new));
             }
-            Message::Type(at, typed) => {
-                let new = read(&typed, true).map_or(Value::Null, Value::from);
+            Message::Type(at, typed, is_whole) => {
+                let new = read(&typed, is_whole).map_or(Value::Null, Value::from);
                 put(&mut edited, &at, Some(new));
                 self.typing = Some((at, typed));
             }
@@ -667,8 +667,11 @@ impl<'a> Form<'a, '_> {
             Value::Null => String::new(),
             number => number.to_string(),
         });
-        // as wide as its text, beside a handle that moves the number as a slider would
-        let field = fitted("", typed, font::SANS, tone).on_input(Message::Type.with(at.clone()));
+        // as wide as its text; one written with a point is whole in a field of whole numbers
+        let is_whole = json_type(schema) == "integer";
+        let typed_at = at.clone();
+        let field = fitted("", typed, font::SANS, tone)
+            .on_input(move |typed| Message::Type(typed_at.clone(), typed, is_whole));
         let schema = stepped(schema, value);
         let moved = move |steps| Message::Put(at.clone(), nudged(schema, value, steps));
         scrubbed(field, Some(moved), self.help)
