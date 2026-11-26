@@ -525,10 +525,11 @@ impl<T: Clone + PartialEq, Message> Widget<Message, Theme, Renderer> for PickLis
         };
         let (font, size) = self.text(renderer);
         let bounds = layout.bounds();
-        // as wide as its widest option, and moved left for as much as the window cuts off
+        // as wide as its widest option and no wider than the window, and moved left to fit in it
         let width = bounds
             .width
-            .max(state.widest + self.padding.x() + SLACK);
+            .max(state.widest + self.padding.x() + SLACK)
+            .min(window.width);
         let mut position = layout.position() + translation;
         position.x = position
             .x
@@ -757,6 +758,7 @@ impl<T: Clone, Message> overlay::Overlay<Message, Theme, Renderer> for List<'_, 
                     (None, false) => style.text,
                 };
                 let option = (self.to_string)(&self.options[at]);
+                let taken = width_of(&option, self.size.0, self.font) + theme::menu::GAP;
                 let left = Point::new(row.x + self.padding.left, row.center_y());
                 renderer.fill_text(
                     line(option, row, text::Alignment::Default),
@@ -764,11 +766,15 @@ impl<T: Clone, Message> overlay::Overlay<Message, Theme, Renderer> for List<'_, 
                     color,
                     bounds,
                 );
-                // why it cannot be picked, at the end of its row
+                // why it cannot be picked, at the end of its row, in the room its option leaves
                 if let Some(why) = why {
                     let right = Point::new(row.x + row.width - self.padding.right, row.center_y());
+                    let room = Rectangle {
+                        width: (row.width - taken).max(self.padding.x()),
+                        ..row
+                    };
                     renderer.fill_text(
-                        line(why, row, text::Alignment::Right),
+                        line(why, room, text::Alignment::Right),
                         right,
                         style.aside,
                         bounds,

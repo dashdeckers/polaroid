@@ -207,3 +207,18 @@ fn a_long_list_opens_scrolled_to_what_is_selected() -> Result<(), Error> {
     assert_eq!(picked, ["option 71"]);
     Ok(())
 }
+
+#[test]
+fn an_open_list_is_no_wider_than_the_window() -> Result<(), Error> {
+    let wide = "wide ".repeat(300);
+    let list = pick_list(None, vec![wide.clone()], String::clone)
+        .placeholder("pick")
+        .on_select(|picked| picked);
+    let mut simulator = simulator(list);
+    simulator.click("pick")?;
+    let row = simulator
+        .find(wide.as_str())?
+        .bounds();
+    assert!(row.x >= 0.0 && row.x + row.width <= 1024.0, "{row:?}");
+    Ok(())
+}
