@@ -1,5 +1,6 @@
 //! The drawer of what a pipeline names: its expressions and values, each edited under its name.
 
+use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
@@ -351,12 +352,15 @@ fn check<'a>(
     registry: &'a Registry,
     name: &'a str,
 ) -> form::Check<'a> {
+    // one copy to try every edit in, made when the first is tried
+    let tried = RefCell::new(None);
     Rc::new(move |edited| {
-        let mut tried = pipeline.clone();
+        let mut tried = tried.borrow_mut();
+        let tried = tried.get_or_insert_with(|| pipeline.clone());
         let is_value = tried
             .values
             .contains_key(name);
-        holding(&mut tried, is_value).insert(name.to_owned(), edited.clone());
+        holding(tried, is_value).insert(name.to_owned(), edited.clone());
         if !is_value {
             tried
                 .holes(name)
@@ -369,7 +373,7 @@ fn check<'a>(
             .filter(|node| users.contains(&node.id.as_str()))
             .try_for_each(|node| {
                 registry
-                    .resolved(&node.block, &node.args, &tried)
+                    .resolved(&node.block, &node.args, tried)
                     .map(drop)
                     .map_err(|e| format!("{}: {}", node.id, form::line(&e)))
             })

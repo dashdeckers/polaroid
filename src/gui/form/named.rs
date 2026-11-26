@@ -98,7 +98,7 @@ impl<'a> Form<'a, '_> {
         };
         let (pipeline, root, check) = (self.pipeline, self.value, Rc::clone(self.check));
         let (put_at, tried_at) = (at.to_owned(), at.to_owned());
-        // each is asked of the core once, when the list opens
+        // each is asked of the core once for as long as this list stands
         let asked = RefCell::new(BTreeMap::new());
         let why = move |offer: &Offer| {
             let (label, named) = &**offer;
