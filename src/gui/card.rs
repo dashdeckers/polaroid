@@ -8,13 +8,13 @@ use iced::widget::{Component, canvas as draw, column, container, markdown, row, 
 use iced::{Center, Fill, Point, Rectangle, Renderer, Size, Theme, Widget, mouse};
 use polaroid_iced::theme::container::Ring;
 use polaroid_iced::theme::{self, Scheme, Tone, control, font, icon, size, spacing, stroke};
-use polaroid_iced::{Asked, Heading, leave, width_of};
+use polaroid_iced::{Asked, Heading, width_of};
 use serde_json::Value;
 
 use super::form::{Expressions, Form};
 use super::gallery::{self, Gallery};
 use super::known::{Known, Status};
-use super::look::{self, Help, cross, error, name_field, round, toggle};
+use super::look::{self, Help, cross, error, round, toggle};
 use super::{Editor, Message, drawer, form, layout};
 use crate::polars::prelude::{AnyValue, DataFrame, DataType};
 use crate::{Described, Node, Pipeline, Registry, schema};
@@ -238,20 +238,9 @@ pub struct Card<'a> {
     zoom: f32,
 }
 
-/// What a card shows that its node does not hold.
-#[derive(Default)]
-pub struct State {
-    form: form::State,
-    /// The id as it is being typed, until its field is left.
-    name: Option<String>,
-}
-
 #[derive(Debug, Clone)]
 pub enum Event {
-    Name(String),
-    Rename,
-    /// The field of the id lost the focus.
-    Leave,
+    Rename(String),
     Form(form::Message),
     Gallery(gallery::Message),
     Edit(Edit),
@@ -261,26 +250,17 @@ pub enum Event {
 }
 
 impl<'a> Component<'a, Message> for Card<'a> {
-    type State = State;
+    type State = form::State;
     type Event = Event;
 
     fn update(
         &self,
-        state: &mut State,
+        state: &mut form::State,
         event: Event,
         _renderer: &Renderer,
     ) -> Option<Message> {
         let edit = match event {
-            Event::Name(name) => {
-                state.name = Some(name);
-                return None;
-            }
-            // one that is refused stays typed
-            Event::Rename => Edit::Rename(state.name.clone()?),
-            Event::Leave => {
-                state.name = None;
-                return None;
-            }
+            Event::Rename(id) => Edit::Rename(id),
             Event::Gallery(message) => {
                 return Some(Message::Gallery(self.node.id.clone(), message));
             }
@@ -292,9 +272,7 @@ impl<'a> Component<'a, Message> for Card<'a> {
             }
             Event::Form(message) => {
                 let check = self.check();
-                let change = state
-                    .form
-                    .update(message, &self.node.args, self.draft, &*check);
+                let change = state.update(message, &self.node.args, self.draft, &*check);
                 let id = self.node.id.clone();
                 return match change {
                     form::Change::Nothing => None,
@@ -318,7 +296,7 @@ impl<'a> Component<'a, Message> for Card<'a> {
 
     fn view(
         &self,
-        state: &State,
+        state: &form::State,
     ) -> impl Widget<Event> + 'a {
         let node = self.node;
         let status = self.status;
@@ -328,18 +306,12 @@ impl<'a> Component<'a, Message> for Card<'a> {
             .map_or(&Value::Null, |block| &block.args);
         let schema = schema::resolve(self.defs, args);
 
-        let typed = state
-            .name
-            .as_deref();
-        let name = typed
-            .unwrap_or(&node.id)
-            .to_owned();
         // as wide as it was made, and as the line of its id with all of the id in view
         let made = match is_open {
             true => layout::size(node).width,
             false => layout::WIDTH,
         };
-        let width = made.max(around(width_of(&name, size::TITLE, font::SANS)));
+        let width = made.max(around(width_of(&node.id, size::TITLE, font::SANS)));
         // the names of all it is given in one column: the nodes it reads, then its args
         let args = schema["properties"]
             .as_object()
@@ -352,7 +324,7 @@ impl<'a> Component<'a, Message> for Card<'a> {
             .copied();
         let label_width = look::label_width(reads.chain(args));
 
-        let head = self.head(typed, is_open);
+        let head = self.head(is_open);
         let inputs = self.inputs(label_width, is_open);
         let wrong = match self.found {
             Some(Err(e)) => Some(error(e)),
@@ -377,7 +349,7 @@ impl<'a> Component<'a, Message> for Card<'a> {
                 // an expression is picked by its name, and edited in the drawer
                 let (value, held) = form::Draft::shown(self.draft, &node.args);
                 let form = Form {
-                    state: &state.form,
+                    state,
                     defs: self.defs,
                     pipeline: self.pipeline,
                     offers: &form::Offers::default(),
@@ -454,9 +426,9 @@ impl<'a> Card<'a> {
     /// The line of its id: room for the handle, its toggle, the small table, the id and the cross.
     fn head(
         &self,
-        typed: Option<&str>,
         is_open: bool,
     ) -> impl Widget<Event> + use<'a> {
+        let nodes = &self.pipeline.nodes;
         let save = match self.is_output {
             true => theme::button::filled,
             false => theme::button::icon,
@@ -482,16 +454,15 @@ impl<'a> Card<'a> {
                      and press Ctrl+C to copy them.",
             ),
             self.help.of(
-                leave(
-                    name_field("id", typed, &self.node.id, |id| {
-                        self.pipeline
-                            .nodes
+                look::name(
+                    "id",
+                    &self.node.id,
+                    move |id| {
+                        nodes
                             .iter()
                             .any(|node| node.id == id)
-                    })
-                    .on_input(Event::Name)
-                    .on_submit(Event::Rename),
-                    Event::Leave,
+                    },
+                    Event::Rename,
                 ),
                 "The id of the node. Type another and press Enter to rename it; the border \
                      is orange until then, and red while the id is empty or another node's. \

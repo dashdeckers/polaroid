@@ -6,12 +6,11 @@ use std::rc::Rc;
 
 use iced::widget::{column, container, row, scrollable, space, text};
 use iced::{Center, Element, Fill, Function, Widget};
-use polaroid_iced::leave;
 use polaroid_iced::theme::{self, Tone, font, size, spacing};
 use serde_json::{Map, Value};
 
 use super::form::{self, Expressions, Form};
-use super::look::{self, Help, add, cross, name_field, toggle};
+use super::look::{self, Help, add, cross, toggle};
 use crate::{Kind, Pipeline, Registry, methods};
 
 /// What the drawer shows of what a pipeline names, by the names.
@@ -25,8 +24,6 @@ pub struct Drawer {
 struct Section {
     is_open: bool,
     form: form::State,
-    /// The name as it is being typed, until its field is left.
-    name: Option<String>,
     /// It as it is edited, if the pipeline does not take that yet.
     draft: Option<form::Draft>,
 }
@@ -38,10 +35,8 @@ pub enum Message {
     New(Kind),
     /// Its editor is laid open, or closed if it is open.
     Toggle(String),
-    Name(String, String),
-    Rename(String),
-    /// The field of its name lost the focus.
-    Leave(String),
+    /// It is called this from now on, if the pipeline takes the name.
+    Rename(String, String),
     Form(String, form::Message),
     /// It holds this value at this pointer, as a card that names it moved a number of it.
     Put(String, String, Value),
@@ -85,35 +80,19 @@ impl Drawer {
                 section.is_open = !section.is_open;
                 Change::Nothing
             }
-            Message::Name(name, typed) => {
-                self.section(name)
-                    .name = Some(typed);
-                Change::Nothing
-            }
-            Message::Rename(old) => {
-                let typed = self
-                    .section(old.clone())
-                    .name
-                    .clone();
-                // one that is refused stays typed
-                let Some(new) = typed.filter(|new| pipeline.rename_named(&old, new)) else {
+            Message::Rename(old, new) => {
+                if !pipeline.rename_named(&old, &new) {
                     return Change::Nothing;
-                };
+                }
                 // what is shown of it goes along to its new name
-                if let Some(mut section) = self
+                if let Some(section) = self
                     .sections
                     .remove(&old)
                 {
-                    section.name = None;
                     self.sections
                         .insert(new, section);
                 }
                 Change::Pipeline
-            }
-            Message::Leave(name) => {
-                self.section(name)
-                    .name = None;
-                Change::Nothing
             }
             Message::Form(name, message) => {
                 let is_value = pipeline
@@ -211,23 +190,13 @@ impl Drawer {
                 .sections
                 .get(name);
             let is_open = section.is_some_and(|section| section.is_open);
-            let typed = section.and_then(|section| {
-                section
-                    .name
-                    .as_deref()
-            });
             let head = row![
                 help.of(
                     toggle(is_open, Message::Toggle(name.clone())),
                     "Lays it open to edit it, or closes it to what it is written as.",
                 ),
                 help.of(
-                    leave(
-                        name_field("name", typed, name, is_taken)
-                            .on_input(Message::Name.with(name.clone()))
-                            .on_submit(Message::Rename(name.clone())),
-                        Message::Leave(name.clone()),
-                    ),
+                    look::name("name", name, is_taken, Message::Rename.with(name.clone())),
                     "The name that cards and expressions use it by. Type another and press Enter \
                      to rename it, wherever it is used; the border is orange until then, and red \
                      while the name is empty or another's. Leaving the field shows the name again.",

@@ -626,14 +626,8 @@ fn an_expression_is_renamed_edited_and_deleted_for_the_nodes_that_use_it() {
     };
 
     drawer(&mut editor, drawer::Message::New(crate::Kind::Expression));
-    drawer(
-        &mut editor,
-        drawer::Message::Name("expression_1".to_owned(), "few".to_owned()),
-    );
-    drawer(
-        &mut editor,
-        drawer::Message::Rename("expression_1".to_owned()),
-    );
+    let rename = |old: &str, new: &str| drawer::Message::Rename(old.to_owned(), new.to_owned());
+    drawer(&mut editor, rename("expression_1", "few"));
     assert!(editor.is_dirty);
     let args = Edit::Args(serde_json::json!({ "n": crate::marker("few") }));
     let _ = editor.update(Message::Edit("n1".to_owned(), args));
@@ -659,11 +653,7 @@ fn an_expression_is_renamed_edited_and_deleted_for_the_nodes_that_use_it() {
 
     // under another name it is the same to them
     checked(&mut editor);
-    drawer(
-        &mut editor,
-        drawer::Message::Name("few".to_owned(), "some".to_owned()),
-    );
-    drawer(&mut editor, drawer::Message::Rename("few".to_owned()));
+    drawer(&mut editor, rename("few", "some"));
     let args = &editor
         .pipeline
         .nodes[1]
@@ -866,6 +856,8 @@ fn delay_waits_longer_as_it_is_dragged_up_and_half_a_second_at_the_least() {
 
 #[test]
 fn a_name_is_marked_while_what_is_typed_for_it_is_another() {
+    use iced::keyboard::key::Named;
+
     // nothing typed, or the name again
     assert!(!is_unsaved(None, "n1"));
     assert!(!is_unsaved(Some("n1"), "n1"));
@@ -880,35 +872,54 @@ fn a_name_is_marked_while_what_is_typed_for_it_is_another() {
 
     // typed in the drawer, it is marked until Enter gives it
     let mut editor = chain(1);
-    let drawer = |editor: &mut Editor, message| {
-        let _ = editor.update(Message::Drawer(message));
+    let add = |editor: &mut Editor| {
+        let new = drawer::Message::New(crate::Kind::Expression);
+        let _ = editor.update(Message::Drawer(new));
     };
-    drawer(&mut editor, drawer::Message::New(crate::Kind::Expression));
-    let name = || "expression_1".to_owned();
-    drawer(&mut editor, drawer::Message::Name(name(), "few".to_owned()));
-    simulator(editor.view())
-        .find("few")
-        .expect("what is typed is shown");
-    drawer(&mut editor, drawer::Message::Rename(name()));
+    let typed = |ui: &mut iced_test::Simulator<'_, Message>| {
+        ui.click("expression_1")
+            .unwrap();
+        ui.tap_key(Named::End);
+        ui.typewrite("_few");
+        ui.find("expression_1_few")
+            .expect("what is typed is shown");
+        ui.tap_key(Named::Enter);
+    };
+    add(&mut editor);
+    let mut ui = simulator(editor.view());
+    typed(&mut ui);
+    for message in ui
+        .into_messages()
+        .collect::<Vec<_>>()
+    {
+        let _ = editor.update(message);
+    }
     assert!(
         editor
             .pipeline
             .expressions
-            .contains_key("few")
+            .contains_key("expression_1_few")
     );
 
     // one that is taken stays typed on Enter, until its field is left
-    drawer(&mut editor, drawer::Message::New(crate::Kind::Expression));
-    drawer(&mut editor, drawer::Message::Name(name(), "few".to_owned()));
-    drawer(&mut editor, drawer::Message::Rename(name()));
-    let shows_its_name = |editor: &Editor| {
-        simulator(editor.view())
-            .find("expression_1")
+    add(&mut editor);
+    let mut ui = simulator(editor.view());
+    typed(&mut ui);
+    assert!(
+        ui.find("expression_1")
+            .is_err()
+    );
+    ui.point_at(Point::new(700.0, 600.0));
+    ui.simulate(iced_test::simulator::click());
+    assert!(
+        ui.find("expression_1")
             .is_ok()
-    };
-    assert!(!shows_its_name(&editor));
-    drawer(&mut editor, drawer::Message::Leave(name()));
-    assert!(shows_its_name(&editor));
+    );
+    assert_eq!(
+        ui.into_messages()
+            .count(),
+        0
+    );
     assert_eq!(
         editor
             .pipeline
@@ -1290,12 +1301,8 @@ fn a_value_is_named_in_the_drawer_and_moved_from_the_card_that_names_it() {
 
     // and it shares its names with the expressions
     drawer(&mut editor, drawer::Message::New(crate::Kind::Expression));
-    let name = drawer::Message::Name("expression_1".to_owned(), "value_1".to_owned());
-    drawer(&mut editor, name);
-    drawer(
-        &mut editor,
-        drawer::Message::Rename("expression_1".to_owned()),
-    );
+    let rename = drawer::Message::Rename("expression_1".to_owned(), "value_1".to_owned());
+    drawer(&mut editor, rename);
     assert!(
         editor
             .pipeline

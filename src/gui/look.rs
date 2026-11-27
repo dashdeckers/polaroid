@@ -4,10 +4,12 @@ use iced::widget::text::IntoFragment;
 use iced::widget::text_input::TextInput;
 use iced::widget::{
     Button,
+    Component,
     Text,
     button,
     center,
     checkbox,
+    component,
     container,
     row,
     scrollable,
@@ -15,9 +17,9 @@ use iced::widget::{
     text_input,
     tooltip,
 };
-use iced::{Center, Element, Fill, Font, Shrink, Widget, padding};
+use iced::{Center, Element, Fill, Font, Renderer, Shrink, Widget, padding};
 use polaroid_iced::theme::{self, Tone, control, extent, font, sign, size, spacing};
-use polaroid_iced::{PickList, handle, pick_list, width_of};
+use polaroid_iced::{PickList, handle, leave, pick_list, width_of};
 
 /// What the handle beside a number says it is for.
 const DRAG: &str = "Drag up for more and down for less; faster moves it by more.";
@@ -73,22 +75,86 @@ pub fn fitted<'a, Message: Clone + 'a>(
     field(placeholder, typed, font, tone).width(width)
 }
 
-/// A field for a name, given on Enter: what is `typed` until then, orange, or red if it is refused.
-pub fn name_field<'a, Message: Clone + 'a>(
+/// A field for a name, which keeps what is typed in it until Enter gives that or it is left.
+pub fn name<'a, Message: 'a>(
     placeholder: &'static str,
-    typed: Option<&str>,
-    name: &str,
-    is_taken: impl Fn(&str) -> bool,
-) -> TextInput<'a, Message> {
-    let tone = match (is_unsaved(typed, name), is_refused(typed, name, is_taken)) {
-        (_, true) => Tone::Refused,
-        (true, false) => Tone::Unsaved,
-        (false, false) => Tone::Given,
-    };
-    let shown = typed
-        .unwrap_or(name)
-        .to_owned();
-    field(placeholder, shown, font::SANS, tone).size(size::TITLE)
+    name: &'a str,
+    is_taken: impl Fn(&str) -> bool + 'a,
+    on_rename: impl Fn(String) -> Message + 'a,
+) -> impl Widget<Message> + 'a {
+    component(Name {
+        placeholder,
+        name,
+        is_taken: Box::new(is_taken),
+        on_rename: Box::new(on_rename),
+    })
+}
+
+/// The field of a name: orange while another is typed in it, and red while that one is refused.
+struct Name<'a, Message> {
+    placeholder: &'static str,
+    name: &'a str,
+    is_taken: Box<dyn Fn(&str) -> bool + 'a>,
+    on_rename: Box<dyn Fn(String) -> Message + 'a>,
+}
+
+/// What is done in the field of a name.
+#[derive(Debug, Clone)]
+enum Typing {
+    Typed(String),
+    Entered,
+    /// The field lost the focus.
+    Left,
+}
+
+impl<'a, Message> Component<'a, Message> for Name<'a, Message> {
+    /// The name as it is being typed, until its field is left.
+    type State = Option<String>;
+    type Event = Typing;
+
+    fn update(
+        &self,
+        typed: &mut Option<String>,
+        event: Typing,
+        _renderer: &Renderer,
+    ) -> Option<Message> {
+        match event {
+            Typing::Typed(new) => *typed = Some(new),
+            Typing::Left => *typed = None,
+            // one that is refused stays typed
+            Typing::Entered => {
+                let new = typed.as_deref();
+                let is_given =
+                    is_unsaved(new, self.name) && !is_refused(new, self.name, &self.is_taken);
+                return typed
+                    .clone()
+                    .filter(|_| is_given)
+                    .map(&self.on_rename);
+            }
+        }
+        None
+    }
+
+    fn view(
+        &self,
+        typed: &Option<String>,
+    ) -> impl Widget<Typing> + 'a {
+        let typed = typed.as_deref();
+        let is_refused = is_refused(typed, self.name, &self.is_taken);
+        let tone = match (is_unsaved(typed, self.name), is_refused) {
+            (_, true) => Tone::Refused,
+            (true, false) => Tone::Unsaved,
+            (false, false) => Tone::Given,
+        };
+        let shown = typed
+            .unwrap_or(self.name)
+            .to_owned();
+        let field = field(self.placeholder, shown, font::SANS, tone)
+            .size(size::TITLE)
+            .on_input(Typing::Typed)
+            .on_submit(Typing::Entered);
+        leave(field, Typing::Left)
+    }
 }
 
 /// Whether what is typed for a name is another than the name, which Enter is still to give.
