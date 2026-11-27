@@ -2,9 +2,36 @@
 
 use std::collections::BTreeSet;
 
-use iced::widget::{button, column, container, mouse_area, popover, row, rule, space, stack, text};
-use iced::{Center, Color, Element, Fill, Function, Right, Widget, padding};
-use polaroid_iced::theme::{self, Tone, dot, extent, font, hue, sign, size, spacing, stroke};
+use iced::widget::canvas::{self, Frame, LineCap, Path, Stroke};
+use iced::widget::{
+    button,
+    canvas as draw,
+    column,
+    container,
+    mouse_area,
+    popover,
+    row,
+    rule,
+    space,
+    stack,
+    text,
+};
+use iced::{
+    Center,
+    Color,
+    Element,
+    Fill,
+    Function,
+    Point,
+    Rectangle,
+    Renderer,
+    Right,
+    Theme,
+    Widget,
+    mouse,
+    padding,
+};
+use polaroid_iced::theme::{self, Scheme, Tone, dot, extent, font, hue, icon, spacing, stroke};
 use serde_json::Value;
 
 use super::look::{self, Help, cross};
@@ -332,7 +359,10 @@ impl Marks {
                 Mark::Tag(tag) => used.contains(tag.as_str()),
                 Mark::Category(_) => true,
             });
-        let glass = look::afloat(text(sign::GLASS).size(size::HEADING))
+        let lens = draw(Lens(is_lit))
+            .width(icon::L)
+            .height(icon::L);
+        let glass = look::afloat(lens)
             .style(theme::button::floating(is_lit))
             .on_press(Message::Glass);
         let glass = help.of(
@@ -341,6 +371,10 @@ impl Marks {
              ringed in its colour, however far out the cards are zoomed. A card bears the tags of \
              its node and those of the names that the node uses.",
         );
+        // as wide as its menu, which opens in the middle over it: their right edges are in line
+        let glass = container(glass)
+            .id("glass")
+            .align_right(extent::M);
         popover(glass, menu)
             .position(popover::Position::Top)
             .gap(spacing::XS)
@@ -717,6 +751,53 @@ fn fresh(pipeline: &Pipeline) -> Color {
 fn hex(color: Color) -> String {
     let [r, g, b, _] = color.into_rgba8();
     format!("#{r:02x}{g:02x}{b:02x}")
+}
+
+/// A magnifying glass, the sign of the button of the glass: lit as the button is.
+struct Lens(bool);
+
+impl<Message> canvas::Program<Message> for Lens {
+    type State = ();
+
+    fn draw(
+        &self,
+        _state: &(),
+        renderer: &Renderer,
+        theme: &Theme,
+        bounds: Rectangle,
+        _cursor: mouse::Cursor,
+    ) -> Vec<canvas::Geometry> {
+        let scheme = Scheme::of(theme);
+        // as a label is on the button it is in, filled or tonal
+        let color = match self.0 {
+            true => scheme.primary.on,
+            false => {
+                scheme
+                    .secondary
+                    .on_container
+            }
+        };
+        let side = bounds.width;
+        // the lens in the upper left, and the handle from its rim towards the lower right corner
+        let middle = Point::new(0.4 * side, 0.4 * side);
+        let radius = 0.3 * side;
+        let rim = radius * std::f32::consts::FRAC_1_SQRT_2;
+        let end = side - stroke::THICK;
+        let handle = Path::line(
+            Point::new(middle.x + rim, middle.y + rim),
+            Point::new(end, end),
+        );
+        let line = |width| {
+            Stroke::default()
+                .with_color(color)
+                .with_width(width)
+                .with_line_cap(LineCap::Round)
+        };
+        let mut frame = Frame::new(renderer, bounds.size());
+        frame.stroke(&Path::circle(middle, radius), line(stroke::MEDIUM));
+        frame.stroke(&handle, line(stroke::THICK));
+        vec![frame.into_geometry()]
+    }
 }
 
 #[cfg(test)]

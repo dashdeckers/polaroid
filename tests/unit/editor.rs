@@ -2303,19 +2303,28 @@ fn a_right_click_on_a_tile_or_on_the_head_of_an_open_card_picks_the_tags_of_its_
 #[test]
 fn the_glass_floats_in_the_corner_of_the_graph_and_what_it_rings_is_no_edit() {
     let mut editor = chain(1);
+    let bounds = |editor: &Editor, said: &str| {
+        simulator(editor.view())
+            .find(said)
+            .unwrap()
+            .bounds()
+    };
     let glass = simulator(editor.view())
-        .find(theme::sign::GLASS)
+        .find(iced_test::selector::id("glass"))
         .unwrap()
         .bounds();
-    let id = simulator(editor.view())
-        .find("n0")
-        .unwrap()
-        .bounds();
+    let id = bounds(&editor, "n0");
     assert!(glass.x > id.x && glass.y > id.y);
-    press_on(&mut editor, theme::sign::GLASS);
+    // its button is round, at the right end of the room of its menu
+    let button = Point::new(glass.x + glass.width - glass.height / 2.0, glass.center_y());
+    click_at(&mut editor, button);
     let category = editor
         .catalog
         .categories[0];
+    // the menu opens over the button, and no further right than it
+    let item = bounds(&editor, category);
+    assert!(item.y + item.height < glass.y);
+    assert!(glass.x < item.x && item.x + item.width < glass.x + glass.width);
     press_on(&mut editor, category);
     assert!(!editor.is_dirty);
     // Escape closes its menu
