@@ -252,6 +252,27 @@ fn a_hole_used_at_two_kinds_of_place_is_an_error() {
 }
 
 #[test]
+fn an_expression_is_told_to_have_a_hole_whether_it_is_sound_or_not() {
+    let mut pipeline = with(marker("rate"));
+    assert!(pipeline.is_holed("gross_of"));
+    // one that only passes its holes on has them too
+    assert!(pipeline.is_holed("taxed"));
+    assert!(!pipeline.is_holed("rate"));
+    assert!(!pipeline.is_holed("gone"));
+    // and one that is no sound function, which names what is not there
+    let unsound = binary(hole("x", ""), "Plus", marker("gone"));
+    pipeline
+        .expressions
+        .insert("unsound".to_owned(), unsound);
+    assert!(
+        pipeline
+            .holes("unsound")
+            .is_err()
+    );
+    assert!(pipeline.is_holed("unsound"));
+}
+
+#[test]
 fn a_call_that_gives_too_little_or_too_much_is_an_error() {
     let missing = refused(call("gross_of", json!({ "x": col("price") })));
     assert!(

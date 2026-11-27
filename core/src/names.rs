@@ -273,6 +273,20 @@ fn holes(body: &Value) -> PolarsResult<Vec<(&str, Taken)>> {
     Ok(holes)
 }
 
+/// Whether a hole stands anywhere in `value`.
+fn has_hole(value: &Value) -> bool {
+    match (reference(value), value) {
+        (Some(hole), _) if hole.kind == Kind::Argument => true,
+        (_, Value::Array(items)) => items
+            .iter()
+            .any(has_hole),
+        (_, Value::Object(fields)) => fields
+            .values()
+            .any(has_hole),
+        _ => false,
+    }
+}
+
 /// What stands for the expression of a name: in the args of a Node, or in another expression.
 pub fn marker(name: &str) -> Value {
     Value::from(&Reference::to(Kind::Expression, name))
@@ -374,6 +388,16 @@ impl Pipeline {
             &mut vec![name.to_owned()],
         )?;
         Ok(holes)
+    }
+
+    /// Whether the expression `name` has a hole, be it a sound function or not.
+    pub fn is_holed(
+        &self,
+        name: &str,
+    ) -> bool {
+        self.expressions
+            .get(name)
+            .is_some_and(has_hole)
     }
 
     /// The expression or the value of a name: they share their names.
