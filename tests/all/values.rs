@@ -387,6 +387,14 @@ fn what_uses_a_name_is_found_through_values_and_expressions() {
 }
 
 #[test]
+fn a_name_is_an_expression_or_a_value_or_neither() {
+    let pipeline = pipeline(named(), "select", json!({ "exprs": { "$value": "shown" } }));
+    assert_eq!(pipeline.kind_of("discounted"), Some(Kind::Expression));
+    assert_eq!(pipeline.kind_of("shown"), Some(Kind::Value));
+    assert_eq!(pipeline.kind_of("gone"), None);
+}
+
+#[test]
 fn a_reference_is_its_name_with_what_its_kind_takes_alone() {
     let value = json!({ "$value": "bands", "at": "/cheap/hi" });
     let read = reference(&value).unwrap();

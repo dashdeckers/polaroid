@@ -393,6 +393,23 @@ impl Pipeline {
             .is_some_and(has_hole)
     }
 
+    /// Whether `name` is an expression or a value, if it is either: they share their names.
+    pub fn kind_of(
+        &self,
+        name: &str,
+    ) -> Option<Kind> {
+        let is_value = self
+            .values
+            .contains_key(name);
+        match self
+            .expressions
+            .contains_key(name)
+        {
+            true => Some(Kind::Expression),
+            false => is_value.then_some(Kind::Value),
+        }
+    }
+
     /// The expression or the value of a name: they share their names.
     fn named(
         &self,
