@@ -333,8 +333,9 @@ pub mod font {
     pub const MONO: Font = Font::new(rustd3_fonts::MONO);
 }
 
-/// The sizes of text: of a note beside, of what is read and typed, of a label, and of a heading.
+/// The sizes of text: of fine print, a note beside, what is read and typed, a label, a heading.
 pub mod size {
+    pub const FINE: f32 = 10.0;
     pub const NOTE: f32 = 12.0;
     pub const TEXT: f32 = 13.0;
     pub const TITLE: f32 = 14.0;

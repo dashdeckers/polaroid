@@ -295,11 +295,17 @@ fn clear_says_how_much_the_saved_frames_take_and_lets_them_go() {
     let frame = df!("x" => (0..2000i64).collect::<Vec<_>>()).unwrap();
     let ran = vec![("n1".to_owned(), frame)];
     let _ = editor.update(Message::Ran(vec!["n1".to_owned()], Ok(ran)));
-    assert!(
-        simulator(editor.view())
-            .find("16 KB")
-            .is_ok()
-    );
+    // in fine print under the word, in the middle of a pill no taller than the others
+    let mut ui = simulator(editor.view());
+    let [word, size] = ["Clear", "16 KB"].map(|said| {
+        ui.find(said)
+            .unwrap()
+            .bounds()
+    });
+    drop(ui);
+    assert!(size.y >= word.y + word.height && size.height < word.height);
+    assert_eq!(size.center_x(), word.center_x());
+    assert!(size.y + size.height - word.y <= theme::control::M);
 
     for message in press(&editor, "Clear") {
         let _ = editor.update(message);

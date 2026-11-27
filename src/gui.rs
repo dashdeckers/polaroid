@@ -20,7 +20,6 @@ use iced::keyboard::key::Named;
 use iced::keyboard::{self, Key};
 use iced::widget::{column, component, container, markdown, row, rule, space, stack, text};
 use iced::{
-    Bottom,
     Center,
     Fill,
     Function,
@@ -925,14 +924,13 @@ impl Editor {
                 theme::mode::manual,
             );
         let segment = |at| theme::button::segment(theme::button::tonal, at);
-        // beside Clear and smaller, how much memory the frames that it lets go of take
+        // under Clear in fine print, how much memory the frames that it lets go of take
         let kept = self.known.size();
-        let clear = row![
+        let clear = column![
             title("Clear"),
-            text(bytes(kept)).size(size::NOTE),
+            text(bytes(kept)).size(size::FINE),
         ]
-        .spacing(spacing::XS)
-        .align_y(Bottom);
+        .align_x(Center);
         let frames = row![
             help.of(
                 pill(title("Reload"))
