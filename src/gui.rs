@@ -931,7 +931,7 @@ impl Editor {
         .spacing(spacing::XXS);
         row![
             help.of(
-                pill(title("Expressions"))
+                pill(title("Names"))
                     .style(theme::button::tonal)
                     .on_press(Message::ToggleDrawer),
                 "Shows or hides the drawer of expressions and values on the left. Drag its edge to \

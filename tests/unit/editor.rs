@@ -819,7 +819,7 @@ fn a_card_picks_an_expression_by_its_name() {
             .is_ok()
     );
     assert!(
-        ui.find("Expressions")
+        ui.find("Names")
             .is_ok()
     );
 }
