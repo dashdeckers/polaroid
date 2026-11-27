@@ -323,14 +323,6 @@ pub fn contrast(
     one.max(other) / one.min(other)
 }
 
-/// The ink that reads best on `color`: black, or white.
-pub fn ink(color: Color) -> Color {
-    match contrast(Color::BLACK, color) > contrast(Color::WHITE, color) {
-        true => Color::BLACK,
-        false => Color::WHITE,
-    }
-}
-
 /// The faces of text: rustd3's DejaVu Sans, and its Mono for code and for columns of numbers.
 pub mod font {
     use iced::Font;
@@ -380,13 +372,12 @@ pub mod sign {
     pub const GRIP: &str = "≡";
     /// The glass that rings the cards by what they are marked with, as a ring in a ring.
     pub const GLASS: &str = "◎";
-    /// What is left out, and what parts two things on a line.
+    /// What is left out.
     pub const ELLIPSIS: &str = "…";
-    pub const PART: &str = "·";
 
     /// Every sign.
-    pub const ALL: [&str; 10] = [
-        OPEN, CLOSE, ADD, DELETE, ONWARD, SCRUB, GRIP, GLASS, ELLIPSIS, PART,
+    pub const ALL: [&str; 9] = [
+        OPEN, CLOSE, ADD, DELETE, ONWARD, SCRUB, GRIP, GLASS, ELLIPSIS,
     ];
 }
 
@@ -397,7 +388,6 @@ pub mod spacing {
     pub const S: f32 = 8.0;
     pub const M: f32 = 12.0;
     pub const L: f32 = 16.0;
-    pub const XL: f32 = 24.0;
 }
 
 /// How round corners are, from a tick box to a dialog, and a pill.
@@ -406,8 +396,6 @@ pub mod radius {
     pub const XS: f32 = 4.0;
     pub const S: f32 = 8.0;
     pub const M: f32 = 12.0;
-    pub const L: f32 = 16.0;
-    pub const XL: f32 = 28.0;
     /// Half the height of anything, which every renderer rounds it to.
     pub const FULL: f32 = u32::MAX as f32;
 }
@@ -458,9 +446,8 @@ pub mod control {
 
 /// How wide or tall what has no size of its own is, from the least of a field to an open card.
 pub mod extent {
-    /// The least of a field, and a slider beside one.
+    /// The least of a field.
     pub const XXS: f32 = 48.0;
-    pub const XS: f32 = 64.0;
     /// A column of a table, a tile, the least of a pane, and the most of what scrolls in a card.
     pub const S: f32 = 140.0;
     /// What opens to pick from, narrow and wide, and the most that a tooltip takes.
@@ -479,12 +466,6 @@ pub mod motion {
     pub const SHORT: Duration = Duration::from_millis(200);
     pub const MEDIUM: Duration = Duration::from_millis(400);
     pub const LONG: Duration = Duration::from_millis(500);
-}
-
-/// The ring around what has the focus of the keyboard: how thick, and how far outside it.
-pub mod focus {
-    pub const WIDTH: f32 = super::stroke::THICK;
-    pub const OUTSET: f32 = super::spacing::XXS;
 }
 
 /// The cards and the wires between them.
@@ -668,26 +649,20 @@ enum Hold {
     Active,
 }
 
-/// The well of a field, its outline and what is written in it, on the panel of `tint` if any.
+/// The well of a field, its outline and what is written in it.
 fn field(
     scheme: &Scheme,
     hold: Hold,
     tone: Tone,
-    tint: Option<Color>,
     is_disabled: bool,
 ) -> (Color, Border, Color) {
-    let well = match tint {
-        Some(tint) => hue::well(scheme, tint),
-        None => scheme.surface_container_lowest,
-    };
-    let (line, width) = match (tone, hold, tint) {
-        (Tone::Unsaved, ..) => (scheme.warning.color, stroke::MEDIUM),
-        (Tone::Refused, ..) => (scheme.error.color, stroke::MEDIUM),
-        (_, Hold::Active, _) => (scheme.primary.color, stroke::MEDIUM),
-        (_, Hold::Hovered, Some(tint)) => (tint, stroke::THIN),
-        (_, Hold::Hovered, None) => (scheme.outline, stroke::THIN),
-        (_, Hold::Rest, Some(tint)) => (tint.scale_alpha(opacity::FADED), stroke::THIN),
-        (_, Hold::Rest, None) => (scheme.outline_variant, stroke::THIN),
+    let well = scheme.surface_container_lowest;
+    let (line, width) = match (tone, hold) {
+        (Tone::Unsaved, _) => (scheme.warning.color, stroke::MEDIUM),
+        (Tone::Refused, _) => (scheme.error.color, stroke::MEDIUM),
+        (_, Hold::Active) => (scheme.primary.color, stroke::MEDIUM),
+        (_, Hold::Hovered) => (scheme.outline, stroke::THIN),
+        (_, Hold::Rest) => (scheme.outline_variant, stroke::THIN),
     };
     let written = match (is_disabled, tone) {
         (true, _) => scheme
@@ -769,36 +744,6 @@ pub mod button {
         styled(scheme, Color::TRANSPARENT, scheme.error.color, status)
     }
 
-    /// A button that is a sign on a ground of `color`, in the ink that reads there.
-    pub fn on(color: Color) -> impl Fn(&Theme, Status) -> Style {
-        move |theme, status| {
-            styled(
-                Scheme::of(theme),
-                Color::TRANSPARENT,
-                super::ink(color),
-                status,
-            )
-        }
-    }
-
-    /// A bar across what it lays open or closes, as a drawer: a step over the card, less round.
-    pub fn bar(
-        theme: &Theme,
-        status: Status,
-    ) -> Style {
-        let scheme = Scheme::of(theme);
-        let style = styled(
-            scheme,
-            scheme.surface_container_high,
-            scheme.on_surface_variant,
-            status,
-        );
-        Style {
-            border: border::rounded(radius::S),
-            ..style
-        }
-    }
-
     /// A round button afloat over all else, filled while it is on.
     pub fn floating(is_on: bool) -> impl Fn(&Theme, Status) -> Style {
         move |theme, status| Style {
@@ -852,7 +797,7 @@ pub mod button {
     }
 
     /// How round the corners of a button are at `at` in a pill of buttons.
-    pub fn corners(at: Segment) -> border::Radius {
+    fn corners(at: Segment) -> border::Radius {
         let (left, right) = match at {
             Segment::First => (radius::FULL, radius::XS),
             Segment::Inner => (radius::XS, radius::XS),
@@ -901,28 +846,13 @@ pub mod button {
 
 /// The fields to type in.
 pub mod text_input {
+    use iced::Theme;
     use iced::widget::text_input::{Status, Style};
-    use iced::{Color, Theme, border};
 
-    use super::{Hold, Scheme, Tone, radius};
+    use super::{Hold, Scheme, Tone};
 
     /// A field whose value stands as `tone`: a well, outlined, in the primary colour while used.
     pub fn toned(tone: Tone) -> impl Fn(&Theme, Status) -> Style {
-        styled(tone, None)
-    }
-
-    /// Such a field on a panel of `hue`, as a tag or a group has one.
-    pub fn tinted(
-        tone: Tone,
-        hue: Color,
-    ) -> impl Fn(&Theme, Status) -> Style {
-        styled(tone, Some(hue))
-    }
-
-    fn styled(
-        tone: Tone,
-        tint: Option<Color>,
-    ) -> impl Fn(&Theme, Status) -> Style {
         move |theme, status| {
             let scheme = Scheme::of(theme);
             let hold = match status {
@@ -931,7 +861,7 @@ pub mod text_input {
                 Status::Focused { .. } => Hold::Active,
             };
             let is_disabled = status == Status::Disabled;
-            let (well, border, value) = super::field(scheme, hold, tone, tint, is_disabled);
+            let (well, border, value) = super::field(scheme, hold, tone, is_disabled);
             Style {
                 background: well.into(),
                 border,
@@ -944,50 +874,17 @@ pub mod text_input {
             }
         }
     }
-
-    /// A field with no box of its own, as a name on a pill, whose line shows in use or in a tone.
-    pub fn bare(tone: Tone) -> impl Fn(&Theme, Status) -> Style {
-        move |theme, status| {
-            let style = toned(tone)(theme, status);
-            let width = match (status, tone) {
-                (Status::Active | Status::Disabled, Tone::Given | Tone::Default) => 0.0,
-                _ => style.border.width,
-            };
-            Style {
-                background: Color::TRANSPARENT.into(),
-                border: border::rounded(radius::FULL)
-                    .color(style.border.color)
-                    .width(width),
-                ..style
-            }
-        }
-    }
 }
 
 /// The lists to pick from.
 pub mod pick_list {
+    use iced::Theme;
     use iced::widget::pick_list::{Status, Style};
-    use iced::{Color, Theme};
 
     use super::{Hold, Scheme, Tone};
 
     /// A list whose pick stands as `tone`, drawn as a field is, in the primary colour while open.
     pub fn toned(tone: Tone) -> impl Fn(&Theme, Status) -> Style {
-        styled(tone, None)
-    }
-
-    /// Such a list on a panel of `hue`, as a tag or a group has one.
-    pub fn tinted(
-        tone: Tone,
-        hue: Color,
-    ) -> impl Fn(&Theme, Status) -> Style {
-        styled(tone, Some(hue))
-    }
-
-    fn styled(
-        tone: Tone,
-        tint: Option<Color>,
-    ) -> impl Fn(&Theme, Status) -> Style {
         move |theme, status| {
             let scheme = Scheme::of(theme);
             let hold = match status {
@@ -996,7 +893,7 @@ pub mod pick_list {
                 Status::Opened { .. } => Hold::Active,
             };
             let is_disabled = status == Status::Disabled;
-            let (well, border, text_color) = super::field(scheme, hold, tone, tint, is_disabled);
+            let (well, border, text_color) = super::field(scheme, hold, tone, is_disabled);
             Style {
                 text_color,
                 placeholder_color: scheme.outline,
@@ -1123,41 +1020,6 @@ pub mod checkbox {
     }
 }
 
-/// The switches.
-pub mod toggler {
-    use iced::widget::toggler::{Status, Style, default};
-    use iced::{Color, Theme};
-
-    use super::{Scheme, stroke};
-
-    /// A switch filled with `color` while it is on, and outlined while it is off.
-    pub fn lit(color: Color) -> impl Fn(&Theme, Status) -> Style {
-        move |theme, status| {
-            let scheme = Scheme::of(theme);
-            let (Status::Active { is_toggled }
-            | Status::Hovered { is_toggled }
-            | Status::Disabled { is_toggled }) = status;
-            let (track, thumb, line) = match is_toggled {
-                true => (color, scheme.surface_container_lowest, color),
-                false => (
-                    scheme.surface_container_highest,
-                    scheme.outline,
-                    scheme.outline,
-                ),
-            };
-            Style {
-                background: track.into(),
-                background_border_width: stroke::MEDIUM,
-                background_border_color: line,
-                foreground: thumb.into(),
-                foreground_border_width: 0.0,
-                foreground_border_color: Color::TRANSPARENT,
-                ..default(theme, status)
-            }
-        }
-    }
-}
-
 /// The sliders.
 pub mod slider {
     use iced::Theme;
@@ -1204,7 +1066,7 @@ pub mod slider {
 /// The containers that set something apart.
 pub mod container {
     use iced::widget::container::Style;
-    use iced::{Color, Theme, border};
+    use iced::{Theme, border};
 
     use super::{Elevation, Scheme, opacity, outlined, radius, stroke, surface};
 
@@ -1264,27 +1126,6 @@ pub mod container {
             .border(outline)
     }
 
-    /// A veil of `paper` over what lies on it and is out of date.
-    pub fn veil(paper: Color) -> impl Fn(&Theme) -> Style {
-        move |_| Style::default().background(paper.scale_alpha(opacity::VEIL))
-    }
-
-    /// What a plot says at the cursor: a box of its own `paper`, outlined faintly in its `ink`.
-    pub fn readout(
-        ink: Color,
-        paper: Color,
-    ) -> impl Fn(&Theme) -> Style {
-        move |_| {
-            let outline = border::rounded(radius::XS)
-                .color(ink.scale_alpha(opacity::FAINT))
-                .width(stroke::THIN);
-            Style::default()
-                .background(paper)
-                .color(ink)
-                .border(outline)
-        }
-    }
-
     /// The line where what is dragged would drop, in the primary colour if it would drop there.
     pub fn drop(is_lit: bool) -> impl Fn(&Theme) -> Style {
         move |theme| Style {
@@ -1311,31 +1152,6 @@ pub mod container {
             }),
             border: border::rounded(radius::XS),
             ..Style::default()
-        }
-    }
-
-    /// The box of a group on a sheet, ringed in the primary colour where a drag would drop in it.
-    pub fn group(
-        is_boxed: bool,
-        is_lit: bool,
-    ) -> impl Fn(&Theme) -> Style {
-        move |theme| {
-            let scheme = Scheme::of(theme);
-            let ring = match is_lit {
-                true => border::rounded(radius::M)
-                    .color(scheme.primary.color)
-                    .width(stroke::MEDIUM),
-                false => border::rounded(radius::M),
-            };
-            Style {
-                background: is_boxed.then(|| {
-                    scheme
-                        .surface_container
-                        .into()
-                }),
-                border: ring,
-                ..Style::default()
-            }
         }
     }
 }
@@ -1452,13 +1268,12 @@ pub mod text {
     }
 }
 
-/// What takes a colour that the user gave it, as a tag or a group: a hue of a palette.
+/// What takes a colour that the user gave it, as a tag or a category of blocks does: a hue.
 pub mod hue {
     use iced::widget::container::Style;
     use iced::{Color, Theme, border};
 
-    use super::button::{Segment, corners};
-    use super::{Scheme, control, ink, over, radius, spacing, stroke};
+    use super::{radius, stroke};
 
     /// The grey of what has no colour of its own.
     pub const NEUTRAL: Color = super::hex(0x808080);
@@ -1477,44 +1292,6 @@ pub mod hue {
         super::hex(0x7D63F0),
     ];
 
-    /// How much of a hue lies over the lowest surface in a body of it, light and dark.
-    const BODY: (f32, f32) = (0.32, 0.22);
-    /// How much of it lies there in a field on such a body.
-    const WELL: f32 = 0.12;
-
-    /// How round a panel of a hue is: as round as the pill in it, a step further out.
-    pub const PANEL: f32 = control::M / 2.0 + spacing::XS;
-
-    /// The lighter shade of `hue` that the body of a pill is, which the text of a surface reads on.
-    pub fn body(
-        scheme: &Scheme,
-        hue: Color,
-    ) -> Color {
-        let opacity = match scheme.is_dark {
-            true => BODY.1,
-            false => BODY.0,
-        };
-        over(scheme.surface_container_lowest, hue, opacity)
-    }
-
-    /// The shade of `hue` that a field on such a body is, a well lighter than the body.
-    pub fn well(
-        scheme: &Scheme,
-        hue: Color,
-    ) -> Color {
-        over(scheme.surface_container_lowest, hue, WELL)
-    }
-
-    /// A chip of `hue` itself, as a tag that something carries, in the ink that reads on it.
-    pub fn chip(hue: Color) -> impl Fn(&Theme) -> Style {
-        move |_| {
-            Style::default()
-                .background(hue)
-                .color(ink(hue))
-                .border(border::rounded(radius::FULL))
-        }
-    }
-
     /// A dot of `hue`: filled with it, or else a ring of it around nothing.
     pub fn dot(
         hue: Color,
@@ -1529,44 +1306,6 @@ pub mod hue {
                 false => Style::default(),
             }
             .border(ring)
-        }
-    }
-
-    /// The cap of a pill at `at`, in `hue` itself.
-    pub fn cap(
-        hue: Color,
-        at: Segment,
-    ) -> impl Fn(&Theme) -> Style {
-        move |_| {
-            Style::default()
-                .background(hue)
-                .color(ink(hue))
-                .border(border::rounded(corners(at)))
-        }
-    }
-
-    /// The body of a pill at `at`, in the lighter shade of `hue`.
-    pub fn shade(
-        hue: Color,
-        at: Segment,
-    ) -> impl Fn(&Theme) -> Style {
-        move |theme| {
-            let scheme = Scheme::of(theme);
-            Style::default()
-                .background(body(scheme, hue))
-                .color(scheme.on_surface)
-                .border(border::rounded(corners(at)))
-        }
-    }
-
-    /// The panel that a pill grows into as it is laid open, in the lighter shade of `hue`.
-    pub fn panel(hue: Color) -> impl Fn(&Theme) -> Style {
-        move |theme| {
-            let scheme = Scheme::of(theme);
-            Style::default()
-                .background(body(scheme, hue))
-                .color(scheme.on_surface)
-                .border(border::rounded(PANEL))
         }
     }
 }

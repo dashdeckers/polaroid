@@ -2,19 +2,11 @@
 
 use iced::Color;
 use iced::advanced::graphics::text::cosmic_text::skrifa::{FontRef, MetadataProvider};
-use polaroid_iced::theme::{self, DARK, LIGHT, Scheme, contrast, font, hue, ink, over, sign, size};
+use polaroid_iced::theme::{self, DARK, LIGHT, Scheme, contrast, font, hue, over, sign, size};
 
 /// What WCAG asks of text on its ground, and of what is not text.
 const TEXT: f32 = 4.5;
 const SHAPE: f32 = 3.0;
-
-/// A spread of colours through all there are, six steps along each of red, green and blue.
-fn hues() -> impl Iterator<Item = Color> {
-    let steps = || (0..6u8).map(|step| step * 51);
-    steps()
-        .flat_map(move |r| steps().flat_map(move |g| steps().map(move |b| (r, g, b))))
-        .map(|(r, g, b)| Color::from_rgb8(r, g, b))
-}
 
 #[test]
 fn a_theme_gives_its_scheme_back() {
@@ -84,21 +76,6 @@ fn a_layer_over_a_colour_mixes_them_by_its_opacity() {
     let alone = over(Color::TRANSPARENT, layer, 0.08);
     assert_eq!(alone, layer.scale_alpha(0.08));
     assert_eq!(over(Color::TRANSPARENT, layer, 0.0), Color::TRANSPARENT);
-}
-
-#[test]
-fn text_reads_on_every_hue_and_on_its_shades() {
-    for hue in hues().chain([hue::NEUTRAL]) {
-        // a chip, and the cap of a pill
-        assert!(contrast(ink(hue), hue) >= TEXT, "{hue:?}");
-        for scheme in [&LIGHT, &DARK] {
-            let (body, well) = (hue::body(scheme, hue), hue::well(scheme, hue));
-            assert!(contrast(scheme.on_surface, body) >= TEXT, "{hue:?}");
-            assert!(contrast(scheme.on_surface, well) >= TEXT, "{hue:?}");
-            // a value that is the default is quieter there, and still made out
-            assert!(contrast(scheme.outline, well) >= SHAPE, "{hue:?}");
-        }
-    }
 }
 
 #[test]
