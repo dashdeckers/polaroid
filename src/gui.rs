@@ -34,7 +34,7 @@ use iced::{
     task,
 };
 use polaroid_iced::theme::button::Segment;
-use polaroid_iced::theme::{self, motion, size, spacing, stroke};
+use polaroid_iced::theme::{self, Scheme, motion, size, spacing, stroke};
 use polaroid_iced::{Menu, Surface, menu, scrub, split, surface, switch};
 use serde_json::Value;
 
@@ -993,6 +993,7 @@ impl Editor {
             .on_peek(Message::Peek)
             .on_menu(Message::Menu)
             .on_zoom(Message::Zoom);
+        let scheme = Scheme::of(&self.theme);
         for node in &self.pipeline.nodes {
             let inputs = self
                 .block(&node.block)
@@ -1006,13 +1007,17 @@ impl Editor {
                 false => 0.0,
             };
             let id = node.id.clone();
+            let status = self
+                .known
+                .status(&node.id);
             let card = polaroid_iced::card(id, layout::position(node), component(self.card(node)))
                 .ports(ports)
                 .output(card::output(is_shown_open))
                 .handle(card::handle(is_shown_open))
                 .peek(!is_open)
                 .resizable(is_open)
-                .tall(tall);
+                .tall(tall)
+                .ring(card::ring(status).map(|ring| ring.color(scheme)));
             graph = graph.push(card);
             let wired = node
                 .inputs

@@ -18,6 +18,7 @@ use iced::{
     Point,
     Rectangle,
     Renderer,
+    Shadow,
     Size,
     Theme,
     Transformation,
@@ -28,7 +29,7 @@ use iced::{
 };
 
 use crate::seen::Seen;
-use crate::theme::{self, HALO, Scheme, motion, spacing, stroke};
+use crate::theme::{self, Scheme, motion, spacing, stroke};
 
 /// How much one step of the wheel zooms.
 const STEP: f32 = theme::surface::ZOOM_STEP;
@@ -38,6 +39,14 @@ const PAGE: f32 = theme::surface::PAGE;
 const ZOOM: (f32, f32) = theme::surface::ZOOM;
 /// How long after the last step of the wheel a zoom is settled, and is told.
 const SETTLE: Duration = motion::SHORT;
+/// A ring on the edge of a card, one of those around it, the gap before one, and its halo.
+const RING: (f32, f32) = theme::surface::RING;
+const MARK: (f32, f32) = theme::surface::MARK;
+const GAP: (f32, f32) = theme::surface::GAP;
+const HALO: (f32, f32) = theme::surface::HALO;
+/// How much of its colour a halo is, and how round a card.
+const FAINT: f32 = theme::opacity::FAINT;
+const CORNER: f32 = theme::surface::CORNER;
 /// The radius of a port; a press twice as far from its middle still takes it.
 const PORT: f32 = theme::surface::PORT;
 /// The corner of a card that resizes it.
@@ -87,6 +96,9 @@ pub fn card<'a, Key, Message>(
         tall: None,
         handle: None,
         peeks: false,
+        ring: None,
+        rings: Vec::new(),
+        is_haloed: false,
     }
 }
 
@@ -107,6 +119,11 @@ pub struct Card<'a, Key, Message> {
     handle: Option<Rectangle>,
     /// Whether it is told to open once the cursor rested on it, until the cursor leaves it.
     peeks: bool,
+    /// The colour of the ring on its edge, and of each ring around it from the innermost out.
+    ring: Option<Color>,
+    rings: Vec<Color>,
+    /// Whether a halo around it singles it out.
+    is_haloed: bool,
 }
 
 impl<Key, Message> Card<'_, Key, Message> {
@@ -145,6 +162,35 @@ impl<Key, Message> Card<'_, Key, Message> {
         peeks: bool,
     ) -> Self {
         self.peeks = peeks;
+        self
+    }
+
+    /// A ring of this colour on its edge, which is no thinner on the screen however far out.
+    pub fn ring(
+        mut self,
+        ring: Option<Color>,
+    ) -> Self {
+        self.ring = ring;
+        self
+    }
+
+    /// A thin ring of each of these colours around it, from the innermost out, a gap before each.
+    pub fn rings(
+        mut self,
+        rings: impl IntoIterator<Item = Color>,
+    ) -> Self {
+        self.rings = rings
+            .into_iter()
+            .collect();
+        self
+    }
+
+    /// Whether a wide, faint halo around it and its rings singles it out.
+    pub fn halo(
+        mut self,
+        is_haloed: bool,
+    ) -> Self {
+        self.is_haloed = is_haloed;
         self
     }
 
@@ -1156,6 +1202,8 @@ where
         let seen = clip * view.inverse();
         let scheme = Scheme::of(theme);
         let muted = scheme.outline;
+        // what is this wide among the cards, and on the screen at the least however far out
+        let wide = |(among, least): (f32, f32)| among.max(least / state.scale);
 
         let mut wires = Frame::new(renderer, seen.size());
         wires.translate(Point::ORIGIN - seen.position());
@@ -1185,9 +1233,47 @@ where
                     };
                     // a layer each, as the text of a layer is over all its shapes
                     renderer.with_layer(seen, |renderer| {
+                        let bounds = layout.bounds();
+                        // the rings of its marks reach this far out, and its halo from there on
+                        let reach = card.rings.len() as f32 * (wide(GAP) + wide(MARK));
+                        if card.is_haloed {
+                            let halo = wide(HALO);
+                            let color = scheme
+                                .primary
+                                .color
+                                .scale_alpha(FAINT);
+                            let glow = renderer::Quad {
+                                bounds: bounds.expand(reach + halo / 2.0),
+                                border: border::rounded(CORNER + reach + halo / 2.0),
+                                shadow: Shadow {
+                                    color,
+                                    offset: Vector::ZERO,
+                                    blur_radius: halo,
+                                },
+                                ..renderer::Quad::default()
+                            };
+                            renderer.fill_quad(glow, color);
+                        }
                         card.content
                             .draw(tree, renderer, theme, style, layout, cursor, &seen);
-                        let bounds = layout.bounds();
+                        let ring = |reach: f32, width: f32, color: Color| renderer::Quad {
+                            bounds: bounds.expand(reach),
+                            border: border::rounded(CORNER + reach)
+                                .color(color)
+                                .width(width),
+                            ..renderer::Quad::default()
+                        };
+                        if let Some(color) = card.ring {
+                            renderer.fill_quad(ring(0.0, wide(RING), color), Color::TRANSPARENT);
+                        }
+                        for (color, nth) in card
+                            .rings
+                            .iter()
+                            .zip(1u16..)
+                        {
+                            let reach = f32::from(nth) * (wide(GAP) + wide(MARK));
+                            renderer.fill_quad(ring(reach, wide(MARK), *color), Color::TRANSPARENT);
+                        }
                         let inputs = card
                             .inputs
                             .iter()
@@ -1234,10 +1320,10 @@ where
                 if let Some((bounds, color)) = halo {
                     // round as the card it lies around
                     let halo = renderer::Quad {
-                        bounds: bounds.expand(HALO),
-                        border: border::rounded(theme::surface::CORNER + HALO)
+                        bounds: bounds.expand(theme::HALO),
+                        border: border::rounded(CORNER + theme::HALO)
                             .color(color)
-                            .width(HALO),
+                            .width(theme::HALO),
                         ..renderer::Quad::default()
                     };
                     renderer.with_layer(seen, |renderer| {

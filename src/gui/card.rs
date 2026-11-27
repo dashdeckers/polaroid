@@ -6,7 +6,7 @@ use iced::advanced::widget;
 use iced::widget::canvas::{self, Frame, Path, Stroke};
 use iced::widget::{Component, canvas as draw, column, container, markdown, row, space, svg, text};
 use iced::{Center, Fill, Point, Rectangle, Renderer, Size, Theme, Widget, mouse};
-use polaroid_iced::theme::container::Ring;
+use polaroid_iced::theme::surface::Ring;
 use polaroid_iced::theme::{self, Scheme, Tone, control, font, icon, size, spacing, stroke};
 use polaroid_iced::{Asked, Heading, width_of};
 use serde_json::Value;
@@ -177,9 +177,6 @@ impl Editor {
                 .pipeline
                 .outputs
                 .contains(&node.id),
-            status: self
-                .known
-                .status(&node.id),
             found: self
                 .known
                 .columns(&node.id),
@@ -247,7 +244,6 @@ pub struct Card<'a> {
     /// Its args as they are edited, if those are not taken yet.
     draft: Option<&'a form::Draft>,
     is_output: bool,
-    status: Status,
     found: Option<Result<&'a Vec<(String, DataType)>, &'a String>>,
     /// The columns of the frames it reads that a Check found, which its args may name.
     columns: Vec<String>,
@@ -328,7 +324,7 @@ impl<'a> Component<'a, Message> for Card<'a> {
         state: &form::State,
     ) -> impl Widget<Event> + 'a {
         let node = self.node;
-        let style = theme::container::ringed(ring(self.status));
+        let style = theme::container::card;
         if !self.is_open {
             // a closed card is its tile alone, with a port down its edge for each frame it reads
             let ports = (0..self.reads().len()).map(|slot| {
@@ -686,7 +682,7 @@ pub(super) fn shown(value: AnyValue) -> String {
 }
 
 /// How the theme rings the card of a node of this status, once anything is known of it.
-fn ring(status: Status) -> Option<Ring> {
+pub fn ring(status: Status) -> Option<Ring> {
     match status {
         Status::Unknown => None,
         Status::Checked => Some(Ring::Sound),

@@ -941,3 +941,111 @@ fn the_wheel_pans_while_ctrl_is_held_and_across_with_shift_too() {
     simulator.scroll(ScrollDelta::Lines { x: 0.0, y: 1.0 });
     assert_eq!(among(&mut simulator, across), Point::new(80.0, 160.0));
 }
+
+/// A row of pixels of `scene` in a window of 400 by 300, the wheel turned `steps` at its corner.
+fn row_of(
+    scene: impl Widget<Message>,
+    steps: f32,
+    row: usize,
+) -> Vec<[u8; 4]> {
+    use iced_test::core::renderer::{Headless, Settings, Style};
+    use iced_test::core::shell;
+    use iced_test::futures::futures::executor::block_on;
+    use iced_test::runtime::user_interface::{Cache, UserInterface};
+
+    let mut renderer = block_on(<iced::Renderer as Headless>::new(Settings::default(), None))
+        .expect("a headless renderer");
+    let size = Size::new(400.0, 300.0);
+    let mut interface = UserInterface::build(scene, size, Cache::default(), &mut renderer);
+    let cursor = mouse::Cursor::Available(Point::ORIGIN);
+    let wheel = mouse::Event::WheelScrolled {
+        delta: ScrollDelta::Lines { x: 0.0, y: steps },
+    };
+    let _ = interface.update(
+        &iced::window::Headless,
+        &shell::Waker::noop(),
+        &[Event::Mouse(wheel)],
+        cursor,
+        &mut renderer,
+        &mut shell::Bus::new(),
+    );
+    let style = Style {
+        text_color: iced::Color::BLACK,
+    };
+    interface.draw(&mut renderer, &iced::Theme::Light, &style, cursor);
+    let pixels = renderer.screenshot(Size::new(400, 300), 1.0, iced::Color::WHITE);
+    pixels
+        .chunks_exact(4)
+        .skip(row * 400)
+        .take(400)
+        .map(|pixel| {
+            [
+                pixel[0], pixel[1], pixel[2], pixel[3],
+            ]
+        })
+        .collect()
+}
+
+/// Where along a row the pixels are that are of the one of red, green and blue at `channel`.
+fn run(
+    row: &[[u8; 4]],
+    channel: usize,
+) -> Vec<usize> {
+    row.iter()
+        .enumerate()
+        .filter(|(_, pixel)| {
+            (0..3).all(|other| match other == channel {
+                true => pixel[other] > 200,
+                false => pixel[other] < 80,
+            })
+        })
+        .map(|(x, _)| x)
+        .collect()
+}
+
+/// A card of 100 by 60 at 40 from the corner: ringed in red, in green and blue around that.
+fn ringed(is_haloed: bool) -> impl Widget<Message> + use<> {
+    use iced::Color;
+
+    let blank = container(space())
+        .width(100)
+        .height(60);
+    let rings = [
+        Color::from_rgb8(0, 255, 0),
+        Color::from_rgb8(0, 0, 255),
+    ];
+    let card = card(1, Point::new(40.0, 40.0), blank)
+        .ring(Some(Color::from_rgb8(255, 0, 0)))
+        .rings(rings)
+        .halo(is_haloed);
+    surface::<u32, Message>().push(card)
+}
+
+#[test]
+fn the_rings_of_a_card_are_no_thinner_on_the_screen_when_it_is_zoomed_far_out() {
+    // as large as it is: a ring of three on its edge, and two of two around it, gaps of two
+    let row = row_of(ringed(false), 0.0, 70);
+    let [red, green, blue] = [0, 1, 2].map(|channel| run(&row[..90], channel));
+    assert_eq!(red, [40, 41, 42]);
+    assert_eq!(green, [36, 37]);
+    assert_eq!(blue, [32, 33]);
+
+    // a quarter as large, each ring is two pixels still, with a gap of one before it
+    let row = row_of(ringed(false), -100.0, 17);
+    let [red, green, blue] = [0, 1, 2].map(|channel| run(&row[..22], channel));
+    assert_eq!(red, [10, 11]);
+    assert_eq!(green, [7, 8]);
+    assert_eq!(blue, [4, 5]);
+}
+
+#[test]
+fn a_halo_tints_what_lies_around_a_card_and_its_rings_however_far_out() {
+    let is_tinted = |is_haloed: bool, steps: f32, row: usize, x: usize| {
+        let [r, g, b, _] = row_of(ringed(is_haloed), steps, row)[x];
+        // faintly in the primary colour, which is no grey
+        r != 255 && (r != g || g != b)
+    };
+    // left of the outermost ring, as large as it is and a quarter as large
+    assert!(is_tinted(true, 0.0, 70, 26) && !is_tinted(false, 0.0, 70, 26));
+    assert!(is_tinted(true, -100.0, 17, 2) && !is_tinted(false, -100.0, 17, 2));
+}

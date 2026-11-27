@@ -487,6 +487,10 @@ pub mod focus {
 
 /// The cards and the wires between them.
 pub mod surface {
+    use iced::Color;
+
+    use super::{Scheme, spacing, stroke};
+
     /// How far a port reaches from its middle, and the side of the corner that resizes a card.
     pub const PORT: f32 = 5.0;
     pub const GRIP: f32 = 14.0;
@@ -508,6 +512,37 @@ pub mod surface {
     pub const PAGE: f32 = 40.0;
     /// How much of the smaller of two cards lies on the other for a drop to swap them.
     pub const OVERLAP: f32 = super::opacity::FADED;
+    /// How wide the ring on the edge of a card is among the cards, and on the screen at the least.
+    pub const RING: (f32, f32) = (stroke::THICK, stroke::MEDIUM);
+    /// The same of each ring around a card, of the gap before one, and of the reach of a halo.
+    pub const MARK: (f32, f32) = (stroke::MEDIUM, stroke::MEDIUM);
+    pub const GAP: (f32, f32) = (stroke::MEDIUM, stroke::THIN);
+    pub const HALO: (f32, f32) = (spacing::L, spacing::S);
+
+    /// How what a card stands for went: found sound or not, or done and well or not.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum Ring {
+        Sound,
+        Unsound,
+        Done,
+        Failed,
+    }
+
+    impl Ring {
+        /// The colour of the ring on the edge of the card: paler for what is found, and not done.
+        pub fn color(
+            self,
+            scheme: &Scheme,
+        ) -> Color {
+            let (success, error) = (scheme.success.color, scheme.error.color);
+            match self {
+                Self::Sound => scheme.pale(success),
+                Self::Unsound => scheme.pale(error),
+                Self::Done => success,
+                Self::Failed => error,
+            }
+        }
+    }
 }
 
 /// A drag that adjusts a number: how far for each step, and how it steps more as it is faster.
@@ -1178,37 +1213,6 @@ pub mod container {
             .background(Elevation::Raised.surface(scheme))
             .border(outlined(scheme, surface::CORNER))
             .shadow(Elevation::Raised.shadow(scheme))
-    }
-
-    /// How what a card stands for went: found sound or not, or done and well or not.
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    pub enum Ring {
-        Sound,
-        Unsound,
-        Done,
-        Failed,
-    }
-
-    /// A card ringed in the colour of how it went, if anything is known of that.
-    pub fn ringed(ring: Option<Ring>) -> impl Fn(&Theme) -> Style {
-        move |theme| {
-            let card = card(theme);
-            let scheme = Scheme::of(theme);
-            let (success, error) = (scheme.success.color, scheme.error.color);
-            // paler for what is only found, and not done
-            let color = match ring {
-                None => return card,
-                Some(Ring::Sound) => scheme.pale(success),
-                Some(Ring::Unsound) => scheme.pale(error),
-                Some(Ring::Done) => success,
-                Some(Ring::Failed) => error,
-            };
-            let border = card
-                .border
-                .color(color)
-                .width(stroke::THICK);
-            card.border(border)
-        }
     }
 
     /// A part of a card that shows what it is or gives, as the plate of its tile: an outlined well.
