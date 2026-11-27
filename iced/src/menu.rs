@@ -1,11 +1,12 @@
 //! A menu of groups at a point: a group under the cursor opens its items beside it.
 
 use iced::advanced::layout::{self, Layout};
+use iced::advanced::svg::{self, Renderer as _};
 use iced::advanced::text::{self, Renderer as _};
 use iced::advanced::widget::{self, Tree, tree};
 use iced::advanced::{Renderer as _, Shell, Text, Widget, mouse, renderer};
 use iced::alignment::Vertical;
-use iced::{Event, Fill, Length, Point, Rectangle, Renderer, Size, Theme};
+use iced::{Event, Fill, Length, Point, Rectangle, Renderer, Size, Theme, Vector};
 
 use crate::theme::{self, font, icon, sign, size, spacing, stroke};
 use crate::width_of;
@@ -19,6 +20,9 @@ const EDGE: f32 = theme::menu::EDGE;
 /// What marks a group as one that opens, and the room it takes at the end of its line.
 const OPENS: &str = sign::ONWARD;
 const MARK: f32 = icon::M + spacing::XXS;
+/// The side of the plate that the icon of an item lies on, and the room between it and the label.
+const PLATE: f32 = icon::M + 2.0 * spacing::XXS;
+const BESIDE: f32 = spacing::S;
 
 /// A menu of groups, each a label over items of a label and a message, at a point of its room.
 pub fn menu<Message>(
@@ -52,6 +56,7 @@ pub fn menu<Message>(
         groups,
         width,
         widths,
+        icons: Vec::new(),
         on_close: None,
     }
 }
@@ -65,10 +70,34 @@ pub struct Menu<Message> {
     /// The width of the list of the groups, and of the list of the items of each.
     width: f32,
     widths: Vec<f32>,
+    /// The icon of each item of each group that has one, if any are shown.
+    icons: Vec<Vec<Option<svg::Handle>>>,
     on_close: Option<Message>,
 }
 
 impl<Message> Menu<Message> {
+    /// Shows before the label of each item the icon that `icon` gives that label, on a plate.
+    pub fn icons(
+        mut self,
+        icon: impl Fn(&str) -> Option<svg::Handle>,
+    ) -> Self {
+        self.icons = self
+            .groups
+            .iter()
+            .map(|(_, items)| {
+                items
+                    .iter()
+                    .map(|(label, _)| icon(label))
+                    .collect()
+            })
+            .collect();
+        // every label of a list starts after the plates
+        for width in &mut self.widths {
+            *width += PLATE + BESIDE;
+        }
+        self
+    }
+
     /// The message for a press beside the lists.
     pub fn on_close(
         mut self,
@@ -311,7 +340,12 @@ impl<Message: Clone> Widget<Message, Theme, Renderer> for Menu<Message> {
             .map(|point| self.hit(state.open, point, bounds));
         let style = theme::menu::list(theme);
 
-        let list = |renderer: &mut Renderer, list: Rectangle, lines: &[(&str, bool, bool)]| {
+        // the lines of a list: each its label, whether it is lit and opens; and their icons
+        type Icons<'a> = Option<&'a Vec<Option<svg::Handle>>>;
+        let list = |renderer: &mut Renderer,
+                    list: Rectangle,
+                    lines: &[(&str, bool, bool)],
+                    icons: Icons<'_>| {
             let whole = renderer::Quad {
                 bounds: list,
                 border: style.border,
@@ -356,7 +390,33 @@ impl<Message: Clone> Widget<Message, Theme, Renderer> for Menu<Message> {
                     ellipsis: text::Ellipsis::None,
                     hint_factor: None,
                 };
-                renderer.fill_text(written(label), Point::new(line.x + SIDE, middle), ink, line);
+                let mut start = line.x + SIDE;
+                if let Some(icons) = icons {
+                    let at = Point::new(start, middle - PLATE / 2.0);
+                    let plate = Rectangle::new(at, Size::new(PLATE, PLATE));
+                    let under = renderer::Quad {
+                        bounds: plate,
+                        border: style.rim,
+                        ..renderer::Quad::default()
+                    };
+                    renderer.fill_quad(under, style.plate);
+                    if let Some(icon) = &icons[index] {
+                        // as large as fits in the plate, in its middle
+                        let drawn = renderer.measure_svg(icon);
+                        let (wide, tall) = (drawn.width as f32, drawn.height as f32);
+                        let scale = icon::M
+                            / wide
+                                .max(tall)
+                                .max(1.0);
+                        let bounds = Rectangle::new(
+                            plate.center() - Vector::new(wide, tall) * (scale / 2.0),
+                            Size::new(wide, tall) * scale,
+                        );
+                        renderer.draw_svg(svg::Svg::new(svg::Handle::clone(icon)), bounds, line);
+                    }
+                    start += PLATE + BESIDE;
+                }
+                renderer.fill_text(written(label), Point::new(start, middle), ink, line);
                 if *opens {
                     let mark = Point::new(line.x + line.width - MARK, middle);
                     renderer.fill_text(written(OPENS), mark, ink, line);
@@ -373,7 +433,7 @@ impl<Message: Clone> Widget<Message, Theme, Renderer> for Menu<Message> {
                 (label.as_str(), is_lit, true)
             })
             .collect();
-        list(renderer, self.list(bounds), &groups);
+        list(renderer, self.list(bounds), &groups, None);
         if let Some(group) = state.open {
             let items: Vec<_> = self.groups[group]
                 .1
@@ -386,7 +446,10 @@ impl<Message: Clone> Widget<Message, Theme, Renderer> for Menu<Message> {
                 .collect();
             // over the list of the groups, where they meet
             renderer.with_layer(bounds, |renderer| {
-                list(renderer, self.items(group, bounds), &items);
+                let icons = self
+                    .icons
+                    .get(group);
+                list(renderer, self.items(group, bounds), &items, icons);
             });
         }
     }

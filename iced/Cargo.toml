@@ -7,6 +7,7 @@ edition = "2024"
 iced = { workspace = true, features = [
     "advanced",
     "canvas",
+    "svg",
 ] }
 # the faces the editor is drawn in, which its plots are drawn in too
 rustd3-fonts = { workspace = true }

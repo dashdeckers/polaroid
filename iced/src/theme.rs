@@ -423,10 +423,25 @@ pub mod dot {
 
 /// The side of a drawn sign: a chevron, one in a line of text, one in a button, and on a tile.
 pub mod icon {
+    use iced::Color;
+
+    use super::Scheme;
+
     pub const S: f32 = 12.0;
     pub const M: f32 = 16.0;
     pub const L: f32 = 20.0;
     pub const XL: f32 = 40.0;
+
+    /// The colours an icon is drawn in, by name: its ink, three quieter, and the plate it lies on.
+    pub fn tones(scheme: &Scheme) -> [(&'static str, Color); 5] {
+        [
+            ("ink", scheme.on_surface),
+            ("grey", scheme.on_surface_variant),
+            ("faint", scheme.outline),
+            ("rule", scheme.outline_variant),
+            ("paper", scheme.surface_container_lowest),
+        ]
+    }
 }
 
 /// The height of what is pressed: a button that is a sign, a pill or a switch, and one afloat.
@@ -953,7 +968,7 @@ pub mod pick_list {
 pub mod menu {
     use iced::{Background, Border, Color, Shadow, Theme, border};
 
-    use super::{Scheme, container, opacity, radius, spacing};
+    use super::{Scheme, container, opacity, outlined, radius, spacing};
 
     /// The room above the first row and below the last, and beside the mark of the row that is lit.
     pub const EDGE: f32 = spacing::XS;
@@ -974,6 +989,9 @@ pub mod menu {
         /// A row that cannot be picked, and what is said at the end of a row.
         pub disabled: Color,
         pub aside: Color,
+        /// The plate that the icon of a row lies on, and the line around it.
+        pub plate: Color,
+        pub rim: Border,
     }
 
     /// A list as a menu is: a row is lit in the secondary container.
@@ -995,6 +1013,8 @@ pub mod menu {
                 .on_surface
                 .scale_alpha(opacity::DISABLED),
             aside: scheme.on_surface_variant,
+            plate: scheme.surface_container_lowest,
+            rim: outlined(scheme, radius::XS),
         }
     }
 }

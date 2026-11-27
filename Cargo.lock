@@ -4073,6 +4073,7 @@ dependencies = [
  "polaroid_core",
  "polaroid_iced",
  "rfd",
+ "rustd3-figure",
  "rustd3-iced",
  "schemars",
  "serde",

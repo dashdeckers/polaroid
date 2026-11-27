@@ -45,6 +45,8 @@ tokio = { optional = true, version = "1", features = [
 rfd = { optional = true, version = "0.18.0" }
 # the plot that is zoomed and panned, where a build has both the gui and plots
 rustd3-iced = { optional = true, workspace = true }
+# what draws the icon of each block from its typst
+rustd3-figure = { optional = true, workspace = true }
 
 [features]
 plot = [
@@ -56,6 +58,7 @@ gui = [
     "dep:image",
     "dep:polaroid_iced",
     "dep:rfd",
+    "dep:rustd3-figure",
     "dep:rustd3-iced",
     "dep:tokio",
 ]

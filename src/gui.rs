@@ -5,6 +5,7 @@ mod child;
 mod drawer;
 mod form;
 mod gallery;
+mod icon;
 mod known;
 mod layout;
 mod look;
@@ -37,6 +38,7 @@ use serde_json::Value;
 
 use self::card::Edit;
 use self::drawer::Drawer;
+use self::icon::Icons;
 use self::known::Known;
 use self::look::{Help, error, pill, title};
 use crate::polars::prelude::{DataFrame, DataType, PolarsResult, polars_err};
@@ -152,6 +154,8 @@ struct Editor {
     zoom: f32,
     /// What each block does, as the Markdown its description is written in.
     docs: BTreeMap<String, markdown::Content>,
+    /// The icon of each block, in the colours of the theme.
+    icons: Icons,
     theme: Theme,
 }
 
@@ -231,7 +235,9 @@ impl Editor {
                 ((*block).to_owned(), markdown::Content::parse(&doc))
             })
             .collect();
+        let theme = theme::light();
         let mut editor = Self {
+            icons: Icons::new(registry.icons(), &theme),
             catalog,
             registry,
             path,
@@ -251,7 +257,7 @@ impl Editor {
             help: Help::default(),
             zoom: 1.0,
             docs,
-            theme: theme::light(),
+            theme,
         };
         editor.check_wiring();
         editor
@@ -439,6 +445,11 @@ impl Editor {
                     iced::theme::Mode::Dark => theme::dark(),
                     _ => theme::light(),
                 };
+                self.icons = Icons::new(
+                    self.registry
+                        .icons(),
+                    &self.theme,
+                );
             }
         }
 
@@ -997,7 +1008,10 @@ impl Editor {
                         ((*category).to_owned(), blocks)
                     })
                     .collect();
-                menu(at, groups).on_close(Message::CloseMenu)
+                // each item is a block by its name
+                menu(at, groups)
+                    .icons(|block| self.icons.of(block))
+                    .on_close(Message::CloseMenu)
             })
     }
 }

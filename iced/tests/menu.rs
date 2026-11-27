@@ -98,3 +98,31 @@ fn both_lists_lie_inside_the_room() {
     assert_eq!(pressed_along(&mut simulator, 0, 699.0), ["a1"]);
     assert_eq!(pressed_along(&mut simulator, 0, 751.0), ["a3"]);
 }
+
+#[test]
+fn a_list_of_items_with_icons_is_wider_by_their_plates() {
+    // the faces are loaded before a label is measured
+    drop(simulator(scene(Point::ORIGIN)));
+    // how far right a press still picks the item of the second group
+    let end = |icons: bool| {
+        let groups = vec![("B".to_owned(), vec![("b1".to_owned(), Message::Item("b1"))])];
+        let scene = match icons {
+            true => menu(Point::new(50.0, 50.0), groups).icons(|_| None),
+            false => menu(Point::new(50.0, 50.0), groups),
+        };
+        let mut simulator = simulator(scene);
+        moved(&mut simulator, A);
+        (BESIDE..400)
+            .rev()
+            .find(|x| {
+                simulator.point_at(Point::new(*x as f32, A.y));
+                simulator.simulate(click());
+                simulator
+                    .drain()
+                    .any(|message| message == Message::Item("b1"))
+            })
+            .expect("the item is beside its group")
+    };
+    // a plate of 20 and the 8 between it and the label
+    assert_eq!(end(true), end(false) + 28);
+}
