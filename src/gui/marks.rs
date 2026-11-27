@@ -2,7 +2,7 @@
 
 use std::collections::BTreeSet;
 
-use iced::widget::{column, container, row, rule, text};
+use iced::widget::{button, column, container, mouse_area, row, rule, space, text};
 use iced::{Center, Color, Element, Fill, Function, Widget};
 use polaroid_iced::theme::{self, Tone, dot, extent, font, hue, spacing, stroke};
 use serde_json::Value;
@@ -16,10 +16,12 @@ const TAGS: &str = "tags";
 const COLORS: &str = "colors";
 const CATEGORIES: &str = "categories";
 
-/// What of the tags is under way: the picker that is open.
+/// What of the tags is under way: the picker that is open, of tags or of a colour.
 #[derive(Default)]
 pub struct Marks {
     picking: Option<Picking>,
+    /// What the picker of a colour is open for.
+    painting: Option<Mark>,
 }
 
 /// What a picker of tags is open for, and what it shows that the pipeline does not hold.
@@ -47,6 +49,17 @@ pub enum Message {
     Rename(String, String),
     /// Nothing carries this tag any more.
     Remove(String),
+    /// The picker of the colour of this opens, or with none the one that is open closes.
+    Paint(Option<Mark>),
+    /// This is of this colour from now on.
+    Painted(Mark, Color),
+}
+
+/// What has a colour of its own: a tag, or a category of blocks.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Mark {
+    Tag(String),
+    Category(String),
 }
 
 impl Marks {
@@ -57,13 +70,25 @@ impl Marks {
         pipeline: &mut Pipeline,
     ) -> bool {
         match (message, &mut self.picking) {
+            // a picker of tags opens with no colour being picked in it
             (Message::Pick(name), _) => {
+                self.painting = None;
                 self.picking = Some(Picking {
                     name,
                     ..Picking::default()
                 });
             }
-            (Message::Close, _) => self.picking = None,
+            (Message::Close, _) => (self.picking, self.painting) = (None, None),
+            (Message::Paint(mark), _) => self.painting = mark,
+            (Message::Painted(mark, color), _) => {
+                self.painting = None;
+                let (kind, name) = match mark {
+                    Mark::Tag(name) => (TAGS, name),
+                    Mark::Category(name) => (CATEGORIES, name),
+                };
+                object(&mut pipeline.ui, &[COLORS, kind]).insert(name, hex(color).into());
+                return true;
+            }
             (Message::Type(typed), Some(picking)) => picking.typed = typed,
             (Message::Toggle(tag), Some(picking)) => {
                 let is_carried = of(pipeline, &picking.name).contains(tag.as_str());
@@ -110,6 +135,14 @@ impl Marks {
         help: Help,
     ) -> Element<'a, Message> {
         let used = all(pipeline);
+        // a colour is picked in the picker of tags while that is open, and else here
+        let painting = self
+            .painting
+            .as_ref()
+            .filter(|_| {
+                self.picking
+                    .is_none()
+            });
         let tags = used
             .iter()
             .copied()
@@ -124,13 +157,14 @@ impl Marks {
                 let uses = carried(pipeline)
                     .filter(|carried| tags(carried).any(|carried| carried == tag))
                     .count();
-                row![
-                    look::dot(color(&pipeline.ui, tag), dot::M),
+                let hue = color(&pipeline.ui, tag);
+                let line = row![
+                    look::dot(hue, dot::M),
                     help.of(
                         name,
                         "The name of the tag. Type another and press Enter to rename it wherever \
                          it is carried; the border is orange until then, and red while the name \
-                         is empty or another tag's.",
+                         is empty or another tag's. Right-click the line to pick its colour.",
                     ),
                     help.of(
                         look::aside(uses.to_string()),
@@ -142,8 +176,8 @@ impl Marks {
                     ),
                 ]
                 .spacing(spacing::S)
-                .align_y(Center)
-                .boxed()
+                .align_y(Center);
+                painted(painting, Mark::Tag(tag.to_owned()), hue, line)
             })
             .collect::<Vec<_>>();
         // under them and a line, the categories of blocks, each in the colour that stands for it
@@ -153,15 +187,19 @@ impl Marks {
             .iter()
             .filter(|category| shows(category))
             .map(|category| {
-                let named = row![
-                    look::dot(self::category(&pipeline.ui, catalog, category), dot::M),
-                    text(*category)
+                let hue = self::category(&pipeline.ui, catalog, category);
+                let line = row![
+                    look::dot(hue, dot::M),
+                    text(*category),
+                    space::horizontal()
                 ]
                 .spacing(spacing::S)
                 .align_y(Center);
+                let mark = Mark::Category((*category).to_owned());
                 help.of(
-                    named,
-                    "A category of blocks, in the colour that stands for it.",
+                    painted(painting, mark, hue, line),
+                    "A category of blocks, in the colour that stands for it. Right-click it to \
+                     pick another.",
                 )
             });
         column(tags)
@@ -194,9 +232,16 @@ impl Marks {
             .map(|tag| {
                 let hue = color(&pipeline.ui, tag);
                 let is_carried = carried.contains(tag);
-                look::ticked(Some(hue), tag, is_carried, move |_| {
-                    Message::Toggle(tag.to_owned())
-                })
+                let line = row![
+                    look::ticked(Some(hue), tag, is_carried, move |_| {
+                        Message::Toggle(tag.to_owned())
+                    }),
+                    space::horizontal()
+                ];
+                let painting = self
+                    .painting
+                    .as_ref();
+                painted(painting, Mark::Tag(tag.to_owned()), hue, line)
             });
         let new = look::field("new tag", &picking.typed, font::SANS, Tone::Given)
             .on_input(Message::Type)
@@ -399,6 +444,44 @@ pub fn tidy(pipeline: &mut Pipeline) {
     ui.retain(is_held);
     if ui.is_empty() {
         pipeline.ui = Value::Null;
+    }
+}
+
+/// `content`, which stands for `mark` in its `hue`: a right press lays the palette open under it.
+fn painted<'a>(
+    painting: Option<&Mark>,
+    mark: Mark,
+    hue: Color,
+    content: impl Widget<Message> + 'a,
+) -> Element<'a, Message> {
+    let is_open = painting == Some(&mark);
+    // what lies under it makes room for the palette, which so covers nothing
+    let palette = is_open.then(|| {
+        let hues = hue::PALETTE
+            .into_iter()
+            .map(|picked| {
+                let swatch = space()
+                    .width(dot::L)
+                    .height(dot::L);
+                let is_picked = picked.into_rgba8() == hue.into_rgba8();
+                button(swatch)
+                    .padding(0)
+                    .style(theme::button::swatch(picked, is_picked))
+                    .on_press(Message::Painted(mark.clone(), picked))
+                    .boxed()
+            });
+        row(hues)
+            .spacing(spacing::XS)
+            .wrap()
+    });
+    // a second right press closes it again
+    let toggle = Message::Paint((!is_open).then_some(mark));
+    let content = mouse_area(content).on_right_press(toggle);
+    match palette {
+        Some(palette) => column![content, palette]
+            .spacing(spacing::XS)
+            .boxed(),
+        None => content.boxed(),
     }
 }
 

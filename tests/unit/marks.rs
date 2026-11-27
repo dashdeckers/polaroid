@@ -260,3 +260,143 @@ fn the_categories_are_listed_under_the_tags_each_in_the_hue_at_its_place_from_th
     assert_eq!(category(&pipeline.ui, &catalog, "Plot"), Color::BLACK);
     assert_eq!(color(&pipeline.ui, "Plot"), Color::WHITE);
 }
+
+/// How far down a view what says `said` is shown.
+fn top(
+    view: Element<'_, Message>,
+    said: &str,
+) -> f32 {
+    simulator(view)
+        .find(said)
+        .unwrap()
+        .bounds()
+        .y
+}
+
+/// What a press and release of `button` at `at` asks of `view`.
+fn pressed(
+    view: Element<'_, Message>,
+    at: iced::Point,
+    button: iced::mouse::Button,
+) -> Vec<Message> {
+    use iced::mouse::Event::{ButtonPressed, ButtonReleased};
+
+    let mut ui = simulator(view);
+    ui.point_at(at);
+    ui.simulate(
+        [
+            ButtonPressed(button),
+            ButtonReleased(button),
+        ]
+        .map(iced::Event::Mouse),
+    );
+    ui.into_messages()
+        .collect()
+}
+
+#[test]
+fn a_right_press_on_a_tag_or_a_category_lays_the_palette_open_under_it_to_pick_its_colour() {
+    use iced::mouse::Button;
+
+    let (mut pipeline, mut marks) = (pipeline(), Marks::default());
+    tag(&mut marks, &mut pipeline, "net", &["money"]);
+    marks.update(Message::Close, &mut pipeline);
+    let catalog = catalog(&["Plot"]);
+    let name = simulator(list(&marks, &pipeline, &catalog))
+        .find("money")
+        .unwrap()
+        .bounds();
+    let plot = top(list(&marks, &pipeline, &catalog), "Plot");
+    let right = |marks: &mut Marks, pipeline: &mut Pipeline| {
+        let asked = pressed(
+            list(marks, pipeline, &catalog),
+            name.center(),
+            Button::Right,
+        );
+        assert_eq!(asked.len(), 1, "{asked:?}");
+        for message in asked {
+            assert!(!marks.update(message, pipeline));
+        }
+    };
+    right(&mut marks, &mut pipeline);
+    assert_eq!(marks.painting, Some(Mark::Tag("money".to_owned())));
+
+    // the palette covers nothing: what is under its line makes room for it
+    let room = top(list(&marks, &pipeline, &catalog), "Plot") - plot;
+    assert!(room >= dot::L, "{room}");
+    // and a second right press closes it again
+    right(&mut marks, &mut pipeline);
+    assert_eq!(marks.painting, None);
+    assert_eq!(top(list(&marks, &pipeline, &catalog), "Plot"), plot);
+
+    // the second of its hues is pressed, under the line from where that starts
+    right(&mut marks, &mut pipeline);
+    let second = iced::Point::new(
+        dot::L * 1.5 + spacing::XS,
+        name.y + name.height + spacing::XS + dot::L / 2.0,
+    );
+    let asked = pressed(list(&marks, &pipeline, &catalog), second, Button::Left);
+    assert!(
+        matches!(
+            &asked[..],
+            [Message::Painted(
+                Mark::Tag(_),
+                _
+            )]
+        ),
+        "{asked:?}"
+    );
+    for message in asked {
+        assert!(marks.update(message, &mut pipeline));
+    }
+    assert_eq!(color(&pipeline.ui, "money"), hue::PALETTE[1]);
+    assert_eq!(marks.painting, None);
+
+    // a category keeps the colour that is picked for it apart from those of the tags
+    let plot = || Mark::Category("Plot".to_owned());
+    marks.update(Message::Paint(Some(plot())), &mut pipeline);
+    assert!(marks.update(Message::Painted(plot(), hue::PALETTE[4]), &mut pipeline));
+    assert_eq!(category(&pipeline.ui, &catalog, "Plot"), hue::PALETTE[4]);
+    assert_eq!(
+        pipeline.ui["colors"],
+        json!({ "tags": { "money": "#cf6400" }, "categories": { "Plot": "#b750cf" } })
+    );
+}
+
+#[test]
+fn a_picker_of_tags_opens_with_no_palette_that_was_open_in_the_list() {
+    let (mut pipeline, mut marks) = (pipeline(), Marks::default());
+    tag(&mut marks, &mut pipeline, "net", &["money"]);
+    marks.update(Message::Close, &mut pipeline);
+    let money = || Message::Paint(Some(Mark::Tag("money".to_owned())));
+    let catalog = catalog(&["Plot"]);
+    // how far down the first category is listed, and the field of a new tag in the picker
+    let tops = |marks: &Marks, pipeline: &Pipeline| {
+        let picker = marks
+            .picker(pipeline, "net")
+            .map(|picker| top(picker, "new tag"));
+        (top(list(marks, pipeline, &catalog), "Plot"), picker)
+    };
+    let (closed, _) = tops(&marks, &pipeline);
+    marks.update(money(), &mut pipeline);
+    let (open, _) = tops(&marks, &pipeline);
+    assert!(open > closed);
+
+    marks.update(Message::Pick("net".to_owned()), &mut pipeline);
+    let (listed, picker) = tops(&marks, &pipeline);
+    assert_eq!(listed, closed);
+    // one that is opened in the picker is open there alone
+    marks.update(money(), &mut pipeline);
+    let (listed, painted) = tops(&marks, &pipeline);
+    assert_eq!(listed, closed);
+    assert!(painted > picker);
+}
+
+/// The tags in use and the categories as they are listed, all of them.
+fn list<'a>(
+    marks: &'a Marks,
+    pipeline: &'a Pipeline,
+    catalog: &'a Catalog,
+) -> Element<'a, Message> {
+    marks.list(pipeline, catalog, |_| true, Help::default())
+}
