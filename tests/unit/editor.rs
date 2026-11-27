@@ -32,6 +32,17 @@ fn chain(len: usize) -> Editor {
     Editor::new(registry, "p.json".to_owned(), pipeline)
 }
 
+/// The field that holds `value`, which the text of a tile that says the same is not.
+fn field(value: &str) -> impl iced_test::Selector<Output = iced_test::selector::Target> + '_ {
+    use iced_test::selector::{Candidate, Target};
+
+    move |candidate: Candidate<'_>| {
+        let is_it =
+            matches!(&candidate, Candidate::TextInput { state, .. } if state.text() == value);
+        is_it.then(|| Target::from(candidate))
+    }
+}
+
 fn status(editor: &Editor) -> Vec<Status> {
     editor
         .pipeline
@@ -80,7 +91,7 @@ fn a_node_wired_badly_is_rejected() {
 }
 
 #[test]
-fn a_press_on_its_toggle_lays_a_card_open() {
+fn a_double_click_on_its_tile_lays_a_card_open_and_its_toggle_closes_it() {
     let mut editor = chain(1);
     let node = |editor: &Editor| {
         editor
@@ -90,9 +101,16 @@ fn a_press_on_its_toggle_lays_a_card_open() {
     };
     assert!(!layout::is_open(&node(&editor)));
 
+    // a closed card has no toggle, and one press on its tile does not open it
     let mut ui = simulator(editor.view());
-    ui.click(theme::sign::OPEN)
+    assert!(
+        ui.find(theme::sign::CLOSE)
+            .is_err()
+    );
+    ui.click("n0")
         .unwrap();
+    assert_eq!(ui.drain().count(), 0);
+    ui.simulate(iced_test::simulator::click());
     for message in ui
         .into_messages()
         .collect::<Vec<_>>()
@@ -102,8 +120,84 @@ fn a_press_on_its_toggle_lays_a_card_open() {
     assert!(layout::is_open(&node(&editor)));
     assert!(editor.is_dirty);
 
-    let _ = editor.update(Message::Edit("n0".to_owned(), Edit::Toggle));
+    let mut ui = simulator(editor.view());
+    ui.click(theme::sign::CLOSE)
+        .unwrap();
+    for message in ui
+        .into_messages()
+        .collect::<Vec<_>>()
+    {
+        let _ = editor.update(message);
+    }
     assert!(!layout::is_open(&node(&editor)));
+}
+
+#[test]
+fn the_small_table_saves_its_node_from_its_tile_and_from_its_open_card() {
+    let mut editor = chain(1);
+    for is_open in [false, true] {
+        let mut ui = simulator(editor.view());
+        // it ends the line of the block on a tile, and stands before the id on an open card
+        let middle = theme::control::S / 2.0;
+        let table = match is_open {
+            false => {
+                let block = ui
+                    .find("scan_parquet")
+                    .unwrap()
+                    .bounds();
+                Point::new(block.x + block.width + middle, block.center_y())
+            }
+            true => {
+                let id = ui
+                    .find(field("n0"))
+                    .unwrap()
+                    .bounds();
+                Point::new(id.x - theme::spacing::S - middle, id.center_y())
+            }
+        };
+        ui.point_at(table);
+        ui.simulate(iced_test::simulator::click());
+        for message in ui
+            .into_messages()
+            .collect::<Vec<_>>()
+        {
+            let _ = editor.update(message);
+        }
+        // saved from the closed card, and no longer from the open one
+        assert_eq!(
+            editor
+                .pipeline
+                .outputs
+                .len(),
+            usize::from(!is_open)
+        );
+        let _ = editor.update(Message::Edit("n0".to_owned(), Edit::Toggle));
+    }
+}
+
+#[test]
+fn a_tile_says_what_is_wrong_with_its_node_when_hovered() {
+    let mut editor = chain(1);
+    let checks = [("n0".to_owned(), Err("no such file".to_owned()))].into();
+    let _ = editor.update(Message::Checked(Ok(checks)));
+    let mut ui = simulator(editor.view());
+    assert!(
+        ui.find("no such file")
+            .is_err()
+    );
+    let position = ui
+        .find("n0")
+        .unwrap()
+        .bounds()
+        .center();
+    ui.point_at(position);
+    ui.simulate([iced::Event::Mouse(
+        iced::mouse::Event::CursorMoved { position },
+    )]);
+    assert!(
+        ui.find("no such file")
+            .is_ok()
+    );
 }
 
 #[test]
@@ -568,7 +662,7 @@ fn a_load_and_a_new_take_the_place_of_the_pipeline() {
 }
 
 #[test]
-fn a_closed_card_is_as_wide_as_its_id_and_wires_by_its_ports_alone() {
+fn a_tile_is_a_square_and_an_open_card_is_as_wide_as_its_id() {
     let mut editor = chain(2);
     let long = "a_rather_long_name_for_a_scan_of_orders";
     let _ = editor.update(Message::Edit(
@@ -577,23 +671,37 @@ fn a_closed_card_is_as_wide_as_its_id_and_wires_by_its_ports_alone() {
     ));
     let _ = editor.update(Message::Edit("n1".to_owned(), Edit::Wire(0, String::new())));
 
+    // a tile cuts a long id short, and says nothing of what its node reads
     let mut ui = simulator(editor.view());
     let id = ui
         .find(long)
         .unwrap();
-    assert!(id.bounds().width > 250.0);
-    // which node it reads is picked on the open card, with its args
+    assert!(id.bounds().width < theme::surface::TILE);
     assert!(
         ui.find("unwired")
             .is_err()
     );
     drop(ui);
 
-    let _ = editor.update(Message::Edit("n1".to_owned(), Edit::Toggle));
+    // which node it reads is picked on the open card, with its args
+    for id in [long, "n1"] {
+        let _ = editor.update(Message::Edit(id.to_owned(), Edit::Toggle));
+    }
     let mut ui = simulator(editor.view());
     assert!(
         ui.find("unwired")
             .is_ok()
+    );
+    drop(ui);
+    // the id is whole in its field, though the card was made no wider than its tile
+    let made = Size::new(theme::surface::TILE, 0.0);
+    let _ = editor.update(Message::Resize(long.to_owned(), made));
+    let mut ui = simulator(editor.view());
+    let id = ui
+        .find(field(long))
+        .unwrap();
+    assert!(
+        id.bounds().width > polaroid_iced::width_of(long, theme::size::TITLE, theme::font::SANS)
     );
 }
 
@@ -716,17 +824,15 @@ fn a_card_picks_an_expression_by_its_name() {
     );
 }
 
-/// What dragging across the label of an open or closed card of a scan selects.
-fn selected(is_open: bool) -> String {
+/// What dragging across the error on the open card of a scan selects.
+fn selected() -> String {
     use iced::advanced::widget::operation::{self, Operation, Outcome};
     use iced::mouse;
 
     let mut editor = chain(1);
     let checks = [("n0".to_owned(), Err("no such file".to_owned()))].into();
     let _ = editor.update(Message::Checked(Ok(checks)));
-    if is_open {
-        let _ = editor.update(Message::Edit("n0".to_owned(), Edit::Toggle));
-    }
+    let _ = editor.update(Message::Edit("n0".to_owned(), Edit::Toggle));
 
     let mut ui = simulator(editor.view());
     let bounds = ui
@@ -756,8 +862,7 @@ fn selected(is_open: bool) -> String {
 
 #[test]
 fn the_text_of_a_card_is_selected_by_a_drag_across_it() {
-    assert_eq!(selected(true), "no such file");
-    assert_eq!(selected(false), "no such file");
+    assert_eq!(selected(), "no such file");
 }
 
 #[test]
@@ -941,8 +1046,9 @@ fn an_id_is_given_on_enter_and_shown_again_when_its_field_is_left() {
             .id
             .clone()
     };
+    let _ = editor.update(Message::Edit("n1".to_owned(), Edit::Toggle));
     let mut ui = simulator(editor.view());
-    ui.click("n1")
+    ui.click(field("n1"))
         .unwrap();
     ui.tap_key(Named::End);
     ui.typewrite("x");
@@ -957,7 +1063,7 @@ fn an_id_is_given_on_enter_and_shown_again_when_its_field_is_left() {
 
     // another node's id stays typed, and Enter does not give it
     let mut ui = simulator(editor.view());
-    ui.click("n1x")
+    ui.click(field("n1x"))
         .unwrap();
     ui.tap_key(Named::End);
     for _ in 0..2 {
@@ -966,14 +1072,14 @@ fn an_id_is_given_on_enter_and_shown_again_when_its_field_is_left() {
     ui.typewrite("0");
     ui.tap_key(Named::Enter);
     assert!(
-        ui.find("n1x")
+        ui.find(field("n1x"))
             .is_err()
     );
     // until the field is left, which shows the id again
     ui.point_at(Point::new(700.0, 600.0));
     ui.simulate(iced_test::simulator::click());
     assert!(
-        ui.find("n1x")
+        ui.find(field("n1x"))
             .is_ok()
     );
     for message in ui
@@ -986,17 +1092,17 @@ fn an_id_is_given_on_enter_and_shown_again_when_its_field_is_left() {
 
     // and so is what was typed and never given
     let mut ui = simulator(editor.view());
-    ui.click("n1x")
+    ui.click(field("n1x"))
         .unwrap();
     ui.typewrite("yz");
     assert!(
-        ui.find("n1x")
+        ui.find(field("n1x"))
             .is_err()
     );
     ui.point_at(Point::new(700.0, 600.0));
     ui.simulate(iced_test::simulator::click());
     assert!(
-        ui.find("n1x")
+        ui.find(field("n1x"))
             .is_ok()
     );
 }

@@ -8,12 +8,12 @@ use serde_json::json;
 
 use crate::{Node, Pipeline};
 
-/// The width of a closed card.
-pub const WIDTH: f32 = extent::M;
+/// The side of a tile, which a closed card is.
+const TILE: f32 = surface::TILE;
 /// The width of an open card until it is resized; it is as tall as what it holds.
 const OPEN: f32 = extent::XXL;
 
-/// Where the first card is placed from the corner, and how far the next are beside and below it.
+/// Where the first tile is placed from the corner, and the room beside and below each.
 const EDGE: f32 = surface::EDGE;
 const BESIDE: f32 = surface::BESIDE;
 const BELOW: f32 = surface::BELOW;
@@ -96,8 +96,8 @@ pub fn layout(pipeline: &mut Pipeline) {
             place(
                 node,
                 Point::new(
-                    EDGE + column as f32 * (WIDTH + BESIDE),
-                    EDGE + *row as f32 * BELOW,
+                    EDGE + column as f32 * (TILE + BESIDE),
+                    EDGE + *row as f32 * (TILE + BELOW),
                 ),
             );
             *row += 1;

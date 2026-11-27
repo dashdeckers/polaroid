@@ -1,10 +1,10 @@
-//! The card of a node: its id, inputs and args, and what is known of it.
+//! The card of a node: closed its tile, and open its id, inputs and args, and what is known of it.
 
 use std::rc::Rc;
 
 use iced::advanced::widget;
 use iced::widget::canvas::{self, Frame, Path, Stroke};
-use iced::widget::{Component, canvas as draw, column, container, markdown, row, space, text};
+use iced::widget::{Component, canvas as draw, column, container, markdown, row, space, svg, text};
 use iced::{Center, Fill, Point, Rectangle, Renderer, Size, Theme, Widget, mouse};
 use polaroid_iced::theme::container::Ring;
 use polaroid_iced::theme::{self, Scheme, Tone, control, font, icon, size, spacing, stroke};
@@ -13,6 +13,7 @@ use serde_json::Value;
 
 use super::form::{Expressions, Form};
 use super::gallery::{self, Gallery};
+use super::icon::Icons;
 use super::known::{Known, Status};
 use super::look::{self, Help, cross, error, round, toggle};
 use super::{Editor, Message, drawer, form, layout};
@@ -22,20 +23,20 @@ use crate::{Described, Node, Pipeline, Registry, schema};
 /// The space around what a card holds, and between its lines.
 const PAD: f32 = spacing::M;
 const GAP: f32 = spacing::S;
-/// The height of the line of the id.
+/// The side of a tile, which a closed card is.
+const TILE: f32 = theme::surface::TILE;
+/// The height of the line of the id, and the side of the plate that an open card is dragged by.
 const HEAD: f32 = theme::line(size::TITLE) + theme::FIELD.top + theme::FIELD.bottom;
 /// The small table, a pixel under a sign so that its lines are crisp.
 const ICON: Size = Size::new(icon::M - 1.0, icon::S - 1.0);
 /// What the border and the cursor of a field take beside the room around its text.
 const EDGE: f32 = stroke::MEDIUM;
-/// The width of the handle that drags a card.
-const GRAB: f32 = theme::surface::GRIP;
 
 /// The width of a card whose line of the id shows all of an id that is this wide.
 fn around(id: f32) -> f32 {
     let field = id + theme::FIELD.x() + 2.0 * EDGE;
-    // in the card's padding: the handle, three buttons and the field, with a gap between each two
-    2.0 * PAD + GRAB + 3.0 * control::S + field + 4.0 * GAP
+    // in the card's padding: the plate, three buttons and the field, with a gap between each two
+    2.0 * PAD + HEAD + 3.0 * control::S + field + 4.0 * GAP
 }
 
 /// A change to a node.
@@ -184,6 +185,7 @@ impl Editor {
             doc: self
                 .docs
                 .get(&node.block),
+            icons: &self.icons,
             theme: &self.theme,
             help: self.help,
             zoom: self.zoom,
@@ -191,9 +193,12 @@ impl Editor {
     }
 }
 
-/// The part of a card that drags it: left of its toggle.
-pub fn handle() -> Rectangle {
-    Rectangle::new(Point::new(PAD, PAD), Size::new(GRAB, HEAD))
+/// The part of a card that drags it, and opens or closes it at a double press: its plate.
+pub fn handle(is_open: bool) -> Rectangle {
+    match is_open {
+        true => Rectangle::new(Point::new(PAD, PAD), Size::new(HEAD, HEAD)),
+        false => Rectangle::with_size(Size::new(TILE, TILE)),
+    }
 }
 
 /// The id of the line of a card that the port of its input `slot` is level with.
@@ -201,12 +206,15 @@ pub fn anchor(slot: usize) -> widget::Id {
     widget::Id::from(format!("input {slot}"))
 }
 
-/// How far below the top of a card its output port is: level with its id.
-pub fn output() -> f32 {
-    PAD + HEAD / 2.0
+/// How far below the top of a card its output port is: level with its id, or halfway down its tile.
+pub fn output(is_open: bool) -> f32 {
+    match is_open {
+        true => PAD + HEAD / 2.0,
+        false => TILE / 2.0,
+    }
 }
 
-/// A node as a card: closed it is its id and inputs, and open its args and table as well.
+/// A node as a card: closed it is its tile, and open its id, its args and what it gives.
 pub struct Card<'a> {
     node: &'a Node,
     defs: &'a Value,
@@ -232,6 +240,8 @@ pub struct Card<'a> {
     shown: &'a gallery::State,
     /// What its block does, as Markdown, and the theme to lay that out in.
     doc: Option<&'a markdown::Content>,
+    /// The icon of each block, of which its own is on its plate.
+    icons: &'a Icons,
     theme: &'a Theme,
     help: Help,
     /// How many times their size the cards are drawn.
@@ -299,19 +309,27 @@ impl<'a> Component<'a, Message> for Card<'a> {
         state: &form::State,
     ) -> impl Widget<Event> + 'a {
         let node = self.node;
-        let status = self.status;
-        let is_open = layout::is_open(node);
+        let style = theme::container::ringed(ring(self.status));
+        if !layout::is_open(node) {
+            // a closed card is its tile alone, with a port down its edge for each frame it reads
+            let ports = (0..self.reads().len()).map(|slot| {
+                container(space())
+                    .id(anchor(slot))
+                    .height(Fill)
+                    .boxed()
+            });
+            let ports = column(ports).height(TILE);
+            return container(row![ports, self.tile()].boxed()).style(style);
+        }
         let args = self
             .block
             .map_or(&Value::Null, |block| &block.args);
         let schema = schema::resolve(self.defs, args);
 
         // as wide as it was made, and as the line of its id with all of the id in view
-        let made = match is_open {
-            true => layout::size(node).width,
-            false => layout::WIDTH,
-        };
-        let width = made.max(around(width_of(&node.id, size::TITLE, font::SANS)));
+        let width = layout::size(node)
+            .width
+            .max(around(width_of(&node.id, size::TITLE, font::SANS)));
         // the names of all it is given in one column: the nodes it reads, then its args
         let args = schema["properties"]
             .as_object()
@@ -324,83 +342,55 @@ impl<'a> Component<'a, Message> for Card<'a> {
             .copied();
         let label_width = look::label_width(reads.chain(args));
 
-        let head = self.head(is_open);
-        let inputs = self.inputs(label_width, is_open);
-        let wrong = match self.found {
-            Some(Err(e)) => Some(error(e)),
-            _ => None,
-        };
-        let failed = self
-            .failed
-            .map(error);
+        // what the block does, laid out as the Markdown it is written in
+        let does = self.doc.map(|doc| {
+            let settings = markdown::Settings {
+                font: font::SANS,
+                inline_code_font: font::MONO,
+                code_block_font: font::MONO,
+                ..markdown::Settings::with_text_size(size::NOTE)
+            };
+            markdown::view(doc.items(), settings, self.theme.clone()).map(|_| Event::Link)
+        });
+        // an expression is picked by its name, and edited in the drawer
+        let (value, held) = form::Draft::shown(self.draft, &node.args);
+        let form = Form {
+            state,
+            defs: self.defs,
+            pipeline: self.pipeline,
+            offers: &form::Offers::default(),
+            columns: &self.columns,
+            expressions: Expressions::Named,
+            check: &self.check(),
+            value,
+            held,
+            label_width,
+            help: self.help,
+        }
+        .view(schema)
+        .map(Event::Form);
         // the errors last: a line that comes and goes takes the state of all below it
-        let lines = match is_open {
-            true => {
-                // what the block does, laid out as the Markdown it is written in
-                let does = self.doc.map(|doc| {
-                    let settings = markdown::Settings {
-                        font: font::SANS,
-                        inline_code_font: font::MONO,
-                        code_block_font: font::MONO,
-                        ..markdown::Settings::with_text_size(size::NOTE)
-                    };
-                    markdown::view(doc.items(), settings, self.theme.clone()).map(|_| Event::Link)
-                });
-                // an expression is picked by its name, and edited in the drawer
-                let (value, held) = form::Draft::shown(self.draft, &node.args);
-                let form = Form {
-                    state,
-                    defs: self.defs,
-                    pipeline: self.pipeline,
-                    offers: &form::Offers::default(),
-                    columns: &self.columns,
-                    expressions: Expressions::Named,
-                    check: &self.check(),
-                    value,
-                    held,
-                    label_width,
-                    help: self.help,
-                }
-                .view(schema)
-                .map(Event::Form);
-                column![
-                    head,
-                    does,
-                    inputs,
-                    form,
-                    self.gallery(width, true),
-                    self.table(),
-                    wrong,
-                    failed
-                ]
-            }
-            false => {
-                // a closed card says no more of its block than its name
-                let block = text(&node.block)
-                    .size(size::NOTE)
-                    .font(font::MONO)
-                    .style(theme::text::muted);
-                // and of its images one, small
-                column![
-                    head,
-                    inputs,
-                    block,
-                    self.gallery(width, false),
-                    wrong,
-                    failed
-                ]
-            }
-        };
+        let lines = column![
+            self.head(),
+            does,
+            self.inputs(label_width),
+            form,
+            self.gallery(width),
+            self.table(),
+            self.wrong()
+                .map(error),
+        ];
         // as tall as what it holds, or as the surface makes it, where the table takes the rest
         container(
             lines
                 .spacing(GAP)
-                .height(Fill),
+                .height(Fill)
+                .boxed(),
         )
         .width(width)
         .height(Fill)
         .padding(PAD)
-        .style(theme::container::ringed(ring(status)))
+        .style(style)
     }
 }
 
@@ -423,36 +413,118 @@ impl<'a> Card<'a> {
             .map_or(&[], |block| block.inputs)
     }
 
-    /// The line of its id: room for the handle, its toggle, the small table, the id and the cross.
-    fn head(
+    /// Why a Check rejected it or a Run of it failed, if either did.
+    fn wrong(&self) -> Option<&'a str> {
+        match self.found {
+            Some(Err(e)) => Some(e.as_str()),
+            _ => self.failed,
+        }
+    }
+
+    /// The icon of its block, this large.
+    fn icon(
         &self,
-        is_open: bool,
-    ) -> impl Widget<Event> + use<'a> {
-        let nodes = &self.pipeline.nodes;
-        let save = match self.is_output {
+        side: f32,
+    ) -> Option<impl Widget<Event> + use<'a>> {
+        let icon = self
+            .icons
+            .of(&self.node.block)?;
+        let icon = svg(icon)
+            .width(side)
+            .height(side);
+        Some(icon)
+    }
+
+    /// The button that has a Run save the frame of its node, lit when it does.
+    fn save(&self) -> impl Widget<Event> + use<'a> {
+        let style = match self.is_output {
             true => theme::button::filled,
             false => theme::button::icon,
         };
-        let icon = draw(Icon(self.is_output))
+        let table = draw(Icon(self.is_output))
             .width(ICON.width)
             .height(ICON.height);
+        self.help.of(
+            round(table)
+                .style(style)
+                .on_press(Event::Edit(Edit::Output(!self.is_output))),
+            "Keeps the frame of this node at the next Run, to show it on the open card. Scroll \
+             over the table, with Shift for sideways; drag across cells and press Ctrl+C to copy \
+             them.",
+        )
+    }
+
+    /// Its tile: a plate with the icon of its block or the image it drew, over its block and id.
+    fn tile(&self) -> impl Widget<Event> + use<'a> {
+        let node = self.node;
+        // an image that a Run kept is shown in the place of the icon, as a plot that was drawn
+        let drawn = self
+            .gallery
+            .and_then(|gallery| gallery.thumbnail(self.shown));
+        let shown = match drawn {
+            Some(drawn) => drawn,
+            None => self
+                .icon(icon::XL)
+                .boxed(),
+        };
+        // the plate takes what the lines under it leave of the tile
+        let plate = self.help.of(
+            container(shown)
+                .padding(spacing::XS)
+                .center(Fill)
+                .style(theme::container::section),
+            "The tile of the node: the icon of its block, or the image it drew once a Run kept \
+             that, over the block and the id. Drag it to move the card, and double-click it to \
+             open the card.",
+        );
+        let line = |written: &'a str| {
+            text(written)
+                .width(Fill)
+                .wrapping(text::Wrapping::None)
+        };
+        let block = line(&node.block)
+            .size(size::NOTE)
+            .font(font::MONO)
+            .style(theme::text::muted)
+            .ellipsis(text::Ellipsis::End);
+        // an id is told from the next by how it ends as much as by how it starts
+        let id = line(&node.id).ellipsis(text::Ellipsis::Middle);
+        let lines = column![
+            plate,
+            row![block, self.save()].align_y(Center),
+            id
+        ]
+        .spacing(spacing::XXS);
+        let tile = container(lines)
+            .padding(PAD)
+            .width(TILE)
+            .height(TILE);
+        // what is wrong with it is said where the open card would show it
+        look::told(
+            tile,
+            self.wrong()
+                .map(str::to_owned),
+        )
+    }
+
+    /// The line of its id: its plate, its toggle, the small table, the id and the cross.
+    fn head(&self) -> impl Widget<Event> + use<'a> {
+        let nodes = &self.pipeline.nodes;
+        let plate = self.help.of(
+            container(self.icon(icon::L))
+                .center(HEAD)
+                .style(theme::container::section),
+            "The icon of the block of the node. Drag it to move the card, and double-click it to \
+             close the card to its tile.",
+        );
         row![
-            // where the surface draws the handle that drags the card
-            space().width(GRAB),
+            plate,
             self.help.of(
-                toggle(is_open, Event::Edit(Edit::Toggle)),
-                "Lays the card open to edit its args and see its table, or closes it. A \
-                     double-click on a closed card opens it too. Drag the corner of an open \
-                     card to resize it.",
+                toggle(true, Event::Edit(Edit::Toggle)),
+                "Closes the card to its tile; a double-click on the icon does so too. Drag the \
+                 corner of an open card to resize it.",
             ),
-            self.help.of(
-                round(icon)
-                    .style(save)
-                    .on_press(Event::Edit(Edit::Output(!self.is_output))),
-                "Keeps the frame of this node at the next Run, to show it on the open \
-                     card. Scroll over the table, with Shift for sideways; drag across cells \
-                     and press Ctrl+C to copy them.",
-            ),
+            self.save(),
             self.help.of(
                 look::name(
                     "id",
@@ -478,11 +550,10 @@ impl<'a> Card<'a> {
         .height(HEAD)
     }
 
-    /// A line for each frame it reads: the name of the input, and in an open card the node read.
+    /// A line for each frame it reads: the name of the input, and the node read.
     fn inputs(
         &self,
         label_width: f32,
-        is_open: bool,
     ) -> impl Widget<Event> + use<'a> {
         let node = self.node;
         let inputs = self
@@ -501,26 +572,23 @@ impl<'a> Card<'a> {
                     Some(_) => Tone::Given,
                     None => Tone::Refused,
                 };
-                let wired = is_open.then(|| {
-                    let others: Vec<&str> = self
-                        .pipeline
-                        .nodes
-                        .iter()
-                        .map(|other| other.id.as_str())
-                        .filter(|id| *id != node.id)
-                        .collect();
-                    let unwired = "unwired";
-                    look::pick(
-                        source,
-                        others,
-                        ToString::to_string,
-                        unwired,
-                        font::SANS,
-                        tone,
-                    )
-                    .on_select(wire)
-                    .width(Fill)
-                });
+                let others: Vec<&str> = self
+                    .pipeline
+                    .nodes
+                    .iter()
+                    .map(|other| other.id.as_str())
+                    .filter(|id| *id != node.id)
+                    .collect();
+                let wired = look::pick(
+                    source,
+                    others,
+                    ToString::to_string,
+                    "unwired",
+                    font::SANS,
+                    tone,
+                )
+                .on_select(wire)
+                .width(Fill);
                 container(look::labelled(name, label_width, None, wired))
                     .id(anchor(slot))
                     .boxed()
@@ -528,22 +596,15 @@ impl<'a> Card<'a> {
         column(inputs).spacing(spacing::XS)
     }
 
-    /// An image of its frame; to browse, with what picks the rows and steps through them.
+    /// An image of its frame to browse, with what picks the rows and steps through them.
     fn gallery(
         &self,
         width: f32,
-        is_browsed: bool,
     ) -> Option<impl Widget<Event> + use<'a>> {
         let gallery = self
             .gallery?
             // within the padding of the card
-            .view(
-                self.shown,
-                width - 2.0 * PAD,
-                is_browsed,
-                self.zoom,
-                self.help,
-            )?;
+            .view(self.shown, width - 2.0 * PAD, self.zoom, self.help)?;
         Some(gallery.map(Event::Gallery))
     }
 

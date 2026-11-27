@@ -33,7 +33,7 @@ fn a_frame_without_images_is_no_gallery() {
     let gallery = Gallery::of(&frame, "bytes");
     assert!(
         gallery
-            .view(&State::default(), 300.0, true, 1.0, Help::default())
+            .view(&State::default(), 300.0, 1.0, Help::default())
             .is_none()
     );
 }
@@ -96,30 +96,40 @@ fn the_rows_left_have_the_value_picked_of_every_attribute() {
 fn it_says_which_row_of_those_left_it_shows_when_it_is_browsed() {
     let gallery = gallery();
     let mut state = State::default();
-    let says = |state: &State, is_browsed: bool, text: &str| {
+    let says = |state: &State, text: &str| {
         let view = gallery
-            .view(state, 300.0, is_browsed, 1.0, Help::default())
+            .view(state, 300.0, 1.0, Help::default())
             .expect("it has images");
         simulator(view)
             .find(text)
             .is_ok()
     };
-    assert!(says(&state, true, "1 of 4"));
-    assert!(says(&state, true, "name"));
-    // small, it is an image and no more
-    assert!(!says(&state, false, "1 of 4"));
+    assert!(says(&state, "1 of 4"));
+    assert!(says(&state, "name"));
+    // small, it is an image and no more, and nothing where the row shown has no image
+    let small = |state: &State| {
+        let small = gallery.thumbnail::<Message>(state)?;
+        Some(
+            simulator(small)
+                .find("1 of 4")
+                .is_err(),
+        )
+    };
+    assert_eq!(small(&state), Some(true));
+    state.update(Message::Row(2), &gallery);
+    assert_eq!(small(&state), None);
 
     state.update(Message::Row(9), &gallery);
-    assert!(says(&state, true, "4 of 4"));
+    assert!(says(&state, "4 of 4"));
     state.update(Message::Pick("size".to_owned(), Some(1)), &gallery);
-    assert!(says(&state, true, "1 of 3"));
-    assert!(says(&state, true, "10"));
+    assert!(says(&state, "1 of 3"));
+    assert!(says(&state, "10"));
     // one row left is not browsed, and none is said to be none
     state.update(Message::Pick("size".to_owned(), Some(0)), &gallery);
-    assert!(!says(&state, true, "1 of 1"));
-    assert!(!says(&state, true, "no row has these values"));
+    assert!(!says(&state, "1 of 1"));
+    assert!(!says(&state, "no row has these values"));
     state.update(Message::Pick("name".to_owned(), Some(0)), &gallery);
-    assert!(says(&state, true, "no row has these values"));
+    assert!(says(&state, "no row has these values"));
 }
 
 #[test]
@@ -199,7 +209,7 @@ fn a_row_that_a_plot_drew_is_shown_live_and_says_the_point_under_the_cursor() {
     // whether the gallery shows this
     let shows = |state: &State, text: &str| {
         let view = gallery
-            .view(state, 300.0, true, 1.0, Help::default())
+            .view(state, 300.0, 1.0, Help::default())
             .unwrap();
         simulator(view)
             .find(text)
@@ -213,7 +223,7 @@ fn a_row_that_a_plot_drew_is_shown_live_and_says_the_point_under_the_cursor() {
 
     // once a frame has drawn the plot, the wheel over it is the plot's, to zoom
     let view = gallery
-        .view(&state, 300.0, true, 1.0, Help::default())
+        .view(&state, 300.0, 1.0, Help::default())
         .unwrap();
     let mut ui = simulator(view);
     ui.point_at(iced::Point::new(150.0, 100.0));
@@ -235,13 +245,13 @@ fn a_row_that_a_plot_drew_is_shown_live_and_says_the_point_under_the_cursor() {
 
     state.update(Message::Live, &gallery);
     assert!(shows(&state, "Live") && !shows(&state, hint));
-    // closed, a card shows the image whatever is asked of it
+    // on a tile, it is the image whatever is asked of it
     state.update(Message::Live, &gallery);
-    let closed = gallery
-        .view(&state, 300.0, false, 1.0, Help::default())
+    let small = gallery
+        .thumbnail::<Message>(&state)
         .unwrap();
     assert!(
-        simulator(closed)
+        simulator(small)
             .find(hint)
             .is_err()
     );
@@ -251,7 +261,7 @@ fn a_row_that_a_plot_drew_is_shown_live_and_says_the_point_under_the_cursor() {
 fn a_gallery_that_no_plot_drew_is_not_shown_live() {
     let gallery = gallery();
     let view = gallery
-        .view(&State::default(), 300.0, true, 1.0, Help::default())
+        .view(&State::default(), 300.0, 1.0, Help::default())
         .unwrap();
     let mut ui = simulator(view);
     assert!(

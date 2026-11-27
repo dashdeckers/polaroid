@@ -1033,17 +1033,6 @@ where
                             let dot = Rectangle::new(port, Size::ZERO).expand(PORT);
                             renderer.fill_quad(quad(dot, PORT), muted);
                         }
-                        if let Some(handle) = card.handle {
-                            // six dots in its middle
-                            let middle = bounds.position() + (handle.center() - Point::ORIGIN);
-                            for (x, y) in [-PORT / 2.0, PORT / 2.0]
-                                .into_iter()
-                                .flat_map(|x| [-PORT, 0.0, PORT].map(|y| (x, y)))
-                            {
-                                let dot = Rectangle::new(middle + Vector::new(x, y), Size::ZERO);
-                                renderer.fill_quad(quad(dot.expand(SPECK), SPECK), muted);
-                            }
-                        }
                         if card.is_resizable {
                             // three dots along the corner
                             for (x, y) in [

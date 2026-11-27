@@ -456,7 +456,7 @@ pub mod extent {
     /// The least of a field, and a slider beside one.
     pub const XXS: f32 = 48.0;
     pub const XS: f32 = 64.0;
-    /// A column of a table, the least of a pane, and the most of what scrolls inside a card.
+    /// A column of a table, a tile, the least of a pane, and the most of what scrolls in a card.
     pub const S: f32 = 140.0;
     /// What opens to pick from, narrow and wide, and the most that a tooltip takes.
     pub const M: f32 = 200.0;
@@ -492,10 +492,12 @@ pub mod surface {
     pub const CORNER: f32 = super::radius::M;
     /// How far a wire runs level at the least before it bends.
     pub const BEND: f32 = 40.0;
-    /// Where the first card is laid from the corner, and the room beside and below each.
+    /// The side of a tile, which a closed card is.
+    pub const TILE: f32 = super::extent::S;
+    /// Where the first tile is laid from the corner, and the room beside and below each.
     pub const EDGE: f32 = 20.0;
-    pub const BESIDE: f32 = 70.0;
-    pub const BELOW: f32 = 160.0;
+    pub const BESIDE: f32 = 80.0;
+    pub const BELOW: f32 = 40.0;
     /// How much one step of the wheel zooms, and how far out and in.
     pub const ZOOM_STEP: f32 = 1.1;
     pub const ZOOM: (f32, f32) = (0.25, 2.5);
@@ -1204,15 +1206,7 @@ pub mod container {
         }
     }
 
-    /// The tile of a card, a step over it, and as round: alone it is the card, and open its corner.
-    pub fn tile(theme: &Theme) -> Style {
-        let scheme = Scheme::of(theme);
-        Style::default()
-            .background(scheme.surface_container_high)
-            .border(outlined(scheme, surface::CORNER))
-    }
-
-    /// A part of a card that shows what it gives, as its table or its plot: outlined, in a well.
+    /// A part of a card that shows what it is or gives, as the plate of its tile: an outlined well.
     pub fn section(theme: &Theme) -> Style {
         let scheme = Scheme::of(theme);
         Style::default()

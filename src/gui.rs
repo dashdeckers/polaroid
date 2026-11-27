@@ -49,8 +49,9 @@ const INTRO: &str = "\
 A pipeline is a chain of nodes, each a card: it reads the frames of the cards wired into it, and \
 gives one on. Right-click the background to add a node. Drag from the dot on the right of a card \
 to a dot on the left of another to wire them, and right-click that dot to unwire it. Drag the \
-background to pan, and scroll to zoom. Drag a closed card anywhere, or any card by the dots in \
-its corner; left on another for a moment, it swaps places with it when dropped, wiring and all.
+background to pan, and scroll to zoom. A card is its tile until a double-click on the tile opens \
+it, and one on the icon of the open card closes it. Drag a card by its tile, or by its icon when \
+it is open; left on another for a moment, it swaps places with it when dropped, wiring and all.
 
 While Help is on, everything says what it is for when the cursor rests on it. Press Help again \
 to turn that off.";
@@ -970,14 +971,10 @@ impl Editor {
             let id = node.id.clone();
             let card = polaroid_iced::card(id, layout::position(node), component(self.card(node)))
                 .ports(ports)
-                .output(card::output())
+                .output(card::output(is_open))
+                .handle(card::handle(is_open))
                 .resizable(is_open)
                 .tall(tall);
-            // an open card is moved and closed by its buttons alone, which leaves its text
-            let card = match is_open {
-                true => card.handle(card::handle()),
-                false => card,
-            };
             graph = graph.push(card);
             let wired = node
                 .inputs

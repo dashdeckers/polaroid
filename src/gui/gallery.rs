@@ -5,7 +5,7 @@ use std::cell::OnceCell;
 use std::collections::{BTreeMap, HashMap};
 
 use iced::widget::{column, image, row, slider, space, svg, text};
-use iced::{Center, Element, Fill, Widget};
+use iced::{Center, Element, Fill, Length, Widget};
 use polaroid_iced::pick_list;
 use polaroid_iced::theme::{self, size, spacing};
 #[cfg(feature = "plot")]
@@ -41,19 +41,24 @@ impl Picture {
         }
     }
 
-    /// It, as wide as `width` and as tall as that makes it.
+    /// It, as wide as `width` and as tall as that makes it; or as large as fits where it is laid.
     fn view<'a, Message: 'a>(
         &self,
-        width: f32,
+        width: Option<f32>,
     ) -> Element<'a, Message> {
+        let (Self::Pixels(_, tall) | Self::Shapes(_, tall)) = self;
+        let (width, height) = match width {
+            Some(width) => (Length::from(width), Length::from(width * tall)),
+            None => (Fill, Fill),
+        };
         match self {
-            Self::Pixels(handle, tall) => image(handle)
+            Self::Pixels(handle, _) => image(handle)
                 .width(width)
-                .height(width * tall)
+                .height(height)
                 .boxed(),
-            Self::Shapes(handle, tall) => svg(handle.clone())
+            Self::Shapes(handle, _) => svg(handle.clone())
                 .width(width)
-                .height(width * tall)
+                .height(height)
                 .boxed(),
         }
     }
@@ -463,15 +468,23 @@ impl Gallery {
         Some((bytes, kind(bytes)?))
     }
 
-    /// The image of a row that is left, as wide as `width`.
+    /// The image shown, as large as fits where it is laid: a small one, as on a tile.
+    pub fn thumbnail<'a, Message: 'a>(
+        &self,
+        state: &State,
+    ) -> Option<Element<'a, Message>> {
+        let picture = self.pictures[self.shown(state)?].as_ref()?;
+        Some(picture.view(None))
+    }
+
+    /// The image of a row that is left, as wide as `width`, to browse.
     ///
-    /// To browse, it is under the attributes and over the rows left, and a plot to zoom and pan
-    /// if that is asked for, which draws for cards shown `zoom` times their size.
+    /// It is under the attributes and over the rows left, and a plot to zoom and pan if that is
+    /// asked for, which draws for cards shown `zoom` times their size.
     pub fn view<'a>(
         &'a self,
         state: &State,
         width: f32,
-        is_browsed: bool,
         zoom: f32,
         help: Help,
     ) -> Option<Element<'a, Message>> {
@@ -484,10 +497,7 @@ impl Gallery {
         let picture = self
             .shown(state)
             .and_then(|row| self.pictures[row].as_ref())
-            .map(|picture| picture.view(width));
-        if !is_browsed {
-            return picture;
-        }
+            .map(|picture| picture.view(Some(width)));
         #[cfg(feature = "plot")]
         let picture = self
             .shown(state)
