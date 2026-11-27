@@ -644,11 +644,11 @@ impl<'a> Card<'a> {
             ),
             self.save(),
             self.help.of(
-                marks::dotted(id, self.dots()),
+                id,
                 "The id of the node. Type another and press Enter to rename it; the border \
                      is orange until then, and red while the id is empty or another node's. \
                      Leaving the field shows the id again. Right-click the line to pick \
-                     the tags of the node, each a dot at the end of the id.",
+                     the tags of the node, each a dot on its plate.",
             ),
             self.help.of(
                 cross(Event::Edit(Edit::Delete)),
