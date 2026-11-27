@@ -63,14 +63,14 @@ impl Drawer {
         match message {
             Message::New(kind) => {
                 let (named, stem) = match kind {
-                    Kind::Value => (&pipeline.values, "value"),
-                    _ => (&pipeline.expressions, "expression"),
+                    Kind::Value => (&mut pipeline.values, "value"),
+                    _ => (&mut pipeline.expressions, "expression"),
                 };
                 let name = (1..)
                     .map(|n| format!("{stem}_{n}"))
                     .find(|name| !named.contains_key(name))
                     .expect("some number is free");
-                holding(pipeline, kind == Kind::Value).insert(name.clone(), Value::Null);
+                named.insert(name.clone(), Value::Null);
                 self.section(name)
                     .is_open = true;
                 Change::Pipeline
@@ -95,10 +95,7 @@ impl Drawer {
                 Change::Pipeline
             }
             Message::Form(name, message) => {
-                let is_value = pipeline
-                    .values
-                    .contains_key(&name);
-                let Some(stored) = holding(pipeline, is_value)
+                let Some(stored) = holding(pipeline, &name)
                     .get(&name)
                     .cloned()
                 else {
@@ -125,7 +122,7 @@ impl Drawer {
                         if value == stored {
                             return Change::Nothing;
                         }
-                        holding(pipeline, is_value).insert(name.clone(), value);
+                        holding(pipeline, &name).insert(name.clone(), value);
                         Change::Named(name)
                     }
                     form::Change::Named(name, at, value) => {
@@ -134,10 +131,7 @@ impl Drawer {
                 }
             }
             Message::Put(name, at, value) => {
-                let is_value = pipeline
-                    .values
-                    .contains_key(&name);
-                let Some(named) = holding(pipeline, is_value).get_mut(&name) else {
+                let Some(named) = holding(pipeline, &name).get_mut(&name) else {
                     return Change::Nothing;
                 };
                 form::put(named, &at, Some(value));
@@ -146,10 +140,7 @@ impl Drawer {
             Message::Delete(name) => {
                 self.sections
                     .remove(&name);
-                let is_value = pipeline
-                    .values
-                    .contains_key(&name);
-                match holding(pipeline, is_value).shift_remove(&name) {
+                match holding(pipeline, &name).shift_remove(&name) {
                     Some(_) => Change::Named(name),
                     None => Change::Nothing,
                 }
@@ -179,11 +170,8 @@ impl Drawer {
         let closed = form::State::default();
         let is_taken = |name: &str| {
             pipeline
-                .expressions
-                .contains_key(name)
-                || pipeline
-                    .values
-                    .contains_key(name)
+                .kind_of(name)
+                .is_some()
         };
         let section = |kind: Kind, name: &'a String, stored: &'a Value| {
             let section = self
@@ -306,14 +294,14 @@ impl Drawer {
     }
 }
 
-/// The expressions of `pipeline`, or its values.
-fn holding(
-    pipeline: &mut Pipeline,
-    is_value: bool,
-) -> &mut Map<String, Value> {
-    match is_value {
-        true => &mut pipeline.values,
-        false => &mut pipeline.expressions,
+/// The values of `pipeline` if `name` is one of them, and else its expressions.
+fn holding<'a>(
+    pipeline: &'a mut Pipeline,
+    name: &str,
+) -> &'a mut Map<String, Value> {
+    match pipeline.kind_of(name) {
+        Some(Kind::Value) => &mut pipeline.values,
+        _ => &mut pipeline.expressions,
     }
 }
 
@@ -328,11 +316,8 @@ fn check<'a>(
     Rc::new(move |edited| {
         let mut tried = tried.borrow_mut();
         let tried = tried.get_or_insert_with(|| pipeline.clone());
-        let is_value = tried
-            .values
-            .contains_key(name);
-        holding(tried, is_value).insert(name.to_owned(), edited.clone());
-        if !is_value {
+        holding(tried, name).insert(name.to_owned(), edited.clone());
+        if tried.kind_of(name) == Some(Kind::Expression) {
             tried
                 .holes(name)
                 .map_err(|e| form::line(&e))?;
