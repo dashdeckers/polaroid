@@ -153,3 +153,74 @@ fn a_tidy_leaves_in_the_ui_what_is_in_use_alone() {
         );
     }
 }
+
+#[test]
+fn a_tag_is_renamed_wherever_it_is_carried_unless_another_has_the_name() {
+    let (mut pipeline, mut marks) = (pipeline(), Marks::default());
+    tag(&mut marks, &mut pipeline, "net", &["money", "tax"]);
+    tag(&mut marks, &mut pipeline, "rate", &["money"]);
+    let mut rename = |pipeline: &mut Pipeline, tag: &str, new: &str| {
+        marks.update(Message::Rename(tag.to_owned(), new.to_owned()), pipeline)
+    };
+
+    // the spaces around what is typed are no part of the name
+    assert!(rename(&mut pipeline, "money", " cash "));
+    assert_eq!(
+        pipeline.ui,
+        json!({
+            "colors": { "tags": { "tax": "#cf6400", "cash": "#3b82c4" } },
+            "tags": { "net": ["cash", "tax"], "rate": ["cash"] },
+        })
+    );
+    // the name of another, with spaces or without, none, or its own is no other name for it
+    for refused in [
+        "tax", " tax", "", "  ", "cash",
+    ] {
+        assert!(!rename(&mut pipeline, "cash", refused), "{refused:?}");
+    }
+    assert_eq!(all(&pipeline), ["cash", "tax"].into());
+}
+
+#[test]
+fn a_tag_is_taken_off_everything_from_the_list_of_those_in_use() {
+    let (mut pipeline, mut marks) = (pipeline(), Marks::default());
+    tag(&mut marks, &mut pipeline, "net", &["money", "tax"]);
+    tag(&mut marks, &mut pipeline, "rate", &["money"]);
+    let lists = |marks: &Marks, pipeline: &Pipeline, shown: &str, text: &str| {
+        let shows = |text: &str| text.contains(shown);
+        let mut ui = simulator(marks.list(pipeline, shows, Help::default()));
+        ui.find(text)
+            .is_ok()
+    };
+    assert!(lists(&marks, &pipeline, "", "money") && lists(&marks, &pipeline, "", "tax"));
+    // how many names carry each is said beside it
+    assert!(lists(&marks, &pipeline, "", "2"));
+    // and what is searched for narrows them
+    assert!(lists(&marks, &pipeline, "o", "money") && !lists(&marks, &pipeline, "o", "tax"));
+
+    assert!(marks.update(Message::Remove("money".to_owned()), &mut pipeline));
+    assert_eq!(pipeline.ui["tags"], json!({ "net": ["tax"] }));
+    assert!(!lists(&marks, &pipeline, "", "money") && lists(&marks, &pipeline, "", "tax"));
+}
+
+#[test]
+fn enter_gives_a_tag_no_name_that_another_has_as_it_is_typed() {
+    use iced_test::selector::{Candidate, Target};
+
+    let (mut pipeline, mut marks) = (pipeline(), Marks::default());
+    tag(&mut marks, &mut pipeline, "net", &["ta", "tax"]);
+    let field = |value: &'static str| {
+        move |candidate: Candidate<'_>| {
+            matches!(&candidate, Candidate::TextInput { state, .. } if state.text() == value)
+                .then(|| Target::from(candidate))
+        }
+    };
+    for (typed, is_given) in [("x", false), ("xes", true)] {
+        let mut ui = simulator(marks.list(&pipeline, |_| true, Help::default()));
+        ui.click(field("ta"))
+            .unwrap();
+        ui.typewrite(typed);
+        ui.tap_key(iced::keyboard::key::Named::Enter);
+        assert_eq!(ui.drain().count(), usize::from(is_given), "{typed}");
+    }
+}

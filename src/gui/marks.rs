@@ -3,11 +3,11 @@
 use std::collections::BTreeSet;
 
 use iced::widget::{column, container, row};
-use iced::{Color, Element, Fill, Widget};
+use iced::{Center, Color, Element, Fill, Function, Widget};
 use polaroid_iced::theme::{self, Tone, dot, extent, font, hue, spacing};
 use serde_json::Value;
 
-use super::look;
+use super::look::{self, Help, cross};
 use super::ui::object;
 use crate::Pipeline;
 
@@ -42,6 +42,10 @@ pub enum Message {
     Type(String),
     /// What the picker is open for carries the tag that was typed, which is made if it is new.
     Add,
+    /// The first tag is called the second wherever it is carried, if no tag has that name.
+    Rename(String, String),
+    /// Nothing carries this tag any more.
+    Remove(String),
 }
 
 impl Marks {
@@ -83,10 +87,65 @@ impl Marks {
                 carry(pipeline, &picking.name, &tag, true);
                 return true;
             }
+            (Message::Rename(old, new), _) => return rename(pipeline, &old, new.trim()),
+            (Message::Remove(tag), _) => {
+                retag(pipeline, |carried| {
+                    carried.remove(&tag);
+                });
+                return true;
+            }
             // nothing is picked in a picker that is not open
             (_, None) => {}
         }
         false
+    }
+
+    /// The tags in use that `shows` lets through, each to rename or to take off everything.
+    pub fn list<'a>(
+        &'a self,
+        pipeline: &'a Pipeline,
+        shows: impl Fn(&str) -> bool,
+        help: Help,
+    ) -> Element<'a, Message> {
+        let used = all(pipeline);
+        let tags = used
+            .iter()
+            .copied()
+            .filter(|tag| shows(tag))
+            .map(|tag| {
+                // around what is typed, spaces are no part of a name
+                let is_taken = move |new: &str| {
+                    let new = new.trim();
+                    new.is_empty() || all(pipeline).contains(new)
+                };
+                let name = look::name("tag", tag, is_taken, Message::Rename.with(tag.to_owned()));
+                let uses = carried(pipeline)
+                    .filter(|carried| tags(carried).any(|carried| carried == tag))
+                    .count();
+                row![
+                    look::dot(color(&pipeline.ui, tag), dot::M),
+                    help.of(
+                        name,
+                        "The name of the tag. Type another and press Enter to rename it wherever \
+                         it is carried; the border is orange until then, and red while the name \
+                         is empty or another tag's.",
+                    ),
+                    help.of(
+                        look::aside(uses.to_string()),
+                        "How many names carry the tag."
+                    ),
+                    help.of(
+                        cross(Message::Remove(tag.to_owned())),
+                        "Takes the tag off everything that carries it, which is the end of it.",
+                    ),
+                ]
+                .spacing(spacing::S)
+                .align_y(Center)
+                .boxed()
+            });
+        column(tags)
+            .spacing(spacing::S)
+            .boxed()
     }
 
     /// The picker of the tags of what is named `name`, if it is the one that is open.
@@ -205,6 +264,45 @@ fn carry(
                 .collect(),
         ),
     };
+}
+
+/// Calls the tag `old` `new` wherever it is carried, if `new` is a name that no tag has.
+fn rename(
+    pipeline: &mut Pipeline,
+    old: &str,
+    new: &str,
+) -> bool {
+    if new.is_empty() || all(pipeline).contains(new) {
+        return false;
+    }
+    retag(pipeline, |carried| {
+        if carried.remove(old) {
+            carried.insert(new.to_owned());
+        }
+    });
+    let colors = object(&mut pipeline.ui, &[COLORS, TAGS]);
+    if let Some(color) = colors.shift_remove(old) {
+        colors.insert(new.to_owned(), color);
+    }
+    true
+}
+
+/// Has `change` done to the tags of each thing that carries any, which may leave it with none.
+fn retag(
+    pipeline: &mut Pipeline,
+    change: impl Fn(&mut BTreeSet<String>),
+) {
+    let named = object(&mut pipeline.ui, &[TAGS]);
+    for carried in named.values_mut() {
+        let mut changed = tags(carried)
+            .map(str::to_owned)
+            .collect();
+        change(&mut changed);
+        *carried = changed
+            .into_iter()
+            .collect();
+    }
+    named.retain(|_, carried| *carried != Value::Array(Vec::new()));
 }
 
 /// What was named `old` carries its tags as `new`, or lets go of them if it is gone.

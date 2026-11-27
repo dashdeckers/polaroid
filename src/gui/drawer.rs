@@ -34,6 +34,8 @@ pub struct Drawer {
     drag: Option<(String, Option<Place>)>,
     /// What is typed to search for, which narrows what is listed.
     query: String,
+    /// Whether the tags in use are listed under where that is typed.
+    is_listing: bool,
 }
 
 /// What the drawer shows of an expression or a value that the pipeline does not hold.
@@ -149,6 +151,8 @@ pub enum Message {
     Marks(marks::Message),
     /// What is typed to search for.
     Search(String),
+    /// The tags in use are listed, or no longer if they are.
+    Tags,
 }
 
 /// Where in its list a dragged entry is let go: before the entry of this name, or after it.
@@ -179,6 +183,10 @@ impl Drawer {
     ) -> Change {
         match message {
             Message::Marks(message) => Change::Marks(message),
+            Message::Tags => {
+                self.is_listing = !self.is_listing;
+                Change::Nothing
+            }
             Message::Search(query) => {
                 self.query = query;
                 Change::Nothing
@@ -570,7 +578,20 @@ impl Drawer {
             .width(Fill)
             .boxed()
         };
-        let named = column(List::ALL.map(listed));
+        // laid open, the search lists the tags in use over what is named, narrowed as that is
+        let tags = self
+            .is_listing
+            .then(|| {
+                let shows = |text: &str| finds(&self.query, [text]);
+                let tags = marks
+                    .list(pipeline, shows, help)
+                    .map(Message::Marks);
+                container(tags).padding(padding::bottom(spacing::L))
+            });
+        let named = column![
+            tags,
+            column(List::ALL.map(listed))
+        ];
         // the scrollbar beside what is named, not over it
         let bar = look::bar().spacing(spacing::XS);
         let named = scrollable(named)
@@ -584,6 +605,11 @@ impl Drawer {
             .is_empty())
         .then(|| look::clear(Message::Search(String::new())));
         let search = row![
+            help.of(
+                toggle(self.is_listing, Message::Tags),
+                "Lists the tags in use, to rename each or to take it off everything; or closes \
+                 that list.",
+            ),
             help.of(
                 search,
                 "Narrows what is listed to what has every word typed here in its name, in one \

@@ -120,15 +120,8 @@ fn a_double_click_on_its_tile_lays_a_card_open_and_its_toggle_closes_it() {
     assert!(layout::is_open(&node(&editor)));
     assert!(editor.is_dirty);
 
-    let mut ui = simulator(editor.view());
-    ui.click(theme::sign::CLOSE)
-        .unwrap();
-    for message in ui
-        .into_messages()
-        .collect::<Vec<_>>()
-    {
-        let _ = editor.update(message);
-    }
+    let toggle = toggle_of(&editor, "n0");
+    click_at(&mut editor, toggle);
     assert!(!layout::is_open(&node(&editor)));
 }
 
@@ -1568,15 +1561,8 @@ fn a_tile_is_shown_open_while_the_cursor_rests_on_it_which_is_no_edit() {
 
     // its toggle keeps it open, and the next closes it though the cursor never left it
     let _ = editor.update(Message::Peek(Some("n1".to_owned())));
-    let mut ui = simulator(editor.view());
-    ui.click(theme::sign::OPEN)
-        .unwrap();
-    for message in ui
-        .into_messages()
-        .collect::<Vec<_>>()
-    {
-        let _ = editor.update(message);
-    }
+    let toggle = toggle_of(&editor, "n1");
+    click_at(&mut editor, toggle);
     assert!(
         is_open(&editor)
             && editor
@@ -2092,5 +2078,86 @@ fn what_is_typed_in_the_search_narrows_as_it_is_typed() {
     assert!(
         ui.find(field("rate"))
             .is_err()
+    );
+}
+
+/// Where the toggle of the open card of node `id` is: the sign before its id, on the line of it.
+fn toggle_of(
+    editor: &Editor,
+    id: &str,
+) -> Point {
+    let id = simulator(editor.view())
+        .find(field(id))
+        .unwrap()
+        .bounds();
+    [
+        theme::sign::OPEN,
+        theme::sign::CLOSE,
+    ]
+    .into_iter()
+    .flat_map(|sign| every(editor, sign))
+    .map(|sign| sign.center())
+    .filter(|sign| sign.x < id.x && (id.y..id.y + id.height).contains(&sign.y))
+    .max_by(|one, other| {
+        one.x
+            .total_cmp(&other.x)
+    })
+    .unwrap()
+}
+
+#[test]
+fn the_search_laid_open_lists_the_tags_in_use() {
+    let mut editor = chain(1);
+    editor
+        .pipeline
+        .values
+        .insert("rate".to_owned(), 1.into());
+    editor.pipeline.ui = serde_json::json!({ "tags": { "rate": ["tax"], "gone": ["old"] } });
+    let lists = |editor: &Editor, text: &str| {
+        simulator(editor.view())
+            .find(field(text))
+            .is_ok()
+    };
+    assert!(!lists(&editor, "tax"));
+    // its toggle is the first there is
+    press_on(&mut editor, theme::sign::OPEN);
+    assert!(lists(&editor, "tax"));
+    // a tag of what the pipeline does not name is none in use
+    assert!(!lists(&editor, "old"));
+    assert!(!editor.is_dirty);
+    // what is searched for narrows the tags as it does the names
+    let _ = editor.update(Message::Drawer(drawer::Message::Search("ra".to_owned())));
+    assert!(!lists(&editor, "tax") && lists(&editor, "rate"));
+    let _ = editor.update(Message::Drawer(drawer::Message::Search(String::new())));
+
+    // renamed there it is renamed where it is carried, and taken off everything it is gone
+    let _ = editor.update(Message::Marks(marks::Message::Rename(
+        "tax".to_owned(),
+        "vat".to_owned(),
+    )));
+    assert_eq!(
+        editor.pipeline.ui["tags"]["rate"],
+        serde_json::json!(["vat"])
+    );
+    assert!(editor.is_dirty);
+    let _ = editor.update(Message::Marks(marks::Message::Remove("vat".to_owned())));
+    assert!(!lists(&editor, "vat"));
+}
+
+/// Has the editor do what a click at `at` asks of it.
+fn click_at(
+    editor: &mut Editor,
+    at: Point,
+) {
+    use iced::mouse::Button::Left;
+    use iced::mouse::Event::{ButtonPressed, ButtonReleased};
+
+    mouse(
+        editor,
+        at,
+        [
+            ButtonPressed(Left),
+            ButtonReleased(Left),
+        ],
     );
 }
