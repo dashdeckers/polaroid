@@ -315,6 +315,14 @@ pub fn round<'a, Message: Clone + 'a>(content: impl Widget<Message> + 'a) -> But
         .padding(0)
 }
 
+/// A round button afloat over what it is for, around `content` in the middle of it.
+pub fn afloat<'a, Message: Clone + 'a>(content: impl Widget<Message> + 'a) -> Button<'a, Message> {
+    button(center(content).boxed())
+        .width(control::L)
+        .height(control::L)
+        .padding(0)
+}
+
 /// A round button that is a sign.
 fn signed<'a, Message: Clone + 'a>(
     sign: &'static str,

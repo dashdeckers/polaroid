@@ -2238,3 +2238,30 @@ fn a_right_click_on_a_tile_or_on_the_head_of_an_open_card_picks_the_tags_of_its_
             .is_null()
     );
 }
+
+#[test]
+fn the_glass_floats_in_the_corner_of_the_graph_and_what_it_rings_is_no_edit() {
+    let mut editor = chain(1);
+    let glass = simulator(editor.view())
+        .find(theme::sign::GLASS)
+        .unwrap()
+        .bounds();
+    let id = simulator(editor.view())
+        .find("n0")
+        .unwrap()
+        .bounds();
+    assert!(glass.x > id.x && glass.y > id.y);
+    press_on(&mut editor, theme::sign::GLASS);
+    let category = editor
+        .catalog
+        .categories[0];
+    press_on(&mut editor, category);
+    assert!(!editor.is_dirty);
+    // Escape closes its menu
+    let _ = editor.update(Message::Dismiss);
+    assert!(
+        simulator(editor.view())
+            .find(category)
+            .is_err()
+    );
+}

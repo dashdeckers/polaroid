@@ -22,6 +22,7 @@ use iced::widget::{column, component, container, markdown, row, rule, space, sta
 use iced::{
     Bottom,
     Center,
+    Fill,
     Function,
     Point,
     Size,
@@ -56,7 +57,9 @@ background to pan, and scroll to zoom; scroll with Ctrl to pan down, and with Sh
 across, whatever is under the cursor. A card is its tile until a double-click on the tile opens \
 it, and one on the icon of the open card closes it; rest the cursor on a tile to see its card open \
 until the cursor leaves it. Drag a card by its tile, or by its icon when it is open; left on \
-another for a moment, it swaps places with it when dropped, wiring and all.
+another for a moment, it swaps places with it when dropped, wiring and all. Right-click a tile, or \
+a name in the drawer, to pick its tags; the glass in the corner rings the cards by tag and by \
+category of block.
 
 While Help is on, everything says what it is for when the cursor rests on it. Press Help again \
 to turn that off.";
@@ -822,7 +825,20 @@ impl Editor {
                 self.help,
             )
             .map(Message::Drawer);
-        let graph = stack![self.graph(), self.menu()];
+        // the glass floats in the lower right corner of the graph
+        let glass = self
+            .marks
+            .glass(&self.pipeline, &self.catalog, self.help)
+            .map(Message::Marks);
+        let glass = container(glass)
+            .align_right(Fill)
+            .align_bottom(Fill)
+            .padding(spacing::L);
+        let graph = stack![
+            self.graph(),
+            glass,
+            self.menu()
+        ];
         let problem = self
             .problem
             .as_deref()
@@ -1017,7 +1033,11 @@ impl Editor {
                 .peek(!is_open)
                 .resizable(is_open)
                 .tall(tall)
-                .ring(card::ring(status).map(|ring| ring.color(scheme)));
+                .ring(card::ring(status).map(|ring| ring.color(scheme)))
+                .rings(
+                    self.marks
+                        .rings(&self.pipeline, &self.catalog, node),
+                );
             graph = graph.push(card);
             let wired = node
                 .inputs

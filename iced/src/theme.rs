@@ -378,13 +378,15 @@ pub mod sign {
     pub const SCRUB: &str = "⇕";
     /// The grip that something is dragged by.
     pub const GRIP: &str = "≡";
+    /// The glass that rings the cards by what they are marked with, as a ring in a ring.
+    pub const GLASS: &str = "◎";
     /// What is left out, and what parts two things on a line.
     pub const ELLIPSIS: &str = "…";
     pub const PART: &str = "·";
 
     /// Every sign.
-    pub const ALL: [&str; 9] = [
-        OPEN, CLOSE, ADD, DELETE, ONWARD, SCRUB, GRIP, ELLIPSIS, PART,
+    pub const ALL: [&str; 10] = [
+        OPEN, CLOSE, ADD, DELETE, ONWARD, SCRUB, GRIP, GLASS, ELLIPSIS, PART,
     ];
 }
 

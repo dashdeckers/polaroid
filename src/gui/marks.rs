@@ -2,26 +2,29 @@
 
 use std::collections::BTreeSet;
 
-use iced::widget::{button, column, container, mouse_area, row, rule, space, stack, text};
+use iced::widget::{button, column, container, mouse_area, popover, row, rule, space, stack, text};
 use iced::{Center, Color, Element, Fill, Function, Right, Widget, padding};
-use polaroid_iced::theme::{self, Tone, dot, extent, font, hue, spacing, stroke};
+use polaroid_iced::theme::{self, Tone, dot, extent, font, hue, sign, size, spacing, stroke};
 use serde_json::Value;
 
 use super::look::{self, Help, cross};
 use super::ui::object;
-use crate::{Catalog, Pipeline};
+use crate::{Catalog, Node, Pipeline};
 
 /// Where a `ui` keeps tags, by name in that of a pipeline, and the colours of tags and categories.
 const TAGS: &str = "tags";
 const COLORS: &str = "colors";
 const CATEGORIES: &str = "categories";
 
-/// What of the tags is under way: the picker that is open, of tags or of a colour.
+/// What of the marks is under way: the picker that is open, and what the glass rings.
 #[derive(Default)]
 pub struct Marks {
     picking: Option<Picking>,
     /// What the picker of a colour is open for.
     painting: Option<Mark>,
+    /// The marks that the glass rings the cards for, and whether its menu of them is open.
+    selected: BTreeSet<Mark>,
+    is_selecting: bool,
 }
 
 /// What a picker of tags is open for, and what it shows that the pipeline does not hold.
@@ -52,6 +55,10 @@ pub enum Message {
     Paint(Option<Mark>),
     /// This is of this colour from now on.
     Painted(Mark, Color),
+    /// The menu of the glass opens, or closes if it is open.
+    Glass,
+    /// The cards that carry this are ringed in its colour, or no longer if they were.
+    Select(Mark),
 }
 
 /// What carries tags: what a pipeline names this, or its node of this id.
@@ -62,7 +69,7 @@ pub enum Carrier {
 }
 
 /// What has a colour of its own: a tag, or a category of blocks.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Mark {
     Tag(String),
     Category(String),
@@ -85,7 +92,20 @@ impl Marks {
                     picked: BTreeSet::new(),
                 });
             }
-            (Message::Close, _) => (self.picking, self.painting) = (None, None),
+            (Message::Close, _) => {
+                (self.picking, self.painting) = (None, None);
+                self.is_selecting = false;
+            }
+            (Message::Glass, _) => self.is_selecting = !self.is_selecting,
+            (Message::Select(mark), _) => {
+                if !self
+                    .selected
+                    .remove(&mark)
+                {
+                    self.selected
+                        .insert(mark);
+                }
+            }
             (Message::Paint(mark), _) => self.painting = mark,
             (Message::Painted(mark, color), _) => {
                 self.painting = None;
@@ -120,12 +140,27 @@ impl Marks {
                 carry(pipeline, &picking.carrier, &tag, true);
                 return true;
             }
-            (Message::Rename(old, new), _) => return rename(pipeline, &old, new.trim()),
+            (Message::Rename(old, new), _) => {
+                let new = new.trim();
+                let is_renamed = rename(pipeline, &old, new);
+                // the glass rings for it under its new name
+                if is_renamed
+                    && self
+                        .selected
+                        .remove(&Mark::Tag(old))
+                {
+                    self.selected
+                        .insert(Mark::Tag(new.to_owned()));
+                }
+                return is_renamed;
+            }
             (Message::Remove(tag), _) => {
                 let carriers: Vec<Carrier> = carriers(pipeline).collect();
                 retag(pipeline, &carriers, |carried| {
                     carried.remove(&tag);
                 });
+                self.selected
+                    .remove(&Mark::Tag(tag));
                 return true;
             }
             // nothing is picked in a picker that is not open
@@ -214,6 +249,102 @@ impl Marks {
             .extend(divider)
             .extend(categories)
             .spacing(spacing::S)
+            .boxed()
+    }
+
+    /// The colours that the glass rings the card of `node` in: of each mark picked that it bears.
+    pub fn rings(
+        &self,
+        pipeline: &Pipeline,
+        catalog: &Catalog,
+        node: &Node,
+    ) -> Vec<Color> {
+        if self
+            .selected
+            .is_empty()
+        {
+            return Vec::new();
+        }
+        // a tag is borne by the node that carries it, and by one that uses a name that does
+        let own = of(pipeline, &Carrier::Node(node.id.clone()));
+        let through = through(pipeline, &node.id);
+        let category = catalog
+            .blocks
+            .get(node.block.as_str())
+            .map(|block| block.category);
+        self.selected
+            .iter()
+            .filter_map(|mark| match mark {
+                Mark::Tag(tag) => (own.contains(tag.as_str()) || through.contains(tag.as_str()))
+                    .then(|| color(&pipeline.ui, tag)),
+                Mark::Category(name) => (category == Some(name.as_str()))
+                    .then(|| self::category(&pipeline.ui, catalog, name)),
+            })
+            .collect()
+    }
+
+    /// The glass: a round button, lit while it rings any cards, and its menu of the marks over it.
+    pub fn glass<'a>(
+        &'a self,
+        pipeline: &'a Pipeline,
+        catalog: &'a Catalog,
+        help: Help,
+    ) -> Element<'a, Message> {
+        let line = |mark: Mark, name: &'a str, hue: Color| {
+            let is_selected = self
+                .selected
+                .contains(&mark);
+            look::ticked(Some(hue), name, is_selected, move |_| {
+                Message::Select(mark.clone())
+            })
+        };
+        let menu = self
+            .is_selecting
+            .then(|| {
+                let tags: Vec<_> = all(pipeline)
+                    .into_iter()
+                    .map(|tag| line(Mark::Tag(tag.to_owned()), tag, color(&pipeline.ui, tag)))
+                    .collect();
+                let divider = (!tags.is_empty()).then(|| rule::horizontal(stroke::THIN).boxed());
+                let categories = catalog
+                    .categories
+                    .iter()
+                    .map(|name| {
+                        let hue = category(&pipeline.ui, catalog, name);
+                        line(Mark::Category((*name).to_owned()), name, hue)
+                    });
+                container(
+                    column(tags)
+                        .extend(divider)
+                        .extend(categories)
+                        .spacing(spacing::S),
+                )
+                .padding(spacing::M)
+                .width(extent::M)
+                .style(theme::container::menu)
+            });
+        // a tag that is in use no longer rings nothing, though it was picked
+        let used = all(pipeline);
+        let is_lit = self
+            .selected
+            .iter()
+            .any(|mark| match mark {
+                Mark::Tag(tag) => used.contains(tag.as_str()),
+                Mark::Category(_) => true,
+            });
+        let glass = look::afloat(text(sign::GLASS).size(size::HEADING))
+            .style(theme::button::floating(is_lit))
+            .on_press(Message::Glass);
+        let glass = help.of(
+            glass,
+            "The glass: pick tags and categories of blocks in it, and each card that bears one is \
+             ringed in its colour, however far out the cards are zoomed. A card bears the tags of \
+             its node and those of the names that the node uses.",
+        );
+        popover(glass, menu)
+            .position(popover::Position::Top)
+            .gap(spacing::XS)
+            .on_close(Message::Close)
             .boxed()
     }
 

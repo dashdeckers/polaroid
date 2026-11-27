@@ -448,3 +448,67 @@ fn a_node_carries_its_tags_in_its_own_ui_and_those_of_the_names_it_uses_through_
     assert!(marks.update(Message::Remove("ours".to_owned()), &mut pipeline));
     assert_eq!(pipeline.nodes[0].ui, json!({}));
 }
+
+#[test]
+fn the_glass_rings_a_node_for_each_mark_picked_that_it_bears() {
+    let (mut pipeline, mut marks) = (pipeline(), Marks::default());
+    let catalog = crate::Registry::with_polars().catalog();
+    let node = |id: &str, block: &str, args: Value| crate::Node {
+        id: id.to_owned(),
+        block: block.to_owned(),
+        inputs: vec![],
+        args,
+        ui: Value::Null,
+    };
+    let uses = json!({ "predicates": [crate::marker("net")] });
+    pipeline.nodes = vec![
+        node("kept", "filter", uses),
+        node("cut", "limit", json!({})),
+    ];
+    tag(&mut marks, &mut pipeline, "net", &["money"]);
+    marks.update(
+        Message::Pick(Carrier::Node("kept".to_owned())),
+        &mut pipeline,
+    );
+    marks.update(Message::Type("mine".to_owned()), &mut pipeline);
+    marks.update(Message::Add, &mut pipeline);
+    let rings = |marks: &Marks, pipeline: &Pipeline, node: usize| {
+        marks.rings(pipeline, &catalog, &pipeline.nodes[node])
+    };
+    assert!(rings(&marks, &pipeline, 0).is_empty());
+
+    // its menu opens over it, and lists the tags in use over the categories
+    let pressed = |marks: &Marks, pipeline: &Pipeline, said: &str| {
+        let mut ui = simulator(marks.glass(pipeline, &catalog, Help::default()));
+        ui.click(said)
+            .unwrap();
+        ui.into_messages()
+            .collect::<Vec<_>>()
+    };
+    let filters = catalog.blocks["filter"].category;
+    assert!(!marks.update(Message::Glass, &mut pipeline));
+    for said in ["money", "mine", filters] {
+        for message in pressed(&marks, &pipeline, said) {
+            // what it rings is no part of the pipeline
+            assert!(!marks.update(message, &mut pipeline));
+        }
+    }
+    // the tags by name, then the category: its own, and the one of a name that it uses
+    let (mine, money) = (hue::PALETTE[1], hue::PALETTE[0]);
+    let category = category(&pipeline.ui, &catalog, filters);
+    assert_eq!(rings(&marks, &pipeline, 0), [mine, money, category]);
+    let others = usize::from(catalog.blocks["limit"].category == filters);
+    assert_eq!(rings(&marks, &pipeline, 1).len(), others);
+
+    // it rings for a tag under its new name, and no longer once that is pressed again
+    let rename = Message::Rename("money".to_owned(), "cash".to_owned());
+    assert!(marks.update(rename, &mut pipeline));
+    assert_eq!(rings(&marks, &pipeline, 0), [money, mine, category]);
+    for message in pressed(&marks, &pipeline, "cash") {
+        marks.update(message, &mut pipeline);
+    }
+    assert_eq!(rings(&marks, &pipeline, 0), [mine, category]);
+    // nor for one that is taken off everything
+    marks.update(Message::Remove("mine".to_owned()), &mut pipeline);
+    assert_eq!(rings(&marks, &pipeline, 0), [category]);
+}
