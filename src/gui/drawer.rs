@@ -5,9 +5,9 @@ use std::collections::BTreeMap;
 use std::hash::{BuildHasher, BuildHasherDefault, DefaultHasher};
 use std::rc::Rc;
 
-use iced::widget::{column, container, keyed_column, row, scrollable, space, text};
-use iced::{Center, Element, Fill, Function, Widget};
-use polaroid_iced::theme::{self, Tone, control, font, size, spacing};
+use iced::widget::{column, container, keyed_column, mouse_area, row, scrollable, space, text};
+use iced::{Center, Element, Fill, Function, Widget, mouse};
+use polaroid_iced::theme::{self, Tone, control, font, icon, sign, size, spacing, stroke};
 use serde_json::{Map, Value};
 
 use super::form::{self, Expressions, Form};
@@ -19,6 +19,8 @@ use crate::{Kind, Pipeline, Registry, methods};
 #[derive(Default)]
 pub struct Drawer {
     sections: BTreeMap<String, Section>,
+    /// The entry that is dragged, and the place in its list that the cursor was at last.
+    drag: Option<(String, Option<Place>)>,
 }
 
 /// What the drawer shows of an expression or a value that the pipeline does not hold.
@@ -122,6 +124,21 @@ pub enum Message {
     Delete(String),
     /// This list is shown by name, or in the order of the file again if it is.
     Sort(List),
+    /// The entry of this name is dragged by its grip.
+    Grab(String),
+    /// The cursor of the drag is at this place of the list.
+    Over(Place),
+    /// The entry that is dragged is let go at the place the cursor was at last.
+    Drop,
+    /// The drag comes to nothing.
+    Cancel,
+}
+
+/// Where in its list a dragged entry is let go: before the entry of this name, or after it.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Place {
+    Before(String),
+    After(String),
 }
 
 /// What an update did to the pipeline.
@@ -142,6 +159,47 @@ impl Drawer {
         registry: &Registry,
     ) -> Change {
         match message {
+            Message::Grab(name) => {
+                self.drag = Some((name, None));
+                Change::Nothing
+            }
+            Message::Over(place) => {
+                if let Some((_, over)) = &mut self.drag {
+                    *over = Some(place);
+                }
+                Change::Nothing
+            }
+            Message::Cancel => {
+                self.drag = None;
+                Change::Nothing
+            }
+            Message::Drop => {
+                let Some((name, Some(place))) = self.drag.take() else {
+                    return Change::Nothing;
+                };
+                let (beside, after) = match &place {
+                    Place::Before(beside) => (beside, 0),
+                    Place::After(beside) => (beside, 1),
+                };
+                let named = holding(pipeline, &name);
+                let index = |named: &Map<String, Value>, name: &str| {
+                    named
+                        .keys()
+                        .position(|key| key == name)
+                };
+                let (Some(was), true) = (index(named, &name), *beside != name) else {
+                    return Change::Nothing;
+                };
+                let Some(moved) = named.shift_remove(&name) else {
+                    return Change::Nothing;
+                };
+                let at = index(named, beside).map_or(was, |at| at + after);
+                named.shift_insert(at, name, moved);
+                match was == at {
+                    true => Change::Nothing,
+                    false => Change::Pipeline,
+                }
+            }
             Message::Sort(list) => {
                 let key = Value::from(list.key());
                 let mut sorted = pipeline.ui[SORTED]
@@ -373,30 +431,104 @@ impl Drawer {
             if is_sorted {
                 names.sort_by_key(|(name, _)| name.to_lowercase());
             }
+            // in the order of the file, an entry is dragged by its grip to another place in it
+            let has_grips = !is_sorted;
+            // while one of its entries is dragged, each place in it says that the cursor is there
+            let drag = self
+                .drag
+                .as_ref()
+                .filter(|(dragged, _)| {
+                    names
+                        .iter()
+                        .any(|(name, _)| *name == dragged)
+                });
+            let place = |place: Place, content: Element<'a, Message>| {
+                let is_over = drag.is_some_and(|(_, over)| over.as_ref() == Some(&place));
+                let line = container(
+                    space()
+                        .width(Fill)
+                        .height(stroke::MEDIUM),
+                )
+                .style(theme::container::drop(is_over));
+                let area = mouse_area(column![line, content].spacing(spacing::XS));
+                match drag {
+                    Some(_) => area.on_enter(Message::Over(place)),
+                    None => area,
+                }
+                .boxed()
+            };
+            // after the last of them is a place too: the room between this list and the next
+            let room = space()
+                .height(spacing::M)
+                .boxed();
+            let end = match names.last() {
+                Some((last, _)) => place(Place::After((*last).clone()), room),
+                None => room,
+            };
             let sections = names
                 .into_iter()
-                .map(|(name, stored)| (key(name), section(kind, name, stored)));
+                .map(|(name, stored)| {
+                    let grip = match has_grips {
+                        true => {
+                            let grip = text(sign::GRIP)
+                                .size(size::HEADING)
+                                .style(theme::text::muted);
+                            let grip = container(grip)
+                                .center_x(GRIP)
+                                .center_y(theme::HEAD);
+                            help.of(
+                                mouse_area(grip)
+                                    .on_press(Message::Grab(name.clone()))
+                                    .interaction(mouse::Interaction::Grab),
+                                "Drag it up or down to another place in its list, which is its \
+                                 place in the file too.",
+                            )
+                        }
+                        // its room stays, for the entries not to move as the order is toggled
+                        false => space()
+                            .width(GRIP)
+                            .boxed(),
+                    };
+                    let is_dragged = drag.is_some_and(|(dragged, _)| dragged == name);
+                    let entry = container(section(kind, name, stored))
+                        .style(theme::container::held(is_dragged));
+                    let entry = row![grip, entry].spacing(spacing::XS);
+                    (key(name), place(Place::Before(name.clone()), entry.boxed()))
+                });
             column![
                 head,
-                keyed_column(sections).spacing(spacing::L)
+                keyed_column(sections).spacing(spacing::XS),
+                end
             ]
-            .spacing(spacing::M)
+            .spacing(spacing::XS)
             .width(Fill)
             .boxed()
         };
-        let named = column(List::ALL.map(listed)).spacing(spacing::XL);
+        let named = column(List::ALL.map(listed));
         // the scrollbar beside what is named, not over it
         let bar = look::bar().spacing(spacing::XS);
         let named = scrollable(named)
             .direction(scrollable::Direction::Vertical(bar))
             .style(theme::scrollable::thin);
-        container(named)
-            .padding(spacing::M)
-            .style(theme::container::sheet)
-            .width(Fill)
-            .height(Fill)
+        let sheet = mouse_area(
+            container(named)
+                .padding(spacing::M)
+                .style(theme::container::sheet)
+                .width(Fill)
+                .height(Fill),
+        );
+        // a drag ends where the button is let go, and outside the drawer it comes to nothing
+        match self.drag {
+            Some(_) => sheet
+                .on_release(Message::Drop)
+                .on_exit(Message::Cancel),
+            None => sheet,
+        }
     }
 }
+
+/// The room of the grip that an entry is dragged by.
+const GRIP: f32 = icon::S;
 
 /// What tells the entry of a name from the others of its list, wherever it is listed there.
 fn key(name: &str) -> u64 {

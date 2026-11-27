@@ -361,6 +361,9 @@ pub const fn line(size: f32) -> f32 {
 /// The height of a line that holds a field, or an item of a menu.
 pub const LINE: f32 = line(size::TEXT) + FIELD.top + FIELD.bottom;
 
+/// The height of the line of a name, whose field is written as a title is.
+pub const HEAD: f32 = line(size::TITLE) + FIELD.top + FIELD.bottom;
+
 /// The signs that are written as text, each a glyph of the sans face.
 pub mod sign {
     /// What lays something open, and what closes it again.
@@ -1286,6 +1289,21 @@ pub mod container {
                     .into()
             }),
             border: border::rounded(radius::FULL),
+            ..Style::default()
+        }
+    }
+
+    /// What is dragged, until it is let go: on a tint of the primary colour.
+    pub fn held(is_held: bool) -> impl Fn(&Theme) -> Style {
+        move |theme| Style {
+            background: is_held.then(|| {
+                Scheme::of(theme)
+                    .primary
+                    .color
+                    .scale_alpha(opacity::TINT)
+                    .into()
+            }),
+            border: border::rounded(radius::XS),
             ..Style::default()
         }
     }

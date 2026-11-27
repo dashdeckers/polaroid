@@ -1785,3 +1785,142 @@ fn the_toggle_of_a_list_without_an_add_is_where_those_of_the_others_are() {
             .all(|toggle| toggle.x == toggles[0].x)
     );
 }
+
+/// Has the editor do what the mouse asks of it with the cursor at `at`, in a view of its own.
+fn mouse(
+    editor: &mut Editor,
+    at: Point,
+    events: impl IntoIterator<Item = iced::mouse::Event>,
+) {
+    let mut ui = simulator(editor.view());
+    ui.point_at(at);
+    ui.simulate(
+        events
+            .into_iter()
+            .map(iced::Event::Mouse),
+    );
+    let asked = asked(ui);
+    apply(editor, asked);
+}
+
+/// The expressions of the editor in the order of the file, their names run together.
+fn expressions(editor: &Editor) -> String {
+    editor
+        .pipeline
+        .expressions
+        .keys()
+        .map(String::as_str)
+        .collect()
+}
+
+/// An editor of three expressions `a`, `b` and `c`, and of `h` after `a`, which has a hole.
+fn named() -> Editor {
+    let mut editor = chain(1);
+    let expressions = [
+        ("a", crate::marker("gone")),
+        ("h", serde_json::json!({ "$arg": "x" })),
+        ("b", crate::marker("gone")),
+        ("c", crate::marker("gone")),
+    ];
+    for (name, expression) in expressions {
+        editor
+            .pipeline
+            .expressions
+            .insert(name.to_owned(), expression);
+    }
+    editor
+}
+
+#[test]
+fn an_entry_is_let_go_before_or_after_another_of_its_list_which_moves_it_in_the_file() {
+    use drawer::Message::{Cancel, Drop, Grab, Over};
+    use drawer::Place::{After, Before};
+
+    let mut editor = named();
+    let drag = |editor: &mut Editor, name: &str, place: Option<drawer::Place>| {
+        let over = place.map(Over);
+        for message in [Grab(name.to_owned())]
+            .into_iter()
+            .chain(over)
+            .chain([Drop])
+        {
+            let _ = editor.update(Message::Drawer(message));
+        }
+    };
+
+    // those of the other lists stay where they are in the file
+    drag(&mut editor, "c", Some(Before("a".to_owned())));
+    assert_eq!(expressions(&editor), "cahb");
+    assert!(editor.is_dirty);
+    drag(&mut editor, "c", Some(After("b".to_owned())));
+    assert_eq!(expressions(&editor), "ahbc");
+
+    // where it is, it stays, and so it does let go at no place or outside the drawer
+    editor.is_dirty = false;
+    drag(&mut editor, "c", Some(After("b".to_owned())));
+    drag(&mut editor, "c", Some(Before("c".to_owned())));
+    drag(&mut editor, "c", Some(After("gone".to_owned())));
+    drag(&mut editor, "a", None);
+    for message in [
+        Grab("a".to_owned()),
+        Over(After("c".to_owned())),
+        Cancel,
+        Drop,
+    ] {
+        let _ = editor.update(Message::Drawer(message));
+    }
+    assert_eq!(expressions(&editor), "ahbc");
+    assert!(!editor.is_dirty);
+}
+
+#[test]
+fn an_entry_is_dragged_by_its_grip_in_a_list_that_is_in_the_order_of_the_file() {
+    use iced::mouse::Button::Left;
+    use iced::mouse::Event::{ButtonPressed, ButtonReleased, CursorMoved};
+
+    let mut editor = named();
+    // the grips of `a`, `b` and `c`, then that of `h` in the list under theirs
+    let grips: Vec<Point> = every(&editor, theme::sign::GRIP)
+        .iter()
+        .map(|grip| grip.center())
+        .collect();
+    assert_eq!(grips.len(), 4);
+    let moved = |position| CursorMoved { position };
+
+    // to where the button is let go
+    mouse(&mut editor, grips[0], [ButtonPressed(Left)]);
+    mouse(&mut editor, grips[2], [moved(grips[2])]);
+    mouse(&mut editor, grips[2], [ButtonReleased(Left)]);
+    assert_eq!(expressions(&editor), "hbac");
+
+    // and nowhere once the cursor leaves the drawer
+    let outside = Point::new(900.0, grips[0].y);
+    mouse(&mut editor, grips[0], [ButtonPressed(Left)]);
+    let mut ui = simulator(editor.view());
+    ui.point_at(grips[2]);
+    ui.simulate([iced::Event::Mouse(moved(
+        grips[2],
+    ))]);
+    ui.point_at(outside);
+    ui.simulate([iced::Event::Mouse(moved(
+        outside,
+    ))]);
+    let asked = asked(ui);
+    apply(&mut editor, asked);
+    mouse(&mut editor, grips[2], [moved(grips[2])]);
+    mouse(&mut editor, grips[2], [ButtonReleased(Left)]);
+    assert_eq!(expressions(&editor), "hbac");
+
+    // by name there is nothing to drag by, and the names are where they were
+    let left = |editor: &Editor| {
+        simulator(editor.view())
+            .find(field("a"))
+            .unwrap()
+            .bounds()
+            .x
+    };
+    let was = left(&editor);
+    press_on(&mut editor, "file");
+    assert_eq!(every(&editor, theme::sign::GRIP).len(), 1);
+    assert_eq!(left(&editor), was);
+}

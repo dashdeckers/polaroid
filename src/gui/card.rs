@@ -26,7 +26,7 @@ const GAP: f32 = spacing::S;
 /// The side of a tile, which a closed card is.
 const TILE: f32 = theme::surface::TILE;
 /// The height of the line of the id, and the side of the plate that an open card is dragged by.
-const HEAD: f32 = theme::line(size::TITLE) + theme::FIELD.top + theme::FIELD.bottom;
+const HEAD: f32 = theme::HEAD;
 /// The small table, a pixel under a sign so that its lines are crisp.
 const ICON: Size = Size::new(icon::M - 1.0, icon::S - 1.0);
 /// What the border and the cursor of a field take beside the room around its text.
