@@ -146,7 +146,7 @@ enum Wiring {
     Opened(u32),
 }
 
-/// Two blank cards of 100 by 60 with a port halfway down each side; the second resizes, not loose.
+/// Two blank cards of 100 by 60, a port halfway down each side; the second resizes, by a handle.
 fn ports() -> impl Widget<Wiring> {
     let blank = || {
         container(space())
@@ -166,7 +166,7 @@ fn ports() -> impl Widget<Wiring> {
                 .ports(halfway())
                 .output(30.0)
                 .resizable(true)
-                .loose(false),
+                .handle(Rectangle::with_size(Size::new(20.0, 20.0))),
         )
         .on_wire(Wiring::Wired)
         .on_unwire(Wiring::Unwired)
@@ -261,9 +261,7 @@ fn a_card_with_a_handle_is_dragged_by_that_alone() {
         .width(100)
         .height(60);
     let handle = Rectangle::new(Point::ORIGIN, Size::new(20.0, 20.0));
-    let held = card(1, Point::new(20.0, 20.0), blank)
-        .handle(handle)
-        .loose(false);
+    let held = card(1, Point::new(20.0, 20.0), blank).handle(handle);
     let scene = surface()
         .push(held)
         .on_move(Message::Moved);
@@ -295,11 +293,13 @@ fn a_card_with_a_handle_is_dragged_by_that_alone() {
 }
 
 #[test]
-fn a_double_press_opens_a_loose_card_alone() {
+fn a_double_press_opens_a_card_by_its_handle_alone() {
     let mut simulator = simulator(ports());
+    // all of the first card is its handle, and of the second its corner
     for card in [
         Point::new(60.0, 60.0),
         Point::new(340.0, 60.0),
+        Point::new(310.0, 30.0),
     ] {
         simulator.point_at(card);
         simulator.simulate(click().chain(click()));
@@ -308,7 +308,13 @@ fn a_double_press_opens_a_loose_card_alone() {
     let messages: Vec<_> = simulator
         .into_messages()
         .collect();
-    assert_eq!(messages, [Wiring::Opened(1)]);
+    assert_eq!(
+        messages,
+        [
+            Wiring::Opened(1),
+            Wiring::Opened(2)
+        ]
+    );
 }
 
 #[test]

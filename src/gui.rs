@@ -971,11 +971,13 @@ impl Editor {
             let card = polaroid_iced::card(id, layout::position(node), component(self.card(node)))
                 .ports(ports)
                 .output(card::output())
-                .handle(card::handle())
-                // an open card is moved and closed by its buttons alone, which leaves its text
-                .loose(!is_open)
                 .resizable(is_open)
                 .tall(tall);
+            // an open card is moved and closed by its buttons alone, which leaves its text
+            let card = match is_open {
+                true => card.handle(card::handle()),
+                false => card,
+            };
             graph = graph.push(card);
             let wired = node
                 .inputs

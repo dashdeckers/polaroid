@@ -80,7 +80,6 @@ pub fn card<'a, Key, Message>(
         is_resizable: false,
         tall: None,
         handle: None,
-        is_loose: true,
     }
 }
 
@@ -97,9 +96,8 @@ pub struct Card<'a, Key, Message> {
     is_resizable: bool,
     /// The height it was made, which what it holds may exceed.
     tall: Option<f32>,
+    /// The part of it where a press that nothing takes drags it, and a double one opens it.
     handle: Option<Rectangle>,
-    /// Whether a press that nothing in it takes drags it, and a double one opens it.
-    is_loose: bool,
 }
 
 impl<Key, Message> Card<'_, Key, Message> {
@@ -123,16 +121,7 @@ impl<Key, Message> Card<'_, Key, Message> {
         self
     }
 
-    /// Whether a press that nothing in it takes drags it, and a double one opens it; it is so.
-    pub fn loose(
-        mut self,
-        is_loose: bool,
-    ) -> Self {
-        self.is_loose = is_loose;
-        self
-    }
-
-    /// A part of it, from its corner, that drags it whatever else does.
+    /// The part of it, from its corner, that drags and opens it; all of it does unless told.
     pub fn handle(
         mut self,
         handle: Rectangle,
@@ -243,7 +232,7 @@ impl<'a, Key, Message> Surface<'a, Key, Message> {
         self
     }
 
-    /// The message for a double press on a loose card that nothing in it takes.
+    /// The message for a double press on the handle of a card that nothing in it takes.
     pub fn on_open(
         mut self,
         on_open: impl Fn(Key) -> Message + 'a,
@@ -292,7 +281,7 @@ struct State<Key> {
     pan: Vector,
     scale: f32,
     drag: Option<Drag<Key>>,
-    /// The latest press on a loose card, which tells a double one.
+    /// The latest press on the handle of a card, which tells a double one.
     pressed: Option<mouse::Click>,
     /// The card that the dragged one lies on.
     swap: Option<Swap<Key>>,
@@ -341,6 +330,14 @@ impl Hit {
             | Self::Handle(index)
             | Self::Card(index) => index,
         }
+    }
+
+    /// Whether it is on what the card of this index holds, which the cursor is then over.
+    fn is_on(
+        hit: Option<Self>,
+        index: usize,
+    ) -> bool {
+        matches!(hit, Some(Self::Handle(on) | Self::Card(on)) if on == index)
     }
 }
 
@@ -423,14 +420,14 @@ impl<'a, Key: PartialEq, Message> Surface<'a, Key, Message> {
                 );
                 let handle = card
                     .handle
-                    .map(|handle| handle + (bounds.position() - Point::ORIGIN));
+                    .map_or(bounds, |handle| {
+                        handle + (bounds.position() - Point::ORIGIN)
+                    });
                 match (input, output) {
                     (Some(slot), _) => Some(Hit::Input(index, slot)),
                     (None, Some(_)) => Some(Hit::Output(index)),
                     _ if card.is_resizable && grip.contains(point) => Some(Hit::Grip(index)),
-                    _ if handle.is_some_and(|handle| handle.contains(point)) => {
-                        Some(Hit::Handle(index))
-                    }
+                    _ if handle.contains(point) => Some(Hit::Handle(index)),
                     _ => bounds
                         .contains(point)
                         .then_some(Hit::Card(index)),
@@ -716,7 +713,7 @@ where
             .zip(&mut tree.children)
             .enumerate()
         {
-            let cursor = match is_free && hit == Some(Hit::Card(index)) {
+            let cursor = match is_free && Hit::is_on(hit, index) {
                 true => local,
                 false => local.levitate(),
             };
@@ -810,24 +807,27 @@ where
                         let corner = Point::new(card.x + card.width, card.y + card.height);
                         Drag::Grip(key(index), corner - point)
                     }
-                    // a card that is not loose is dragged by its handle alone
-                    Some(Hit::Card(index) | Hit::Input(index, _))
-                        if !self.cards[index].is_loose =>
+                    // a card is dragged and opened by its handle alone
+                    Some(Hit::Card(_)) => return,
+                    Some(Hit::Input(index, _))
+                        if self.cards[index]
+                            .handle
+                            .is_some() =>
                     {
                         return;
                     }
-                    // nor is one by what shows a cursor of its own, as text to select does
-                    Some(Hit::Card(index)) if shown(index) != mouse::Interaction::None => {
+                    // and not by what shows a cursor of its own there, as text to select does
+                    Some(Hit::Handle(index)) if shown(index) != mouse::Interaction::None => {
                         return;
                     }
-                    Some(Hit::Card(index)) if is_double(&mut state.pressed, at) => {
+                    Some(Hit::Handle(index)) if is_double(&mut state.pressed, at) => {
                         if let Some(on_open) = &self.on_open {
                             shell.publish(on_open(key(index)));
                         }
                         shell.capture_event();
                         return;
                     }
-                    Some(Hit::Handle(index) | Hit::Card(index) | Hit::Input(index, _)) => {
+                    Some(Hit::Handle(index) | Hit::Input(index, _)) => {
                         let at = Point::ORIGIN + self.cards[index].at;
                         Drag::Card(key(index), point - (at + view.origin), at)
                     }
@@ -952,15 +952,12 @@ where
                 mouse::Interaction::Crosshair
             }
             (Some(_), _) => mouse::Interaction::Grabbing,
-            (None, Some(Hit::Handle(_))) => mouse::Interaction::Grab,
-            (None, Some(Hit::Card(index))) => {
+            (None, Some(hit @ (Hit::Handle(index) | Hit::Card(index)))) => {
                 let tree = &tree.children[index];
                 let inner = self.interaction(index, tree, view, local, viewport, renderer);
-                match inner {
-                    mouse::Interaction::None if self.cards[index].is_loose => {
-                        mouse::Interaction::Grab
-                    }
-                    inner => inner,
+                match (inner, hit) {
+                    (mouse::Interaction::None, Hit::Handle(_)) => mouse::Interaction::Grab,
+                    _ => inner,
                 }
             }
             (None, None) => mouse::Interaction::None,
@@ -1016,7 +1013,7 @@ where
                     renderer.draw_geometry(wires.into_geometry());
                 });
                 for (index, card, tree, layout) in self.laid_out(tree, view) {
-                    let cursor = match hit == Some(Hit::Card(index)) {
+                    let cursor = match Hit::is_on(hit, index) {
                         true => local,
                         false => local.levitate(),
                     };
