@@ -948,6 +948,18 @@ fn row_of(
     steps: f32,
     row: usize,
 ) -> Vec<[u8; 4]> {
+    let wheel = mouse::Event::WheelScrolled {
+        delta: ScrollDelta::Lines { x: 0.0, y: steps },
+    };
+    row_after(scene, [(Point::ORIGIN, Event::Mouse(wheel))], row)
+}
+
+/// A row of pixels of `scene` in a window of 400 by 300, after each event with the cursor there.
+fn row_after<Message>(
+    scene: impl Widget<Message>,
+    events: impl IntoIterator<Item = (Point, Event)>,
+    row: usize,
+) -> Vec<[u8; 4]> {
     use iced_test::core::renderer::{Headless, Settings, Style};
     use iced_test::core::shell;
     use iced_test::futures::futures::executor::block_on;
@@ -957,18 +969,18 @@ fn row_of(
         .expect("a headless renderer");
     let size = Size::new(400.0, 300.0);
     let mut interface = UserInterface::build(scene, size, Cache::default(), &mut renderer);
-    let cursor = mouse::Cursor::Available(Point::ORIGIN);
-    let wheel = mouse::Event::WheelScrolled {
-        delta: ScrollDelta::Lines { x: 0.0, y: steps },
-    };
-    let _ = interface.update(
-        &iced::window::Headless,
-        &shell::Waker::noop(),
-        &[Event::Mouse(wheel)],
-        cursor,
-        &mut renderer,
-        &mut shell::Bus::new(),
-    );
+    let mut cursor = mouse::Cursor::Unavailable;
+    for (at, event) in events {
+        cursor = mouse::Cursor::Available(at);
+        let _ = interface.update(
+            &iced::window::Headless,
+            &shell::Waker::noop(),
+            &[event],
+            cursor,
+            &mut renderer,
+            &mut shell::Bus::new(),
+        );
+    }
     let style = Style {
         text_color: iced::Color::BLACK,
     };
@@ -1048,4 +1060,45 @@ fn a_halo_tints_what_lies_around_a_card_and_its_rings_however_far_out() {
     // left of the outermost ring, as large as it is and a quarter as large
     assert!(is_tinted(true, 0.0, 70, 26) && !is_tinted(false, 0.0, 70, 26));
     assert!(is_tinted(true, -100.0, 17, 2) && !is_tinted(false, -100.0, 17, 2));
+}
+
+#[test]
+fn a_halo_singles_out_the_card_that_a_drop_swaps_the_dragged_one_with_or_cannot() {
+    let scene = |swaps: bool| {
+        let blank = || {
+            container(space())
+                .width(100)
+                .height(60)
+        };
+        surface::<u32, ()>()
+            .on_move(|_, _| ())
+            .on_swap(move |_, _, _| swaps.then_some(()))
+            .push(card(1, Point::new(20.0, 20.0), blank()))
+            .push(card(2, Point::new(200.0, 100.0), blank()))
+    };
+    // the first card is dragged onto most of the second, and left there for a while
+    let (from, to) = (Point::new(70.0, 50.0), Point::new(245.0, 135.0));
+    let start = iced::time::Instant::now();
+    let frame = |after: u64| {
+        let at = start + std::time::Duration::from_millis(after);
+        Event::Window(iced::window::Event::RedrawRequested(at))
+    };
+    let left_of_second = |swaps: bool, left: u64| {
+        let events = [
+            (
+                from,
+                Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+            ),
+            (to, Event::Mouse(mouse::Event::CursorMoved { position: to })),
+            (to, frame(0)),
+            (to, frame(left)),
+        ];
+        row_after(scene(swaps), events, 130)[194]
+    };
+    let [r, g, b, _] = left_of_second(true, 500);
+    assert!(b > r && r != 255, "{r} {g} {b}");
+    // in the colour of an error if they cannot swap, and not before it lay there
+    let [r, g, b, _] = left_of_second(false, 500);
+    assert!(r > b && g != 255, "{r} {g} {b}");
+    assert_eq!(left_of_second(true, 100), [255; 4]);
 }

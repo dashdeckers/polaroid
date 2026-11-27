@@ -348,6 +348,16 @@ impl Marks {
             .boxed()
     }
 
+    /// Whether the picker of the tags of `carrier` is the one that is open.
+    pub fn is_picking(
+        &self,
+        carrier: &Carrier,
+    ) -> bool {
+        self.picking
+            .as_ref()
+            .is_some_and(|picking| picking.carrier == *carrier)
+    }
+
     /// The picker of the tags of `carrier`, if it is the one that is open.
     pub fn picker<'a>(
         &'a self,

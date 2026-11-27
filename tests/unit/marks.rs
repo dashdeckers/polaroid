@@ -512,3 +512,14 @@ fn the_glass_rings_a_node_for_each_mark_picked_that_it_bears() {
     marks.update(Message::Remove("mine".to_owned()), &mut pipeline);
     assert_eq!(rings(&marks, &pipeline, 0), [category]);
 }
+
+#[test]
+fn the_picker_that_is_open_is_that_of_what_it_was_opened_for_alone() {
+    let (mut pipeline, mut marks) = (pipeline(), Marks::default());
+    let node = Carrier::Node("net".to_owned());
+    marks.update(Message::Pick(node.clone()), &mut pipeline);
+    // a name is not the node of its id
+    assert!(marks.is_picking(&node) && !marks.is_picking(&named("net")));
+    marks.update(Message::Close, &mut pipeline);
+    assert!(!marks.is_picking(&node));
+}

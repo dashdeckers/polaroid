@@ -1226,6 +1226,10 @@ where
                 renderer.with_translation(seen.position() - Point::ORIGIN, |renderer| {
                     renderer.draw_geometry(wires.into_geometry());
                 });
+                let swap = state
+                    .swap
+                    .as_ref()
+                    .filter(|swap| swap.is_armed);
                 for (index, card, tree, layout) in self.laid_out(tree, view) {
                     let cursor = match Hit::is_on(hit, index) {
                         true => local,
@@ -1236,12 +1240,18 @@ where
                         let bounds = layout.bounds();
                         // the rings of its marks reach this far out, and its halo from there on
                         let reach = card.rings.len() as f32 * (wide(GAP) + wide(MARK));
-                        if card.is_haloed {
+                        // a halo singles out the card told to have one, and the one that a drop
+                        // swaps the dragged card with: in the colour of an error if it cannot
+                        let singled = match swap.filter(|swap| swap.target == card.key) {
+                            Some(swap) if !swap.is_possible => Some(scheme.error.color),
+                            Some(_) => Some(scheme.primary.color),
+                            None => card
+                                .is_haloed
+                                .then_some(scheme.primary.color),
+                        };
+                        if let Some(color) = singled {
                             let halo = wide(HALO);
-                            let color = scheme
-                                .primary
-                                .color
-                                .scale_alpha(FAINT);
+                            let color = color.scale_alpha(FAINT);
                             let glow = renderer::Quad {
                                 bounds: bounds.expand(reach + halo / 2.0),
                                 border: border::rounded(CORNER + reach + halo / 2.0),
@@ -1300,34 +1310,6 @@ where
                                 renderer.fill_quad(quad(dot, SPECK), muted);
                             }
                         }
-                    });
-                }
-                // around the card that a drop swaps the dragged one with, or cannot
-                let halo = state
-                    .swap
-                    .as_ref()
-                    .filter(|swap| swap.is_armed)
-                    .and_then(|swap| {
-                        let (_, _, _, layout) = self
-                            .laid_out(tree, view)
-                            .find(|(_, card, ..)| card.key == swap.target)?;
-                        let color = match swap.is_possible {
-                            true => scheme.primary.color,
-                            false => scheme.error.color,
-                        };
-                        Some((layout.bounds(), color))
-                    });
-                if let Some((bounds, color)) = halo {
-                    // round as the card it lies around
-                    let halo = renderer::Quad {
-                        bounds: bounds.expand(theme::HALO),
-                        border: border::rounded(CORNER + theme::HALO)
-                            .color(color)
-                            .width(theme::HALO),
-                        ..renderer::Quad::default()
-                    };
-                    renderer.with_layer(seen, |renderer| {
-                        renderer.fill_quad(halo, Color::TRANSPARENT);
                     });
                 }
             });

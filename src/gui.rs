@@ -44,7 +44,7 @@ use self::drawer::Drawer;
 use self::icon::Icons;
 use self::known::Known;
 use self::look::{Help, error, pill, title};
-use self::marks::Marks;
+use self::marks::{Carrier, Marks};
 use crate::polars::prelude::{DataFrame, DataType, PolarsResult, polars_err};
 use crate::{Catalog, Described, Node, Pipeline, Registry, schema};
 
@@ -1037,6 +1037,10 @@ impl Editor {
                 .rings(
                     self.marks
                         .rings(&self.pipeline, &self.catalog, node),
+                )
+                .halo(
+                    self.marks
+                        .is_picking(&Carrier::Node(node.id.clone())),
                 );
             graph = graph.push(card);
             let wired = node
