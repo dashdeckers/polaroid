@@ -315,18 +315,25 @@ impl Known {
                 .nodes
                 .iter()
                 .find(|node| node.id == id);
+            // its args as its block reads them, each name replaced
+            let node = node.and_then(|node| {
+                let args = registry
+                    .resolved(&node.block, &node.args, pipeline)
+                    .ok()?;
+                Some((&node.block, args))
+            });
             // the images of the column that its block has shown, and of no other
             let gallery = node
-                .and_then(|node| registry.images(&node.block, node.args.clone()))
+                .as_ref()
+                .and_then(|(block, args)| registry.images(block, args.clone()))
                 .map(|column| Gallery::of(&frame, &column))
                 .unwrap_or_default();
             // a plot draws the figure of a row over again, to zoom and pan
             #[cfg(feature = "plot")]
-            let gallery =
-                match node.and_then(|node| registry.drawer(&node.block, node.args.clone())) {
-                    Some(Ok(drawer)) => gallery.live(&frame, drawer),
-                    _ => gallery,
-                };
+            let gallery = match node.and_then(|(block, args)| registry.drawer(block, args)) {
+                Some(Ok(drawer)) => gallery.live(&frame, drawer),
+                _ => gallery,
+            };
             self.of(id).frame = Some((frame, gallery));
         }
     }

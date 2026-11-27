@@ -829,6 +829,22 @@ fn a_card_shows_the_images_that_its_block_has_shown_and_browses_them_when_open()
             .find("1 of 3")
             .is_ok()
     );
+
+    // a column that a value names is that column
+    editor
+        .pipeline
+        .values
+        .insert("shown".to_owned(), "plot".into());
+    editor
+        .pipeline
+        .nodes[1]
+        .args = serde_json::json!({ "column": { "$value": "shown" } });
+    ran(&mut editor);
+    assert!(
+        simulator(editor.view())
+            .find("1 of 3")
+            .is_ok()
+    );
 }
 
 #[test]
