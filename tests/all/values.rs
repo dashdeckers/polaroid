@@ -384,6 +384,19 @@ fn what_uses_a_name_is_found_through_values_and_expressions() {
     assert_eq!(pipeline.dependents("discount"), ["discounted", "shown"]);
     assert_eq!(pipeline.dependents("top"), ["most"]);
     assert_eq!(pipeline.dependents("bands"), ["is_cheap"]);
+    // and from a node, all that it uses: the expressions, then the values
+    let used = [
+        "discounted",
+        "discount",
+        "by_price",
+        "shown",
+    ];
+    assert_eq!(pipeline.used_by("out"), used);
+    assert!(
+        pipeline
+            .used_by("gone")
+            .is_empty()
+    );
 }
 
 #[test]

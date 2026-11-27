@@ -350,6 +350,23 @@ impl Pipeline {
             .collect()
     }
 
+    /// The expressions and values that the args of Node `id` use, themselves or through others.
+    pub fn used_by(
+        &self,
+        id: &str,
+    ) -> Vec<&str> {
+        let node = self
+            .nodes
+            .iter()
+            .find(|node| node.id == id);
+        self.expressions
+            .keys()
+            .chain(self.values.keys())
+            .filter(|name| node.is_some_and(|node| uses(&node.args, name, self, &mut Vec::new())))
+            .map(String::as_str)
+            .collect()
+    }
+
     /// The expressions and values that use what is named `name`, themselves or through others.
     pub fn dependents(
         &self,
