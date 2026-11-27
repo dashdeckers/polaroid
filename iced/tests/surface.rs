@@ -874,3 +874,70 @@ fn a_card_given_another_key_under_the_cursor_is_not_told_that_the_cursor_left() 
         .collect();
     assert_eq!(told, [None]);
 }
+
+#[test]
+fn a_card_panned_from_under_the_cursor_is_told_that_the_cursor_left() {
+    use iced::keyboard::{self, Modifiers};
+    use iced::time::{Duration, Instant};
+    use iced::window;
+
+    let blank = container(space())
+        .width(100)
+        .height(60);
+    let scene = surface()
+        .push(card(1, Point::new(20.0, 20.0), blank).peek(true))
+        .on_peek(std::convert::identity);
+    let mut simulator = simulator(scene);
+    let position = Point::new(60.0, 50.0);
+    let later = Instant::now() + Duration::from_secs(1);
+    simulator.point_at(position);
+    simulator.simulate([
+        Event::Mouse(mouse::Event::CursorMoved { position }),
+        Event::Window(window::Event::RedrawRequested(later)),
+        Event::Keyboard(keyboard::Event::ModifiersChanged(Modifiers::CTRL)),
+        Event::Mouse(mouse::Event::WheelScrolled {
+            delta: ScrollDelta::Lines { x: 0.0, y: -5.0 },
+        }),
+    ]);
+    let told: Vec<_> = simulator
+        .into_messages()
+        .collect();
+    assert_eq!(told, [Some(1), None]);
+}
+
+#[test]
+fn the_wheel_pans_while_ctrl_is_held_and_across_with_shift_too() {
+    use iced::keyboard::{self, Modifiers};
+
+    let mut simulator = simulator(ports());
+    // where among the cards a point of the surface is, as a menu asked for there is told
+    let among = |simulator: &mut Simulator<'_, Wiring>, held: Modifiers| {
+        let blank = Point::new(200.0, 200.0);
+        simulator.point_at(blank);
+        simulator.simulate([
+            Event::Keyboard(keyboard::Event::ModifiersChanged(held)),
+            Event::Mouse(mouse::Event::WheelScrolled {
+                delta: ScrollDelta::Lines { x: 0.0, y: 1.0 },
+            }),
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)),
+        ]);
+        match simulator
+            .drain()
+            .last()
+        {
+            Some(Wiring::Menu(_, among)) => among,
+            _ => panic!("a menu is asked for"),
+        }
+    };
+    // a line of the wheel moves the cards by 40, so the point is that much further up or left
+    assert_eq!(
+        among(&mut simulator, Modifiers::CTRL),
+        Point::new(200.0, 160.0)
+    );
+    let across = Modifiers::CTRL | Modifiers::SHIFT;
+    assert_eq!(among(&mut simulator, across), Point::new(160.0, 160.0));
+    // over a card too, which takes no step of the wheel for itself then
+    simulator.point_at(Point::new(60.0, 60.0));
+    simulator.scroll(ScrollDelta::Lines { x: 0.0, y: 1.0 });
+    assert_eq!(among(&mut simulator, across), Point::new(80.0, 160.0));
+}

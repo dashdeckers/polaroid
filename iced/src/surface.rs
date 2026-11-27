@@ -23,6 +23,7 @@ use iced::{
     Transformation,
     Vector,
     border,
+    keyboard,
     window,
 };
 
@@ -31,6 +32,8 @@ use crate::theme::{self, HALO, Scheme, motion, spacing, stroke};
 
 /// How much one step of the wheel zooms.
 const STEP: f32 = theme::surface::ZOOM_STEP;
+/// How far a line of the wheel pans while Ctrl is held.
+const PAGE: f32 = theme::surface::PAGE;
 /// How far out and in a surface zooms.
 const ZOOM: (f32, f32) = theme::surface::ZOOM;
 /// How long after the last step of the wheel a zoom is settled, and is told.
@@ -314,6 +317,8 @@ struct State<Key> {
     settles: Option<Instant>,
     /// The card that the cursor is on, and what it waits for there.
     rest: Option<Rest<Key>>,
+    /// The keys held, of which Ctrl has the wheel pan.
+    modifiers: keyboard::Modifiers,
 }
 
 /// A card that the cursor is on, and what it waits for there.
@@ -591,6 +596,7 @@ where
             swap: None,
             settles: None,
             rest: None,
+            modifiers: keyboard::Modifiers::empty(),
         })
     }
 
@@ -732,7 +738,33 @@ where
         let bounds = layout.bounds();
         let state = tree
             .state
-            .downcast_ref::<State<Key>>();
+            .downcast_mut::<State<Key>>();
+        if let Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)) = event {
+            state.modifiers = *modifiers;
+        }
+        // with Ctrl the wheel pans, whatever is under the cursor: down, or across with Shift too
+        let is_panned = matches!(event, Event::Mouse(mouse::Event::WheelScrolled { .. }))
+            && state
+                .modifiers
+                .command()
+            && cursor.is_over(bounds);
+        if let Event::Mouse(mouse::Event::WheelScrolled { delta }) = event
+            && is_panned
+        {
+            let Vector { x, y } = match *delta {
+                ScrollDelta::Lines { x, y } => Vector::new(x, y) * PAGE,
+                ScrollDelta::Pixels { x, y } => Vector::new(x, y),
+            };
+            state.pan += match state
+                .modifiers
+                .shift()
+            {
+                true => Vector::new(x + y, 0.0),
+                false => Vector::new(x, y),
+            };
+            shell.capture_event();
+            shell.request_redraw();
+        }
         let view = View::new(state, bounds);
         let local = cursor * view.inverse();
         // a card that is pressed comes to the top, before anything else is made of the press
@@ -787,11 +819,13 @@ where
             .as_ref()
             .unwrap_or(event);
 
+        // which take no step of the wheel that pans them
         for (index, (card, tree)) in self
             .cards
             .iter_mut()
             .zip(&mut tree.children)
             .enumerate()
+            .filter(|_| !is_panned)
         {
             let cursor = match is_free && Hit::is_on(hit, index) {
                 true => local,
@@ -844,7 +878,9 @@ where
                 .position()
                 .is_some();
         let on = match event {
+            // where it moved to, or where the cards were panned to under it
             mouse::Event::CursorMoved { .. } if is_seen => Some(hit.map(Hit::card)),
+            mouse::Event::WheelScrolled { .. } if is_seen && is_panned => Some(hit.map(Hit::card)),
             mouse::Event::CursorLeft => Some(None),
             _ => None,
         };
@@ -1035,7 +1071,7 @@ where
                 }
                 shell.request_redraw();
             }
-            mouse::Event::WheelScrolled { delta } => {
+            mouse::Event::WheelScrolled { delta } if !is_panned => {
                 let Some(at) = cursor.position_over(bounds) else {
                     return;
                 };

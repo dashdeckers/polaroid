@@ -49,7 +49,8 @@ const INTRO: &str = "\
 A pipeline is a chain of nodes, each a card: it reads the frames of the cards wired into it, and \
 gives one on. Right-click the background to add a node. Drag from the dot on the right of a card \
 to a dot on the left of another to wire them, and right-click that dot to unwire it. Drag the \
-background to pan, and scroll to zoom. A card is its tile until a double-click on the tile opens \
+background to pan, and scroll to zoom; scroll with Ctrl to pan down, and with Shift too to pan \
+across, whatever is under the cursor. A card is its tile until a double-click on the tile opens \
 it, and one on the icon of the open card closes it; rest the cursor on a tile to see its card open \
 until the cursor leaves it. Drag a card by its tile, or by its icon when it is open; left on \
 another for a moment, it swaps places with it when dropped, wiring and all.

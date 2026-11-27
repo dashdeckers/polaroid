@@ -501,6 +501,8 @@ pub mod surface {
     /// How much one step of the wheel zooms, and how far out and in.
     pub const ZOOM_STEP: f32 = 1.1;
     pub const ZOOM: (f32, f32) = (0.25, 2.5);
+    /// How far a line of the wheel pans while Ctrl is held, as a page scrolls.
+    pub const PAGE: f32 = 40.0;
     /// How much of the smaller of two cards lies on the other for a drop to swap them.
     pub const OVERLAP: f32 = super::opacity::FADED;
 }
