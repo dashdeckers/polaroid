@@ -50,8 +50,9 @@ A pipeline is a chain of nodes, each a card: it reads the frames of the cards wi
 gives one on. Right-click the background to add a node. Drag from the dot on the right of a card \
 to a dot on the left of another to wire them, and right-click that dot to unwire it. Drag the \
 background to pan, and scroll to zoom. A card is its tile until a double-click on the tile opens \
-it, and one on the icon of the open card closes it. Drag a card by its tile, or by its icon when \
-it is open; left on another for a moment, it swaps places with it when dropped, wiring and all.
+it, and one on the icon of the open card closes it; rest the cursor on a tile to see its card open \
+until the cursor leaves it. Drag a card by its tile, or by its icon when it is open; left on \
+another for a moment, it swaps places with it when dropped, wiring and all.
 
 While Help is on, everything says what it is for when the cursor rests on it. Press Help again \
 to turn that off.";
@@ -133,6 +134,8 @@ struct Editor {
     is_dirty: bool,
     /// Where the menu of blocks is open: on the surface, and among the cards.
     menu: Option<(Point, Point)>,
+    /// The node whose closed card is shown open while the cursor rests on it, which is no edit.
+    peek: Option<String>,
     /// How each node is wired, and what a Check and the Runs found of it.
     known: Known,
     /// What is wrong with the pipeline as a whole, or with the latest Save.
@@ -173,6 +176,8 @@ enum Message {
     Add(String, Point),
     CloseMenu,
     Edit(String, Edit),
+    /// The closed card of this node is shown open for the cursor that rests on it, or none is.
+    Peek(Option<String>),
     /// The args of this node as they are edited wait to be taken.
     Draft(String, form::Draft),
     /// Text to put on the clipboard.
@@ -246,6 +251,7 @@ impl Editor {
             pipeline,
             is_dirty: false,
             menu: None,
+            peek: None,
             known: Known::default(),
             problem: None,
             worker: child::Worker::default(),
@@ -305,6 +311,7 @@ impl Editor {
                 }
             }
             Message::Resize(id, size) => self.lay(&id, |node| layout::resize(node, size)),
+            Message::Peek(id) => self.peek = id,
             Message::Copy(text) => return clipboard::write(text).discard(),
             Message::Menu(at, point) => self.menu = Some((at, point)),
             Message::CloseMenu => self.menu = None,
@@ -659,6 +666,7 @@ impl Editor {
         self.drafts.clear();
         self.job = None;
         self.menu = None;
+        self.peek = None;
         self.is_dirty = is_dirty;
         self.drawer = Drawer::default();
         self.check_wiring();
@@ -956,6 +964,7 @@ impl Editor {
             .on_wire(|from, to, slot| Message::Edit(to, Edit::Wire(slot, from)))
             .on_unwire(|to, slot| Message::Edit(to, Edit::Wire(slot, String::new())))
             .on_open(|id| Message::Edit(id, Edit::Toggle))
+            .on_peek(Message::Peek)
             .on_menu(Message::Menu)
             .on_zoom(Message::Zoom);
         for node in &self.pipeline.nodes {
@@ -963,16 +972,19 @@ impl Editor {
                 .block(&node.block)
                 .map_or(0, |block| block.inputs.len());
             let ports = (0..inputs).map(card::anchor);
+            // kept open, or open while the cursor rests on it, which is not to be resized
             let is_open = layout::is_open(node);
-            let tall = match is_open {
+            let is_shown_open = self.shows_open(node);
+            let tall = match is_shown_open {
                 true => layout::size(node).height,
                 false => 0.0,
             };
             let id = node.id.clone();
             let card = polaroid_iced::card(id, layout::position(node), component(self.card(node)))
                 .ports(ports)
-                .output(card::output(is_open))
-                .handle(card::handle(is_open))
+                .output(card::output(is_shown_open))
+                .handle(card::handle(is_shown_open))
+                .peek(!is_open)
                 .resizable(is_open)
                 .tall(tall);
             graph = graph.push(card);

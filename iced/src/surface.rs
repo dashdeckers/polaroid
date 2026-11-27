@@ -47,6 +47,8 @@ const FAR: f32 = NEAR + PORT;
 const OVERLAP: f32 = theme::surface::OVERLAP;
 /// How long a dragged card lies on another before a drop swaps them, which a halo then shows.
 const HOVER: Duration = motion::MEDIUM;
+/// How long the cursor rests on a card that peeks before it is told to open.
+const REST: Duration = motion::LONG;
 
 /// An empty surface.
 pub fn surface<'a, Key, Message>() -> Surface<'a, Key, Message> {
@@ -59,6 +61,7 @@ pub fn surface<'a, Key, Message>() -> Surface<'a, Key, Message> {
         on_unwire: None,
         on_menu: None,
         on_open: None,
+        on_peek: None,
         on_swap: None,
         on_zoom: None,
     }
@@ -80,6 +83,7 @@ pub fn card<'a, Key, Message>(
         is_resizable: false,
         tall: None,
         handle: None,
+        peeks: false,
     }
 }
 
@@ -98,6 +102,8 @@ pub struct Card<'a, Key, Message> {
     tall: Option<f32>,
     /// The part of it where a press that nothing takes drags it, and a double one opens it.
     handle: Option<Rectangle>,
+    /// Whether it is told to open once the cursor rested on it, until the cursor leaves it.
+    peeks: bool,
 }
 
 impl<Key, Message> Card<'_, Key, Message> {
@@ -127,6 +133,15 @@ impl<Key, Message> Card<'_, Key, Message> {
         handle: Rectangle,
     ) -> Self {
         self.handle = Some(handle);
+        self
+    }
+
+    /// Whether the cursor resting on it a while has it told to open until the cursor leaves it.
+    pub fn peek(
+        mut self,
+        peeks: bool,
+    ) -> Self {
+        self.peeks = peeks;
         self
     }
 
@@ -160,6 +175,7 @@ pub struct Surface<'a, Key, Message> {
     on_unwire: Option<Box<dyn Fn(Key, usize) -> Message + 'a>>,
     on_menu: Option<Box<dyn Fn(Point, Point) -> Message + 'a>>,
     on_open: Option<Box<dyn Fn(Key) -> Message + 'a>>,
+    on_peek: Option<Box<dyn Fn(Option<Key>) -> Message + 'a>>,
     on_swap: Option<OnSwap<'a, Key, Message>>,
     on_zoom: Option<Box<dyn Fn(f32) -> Message + 'a>>,
 }
@@ -240,6 +256,15 @@ impl<'a, Key, Message> Surface<'a, Key, Message> {
         self.on_open = Some(Box::new(on_open));
         self
     }
+
+    /// The message for a card that peeks once the cursor rested on it, and for none as it leaves.
+    pub fn on_peek(
+        mut self,
+        on_peek: impl Fn(Option<Key>) -> Message + 'a,
+    ) -> Self {
+        self.on_peek = Some(Box::new(on_peek));
+        self
+    }
 }
 
 impl<'a, Key, Message> Surface<'a, Key, Message> {
@@ -287,6 +312,25 @@ struct State<Key> {
     swap: Option<Swap<Key>>,
     /// When the zoom is settled, if it is not told yet.
     settles: Option<Instant>,
+    /// The card that the cursor is on, and what it waits for there.
+    rest: Option<Rest<Key>>,
+}
+
+/// A card that the cursor is on, and what it waits for there.
+struct Rest<Key> {
+    key: Key,
+    wait: Wait,
+}
+
+/// What a card that the cursor is on waits for.
+#[derive(Clone, Copy, PartialEq)]
+enum Wait {
+    /// The cursor to have rested on it until then, when it is told to open if it peeks.
+    Until(Instant),
+    /// The cursor to leave it, which it is told as it was told to open.
+    Told,
+    /// The cursor to leave it: it was pressed, and is not told to open before.
+    Spent,
 }
 
 /// A card that the dragged one lies on, which a drop swaps it with once it lay there a while.
@@ -377,6 +421,22 @@ impl View {
 }
 
 impl<'a, Key: PartialEq, Message> Surface<'a, Key, Message> {
+    /// Brings the card of an index to the top, over all the others.
+    fn raise(
+        &mut self,
+        tree: &mut Tree,
+        index: usize,
+    ) where
+        Key: 'static,
+    {
+        self.cards[index..].rotate_left(1);
+        tree.children[index..].rotate_left(1);
+        let state = tree
+            .state
+            .downcast_mut::<State<Key>>();
+        state.keys[index..].rotate_left(1);
+    }
+
     /// Each card with its tree and its layout, from the bottom one up.
     fn laid_out<'b>(
         &'b self,
@@ -530,6 +590,7 @@ where
             pressed: None,
             swap: None,
             settles: None,
+            rest: None,
         })
     }
 
@@ -679,13 +740,32 @@ where
             && cursor.is_over(bounds)
             && let Some(hit) = self.hit(tree, view, local)
         {
-            let index = hit.card();
-            self.cards[index..].rotate_left(1);
-            tree.children[index..].rotate_left(1);
-            let state = tree
-                .state
-                .downcast_mut::<State<Key>>();
-            state.keys[index..].rotate_left(1);
+            self.raise(tree, hit.card());
+        }
+        // as does one that the cursor rested on, which is told to open over the others
+        let state = tree
+            .state
+            .downcast_mut::<State<Key>>();
+        if let Event::Window(window::Event::RedrawRequested(now)) = event
+            && let Some(rest) = &mut state.rest
+            && let Wait::Until(until) = rest.wait
+        {
+            let index = state
+                .keys
+                .iter()
+                .position(|key| *key == rest.key);
+            match index {
+                // a redraw before then lets go of the one asked for, so it is asked for again
+                _ if *now < until => shell.request_redraw_at(until),
+                Some(index) if self.cards[index].peeks => {
+                    rest.wait = Wait::Told;
+                    if let Some(on_peek) = &self.on_peek {
+                        shell.publish(on_peek(Some(rest.key.clone())));
+                    }
+                    self.raise(tree, index);
+                }
+                _ => {}
+            }
         }
         let state = tree
             .state
@@ -758,6 +838,56 @@ where
         let Event::Mouse(event) = event else {
             return;
         };
+        // the card that the cursor is on, which a drag or what lies over the cards leaves as it is
+        let is_seen = is_free
+            && cursor
+                .position()
+                .is_some();
+        let on = match event {
+            mouse::Event::CursorMoved { .. } if is_seen => Some(hit.map(Hit::card)),
+            mouse::Event::CursorLeft => Some(None),
+            _ => None,
+        };
+        let on = on.map(|on| on.map(|index| &self.cards[index].key));
+        let is_gone = |rest: &Rest<Key>| {
+            !self
+                .cards
+                .iter()
+                .any(|card| card.key == rest.key)
+        };
+        match (&mut state.rest, on) {
+            (rest, Some(on))
+                if rest
+                    .as_ref()
+                    .map(|rest| &rest.key)
+                    == on => {}
+            // a card that is gone from under the cursor was given another key, and is the same
+            (Some(rest), Some(Some(on))) if is_gone(rest) => rest.key = on.clone(),
+            (rest, Some(on)) => {
+                let is_left = rest
+                    .take()
+                    .is_some_and(|rest| rest.wait == Wait::Told);
+                if let (true, Some(on_peek)) = (is_left, &self.on_peek) {
+                    shell.publish(on_peek(None));
+                }
+                let until = Instant::now() + REST;
+                *rest = on.map(|key| Rest {
+                    key: key.clone(),
+                    wait: Wait::Until(until),
+                });
+                if rest.is_some() {
+                    shell.request_redraw_at(until);
+                }
+            }
+            (_, None) => {}
+        }
+        // one that is pressed before it was told to open is not told before the cursor left it
+        if let mouse::Event::ButtonPressed(_) = event
+            && let Some(rest) = &mut state.rest
+            && rest.wait != Wait::Told
+        {
+            rest.wait = Wait::Spent;
+        }
         match event {
             // a drag ends wherever the cursor is, and whoever took the release
             mouse::Event::ButtonReleased(mouse::Button::Left) => {

@@ -67,6 +67,10 @@ impl Editor {
         else {
             return;
         };
+        // a card that the cursor opened is open or closed for good, or gone
+        if let Edit::Toggle | Edit::Delete = edit {
+            self.peek = None;
+        }
         match edit {
             Edit::Rename(new) => {
                 let is_renamed = self
@@ -74,6 +78,10 @@ impl Editor {
                     .rename(id, &new);
                 if !is_renamed {
                     return;
+                }
+                // its card stays open for the cursor that rests on it
+                if self.peek.as_deref() == Some(id) {
+                    self.peek = Some(new.clone());
                 }
                 // what was known of it was known by its old id
                 self.known
@@ -141,6 +149,14 @@ impl Editor {
         self.check_wiring();
     }
 
+    /// Whether the card of `node` is shown open: kept open, or for the cursor that rests on it.
+    pub(super) fn shows_open(
+        &self,
+        node: &Node,
+    ) -> bool {
+        layout::is_open(node) || self.peek.as_ref() == Some(&node.id)
+    }
+
     /// The card of `node`, with what is known of it.
     pub(super) fn card<'a>(
         &'a self,
@@ -148,6 +164,7 @@ impl Editor {
     ) -> Card<'a> {
         Card {
             node,
+            is_open: self.shows_open(node),
             defs: &self.catalog.defs,
             block: self.block(&node.block),
             pipeline: &self.pipeline,
@@ -217,6 +234,8 @@ pub fn output(is_open: bool) -> f32 {
 /// A node as a card: closed it is its tile, and open its id, its args and what it gives.
 pub struct Card<'a> {
     node: &'a Node,
+    /// Whether it is shown open, and not as its tile alone.
+    is_open: bool,
     defs: &'a Value,
     /// What the catalog says of its block, if there is such a block.
     block: Option<&'a Described>,
@@ -310,7 +329,7 @@ impl<'a> Component<'a, Message> for Card<'a> {
     ) -> impl Widget<Event> + 'a {
         let node = self.node;
         let style = theme::container::ringed(ring(self.status));
-        if !layout::is_open(node) {
+        if !self.is_open {
             // a closed card is its tile alone, with a port down its edge for each frame it reads
             let ports = (0..self.reads().len()).map(|slot| {
                 container(space())
@@ -520,9 +539,10 @@ impl<'a> Card<'a> {
         row![
             plate,
             self.help.of(
-                toggle(true, Event::Edit(Edit::Toggle)),
-                "Closes the card to its tile; a double-click on the icon does so too. Drag the \
-                 corner of an open card to resize it.",
+                toggle(layout::is_open(self.node), Event::Edit(Edit::Toggle)),
+                "Closes the card to its tile, or keeps it open if the cursor resting on its tile \
+                 opened it; a double-click on the icon does so too. Drag the corner of an open \
+                 card to resize it.",
             ),
             self.save(),
             self.help.of(

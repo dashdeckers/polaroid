@@ -707,3 +707,170 @@ fn a_card_is_told_a_move_where_it_sees_it() {
         .collect();
     assert_eq!(steps, [10.0]);
 }
+
+#[test]
+fn a_card_that_peeks_is_told_to_open_once_the_cursor_rested_on_it_and_comes_to_the_top() {
+    use iced::time::{Duration, Instant};
+    use iced::window;
+
+    #[derive(Debug, Clone, PartialEq)]
+    enum Peek {
+        Peeked(Option<u32>),
+        Pressed(u32),
+    }
+    // the second card lies over the button of the first, which peeks
+    let blank = |key: u32| {
+        container(button(text!("press {key}")).on_press(Peek::Pressed(key)))
+            .width(100)
+            .height(60)
+    };
+    let scene = surface()
+        .push(card(1, Point::new(20.0, 20.0), blank(1)).peek(true))
+        .push(card(2, Point::new(20.0, 40.0), blank(2)))
+        .on_peek(Peek::Peeked);
+    let mut simulator = simulator(scene);
+    let moved = |simulator: &mut Simulator<'_, Peek>, position: Point| {
+        simulator.point_at(position);
+        simulator.simulate([Event::Mouse(
+            mouse::Event::CursorMoved { position },
+        )]);
+    };
+    let rested = |simulator: &mut Simulator<'_, Peek>| {
+        let later = Instant::now() + Duration::from_secs(1);
+        simulator.simulate([Event::Window(
+            window::Event::RedrawRequested(later),
+        )]);
+    };
+    let first = Point::new(110.0, 25.0);
+    let second = Point::new(110.0, 90.0);
+    let button = Point::new(40.0, 42.0);
+
+    // a press before the cursor rested ends the wait until the cursor left the card
+    moved(&mut simulator, first);
+    simulator.simulate([Event::Mouse(
+        mouse::Event::ButtonPressed(mouse::Button::Right),
+    )]);
+    rested(&mut simulator);
+    moved(&mut simulator, Point::new(first.x + 1.0, first.y));
+    rested(&mut simulator);
+    // and the second card does not peek
+    moved(&mut simulator, second);
+    rested(&mut simulator);
+    assert_eq!(
+        simulator
+            .drain()
+            .count(),
+        0
+    );
+
+    // the first is told once, takes the presses where the second lay on it, and is told it is left
+    moved(&mut simulator, Point::new(300.0, 300.0));
+    moved(&mut simulator, first);
+    rested(&mut simulator);
+    rested(&mut simulator);
+    moved(&mut simulator, button);
+    simulator.simulate(click());
+    moved(&mut simulator, Point::new(300.0, 300.0));
+    let told: Vec<_> = simulator
+        .into_messages()
+        .collect();
+    assert_eq!(
+        told,
+        [
+            Peek::Peeked(Some(1)),
+            Peek::Pressed(1),
+            Peek::Peeked(None)
+        ]
+    );
+}
+
+#[test]
+fn a_card_that_waits_to_peek_asks_to_be_drawn_then_again_at_each_redraw_before() {
+    use iced::time::Instant;
+    use iced::window::{self, RedrawRequest};
+    use iced_test::core::renderer::{Headless, Settings};
+    use iced_test::core::shell;
+    use iced_test::futures::futures::executor::block_on;
+    use iced_test::runtime::user_interface::{Cache, State, UserInterface};
+
+    let blank = container(space())
+        .width(100)
+        .height(60);
+    let scene = surface::<u32, ()>().push(card(1, Point::new(20.0, 20.0), blank).peek(true));
+    let mut renderer = block_on(<iced::Renderer as Headless>::new(Settings::default(), None))
+        .expect("a headless renderer");
+    let size = Size::new(400.0, 300.0);
+    let mut interface = UserInterface::build(scene, size, Cache::default(), &mut renderer);
+    let mut messages = shell::Bus::new();
+    // when the surface asks to be drawn again after an event, with the cursor on the card
+    let position = Point::new(60.0, 50.0);
+    let mut asked = |event: Event| {
+        let (state, _) = interface.update(
+            &window::Headless,
+            &shell::Waker::noop(),
+            &[event],
+            mouse::Cursor::Available(position),
+            &mut renderer,
+            &mut messages,
+        );
+        match state {
+            State::Updated { redraw_request, .. } => redraw_request,
+            State::Outdated => panic!("nothing was told"),
+        }
+    };
+    let RedrawRequest::At(then) = asked(Event::Mouse(mouse::Event::CursorMoved { position }))
+    else {
+        panic!("it asks to be drawn once the cursor rested");
+    };
+    // a redraw before then, which lets go of what was asked for, has it asked for again
+    let now = Event::Window(window::Event::RedrawRequested(Instant::now()));
+    assert_eq!(asked(now), RedrawRequest::At(then));
+}
+
+#[test]
+fn a_card_given_another_key_under_the_cursor_is_not_told_that_the_cursor_left() {
+    use iced::time::{Duration, Instant};
+    use iced::window;
+
+    let scene = |key: u32| {
+        let blank = container(space())
+            .width(100)
+            .height(60);
+        surface()
+            .push(card(key, Point::new(20.0, 20.0), blank).peek(true))
+            .on_peek(std::convert::identity)
+    };
+    let moved = |simulator: &mut Simulator<'_, Option<u32>>, position: Point| {
+        simulator.point_at(position);
+        simulator.simulate([Event::Mouse(
+            mouse::Event::CursorMoved { position },
+        )]);
+    };
+    let mut simulator = simulator(scene(1));
+    moved(&mut simulator, Point::new(60.0, 50.0));
+    let later = Instant::now() + Duration::from_secs(1);
+    simulator.simulate([Event::Window(
+        window::Event::RedrawRequested(later),
+    )]);
+    assert_eq!(
+        simulator
+            .drain()
+            .collect::<Vec<_>>(),
+        [Some(1)]
+    );
+
+    // as one that is renamed while the cursor rests on it
+    let mut simulator = simulator.rebuild(scene(2));
+    moved(&mut simulator, Point::new(61.0, 50.0));
+    assert_eq!(
+        simulator
+            .drain()
+            .count(),
+        0
+    );
+    moved(&mut simulator, Point::new(300.0, 200.0));
+    let told: Vec<_> = simulator
+        .into_messages()
+        .collect();
+    assert_eq!(told, [None]);
+}

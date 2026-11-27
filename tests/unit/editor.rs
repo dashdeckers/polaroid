@@ -1542,3 +1542,58 @@ fn a_value_that_a_node_using_it_would_refuse_is_not_taken() {
     put(&mut editor, serde_json::json!(7));
     assert_eq!(top(&editor), 7);
 }
+
+#[test]
+fn a_tile_is_shown_open_while_the_cursor_rests_on_it_which_is_no_edit() {
+    let mut editor = chain(2);
+    let is_shown_open = |editor: &Editor| {
+        simulator(editor.view())
+            .find(field("n1"))
+            .is_ok()
+    };
+    let is_open = |editor: &Editor| {
+        layout::is_open(
+            &editor
+                .pipeline
+                .nodes[1],
+        )
+    };
+    assert!(!is_shown_open(&editor));
+
+    let _ = editor.update(Message::Peek(Some("n1".to_owned())));
+    assert!(is_shown_open(&editor));
+    assert!(!is_open(&editor) && !editor.is_dirty);
+    let _ = editor.update(Message::Peek(None));
+    assert!(!is_shown_open(&editor));
+
+    // its toggle keeps it open, and the next closes it though the cursor never left it
+    let _ = editor.update(Message::Peek(Some("n1".to_owned())));
+    let mut ui = simulator(editor.view());
+    ui.click(theme::sign::OPEN)
+        .unwrap();
+    for message in ui
+        .into_messages()
+        .collect::<Vec<_>>()
+    {
+        let _ = editor.update(message);
+    }
+    assert!(
+        is_open(&editor)
+            && editor
+                .peek
+                .is_none()
+    );
+    let _ = editor.update(Message::Edit("n1".to_owned(), Edit::Toggle));
+    assert!(!is_shown_open(&editor));
+
+    // one renamed while the cursor rests on it stays open under its new id
+    let _ = editor.update(Message::Peek(Some("n1".to_owned())));
+    let rename = Edit::Rename("last".to_owned());
+    let _ = editor.update(Message::Edit("n1".to_owned(), rename));
+    assert_eq!(
+        editor
+            .peek
+            .as_deref(),
+        Some("last")
+    );
+}

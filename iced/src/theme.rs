@@ -466,7 +466,7 @@ pub mod extent {
     pub const XXL: f32 = 480.0;
 }
 
-/// How long things take: a step of a drag, a slide, a rest before a drop, and a pause.
+/// How long things take: a step of a drag, a slide, a rest before a drop, and one before a peek.
 pub mod motion {
     use super::Duration;
 
