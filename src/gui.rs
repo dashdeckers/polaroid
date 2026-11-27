@@ -814,7 +814,7 @@ impl Editor {
         let drawer = self
             .drawer
             .view(
-                &self.catalog.defs,
+                &self.catalog,
                 &self.pipeline,
                 &self.registry,
                 &self.marks,

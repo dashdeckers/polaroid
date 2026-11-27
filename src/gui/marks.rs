@@ -2,18 +2,19 @@
 
 use std::collections::BTreeSet;
 
-use iced::widget::{column, container, row};
+use iced::widget::{column, container, row, rule, text};
 use iced::{Center, Color, Element, Fill, Function, Widget};
-use polaroid_iced::theme::{self, Tone, dot, extent, font, hue, spacing};
+use polaroid_iced::theme::{self, Tone, dot, extent, font, hue, spacing, stroke};
 use serde_json::Value;
 
 use super::look::{self, Help, cross};
 use super::ui::object;
-use crate::Pipeline;
+use crate::{Catalog, Pipeline};
 
-/// Where a `ui` keeps the tags of each name, and the colours of the tags.
+/// Where a `ui` keeps the tags of each name, and the colours of the tags and of the categories.
 const TAGS: &str = "tags";
 const COLORS: &str = "colors";
+const CATEGORIES: &str = "categories";
 
 /// What of the tags is under way: the picker that is open.
 #[derive(Default)]
@@ -100,10 +101,11 @@ impl Marks {
         false
     }
 
-    /// The tags in use that `shows` lets through, each to rename or to take off everything.
+    /// The tags in use to rename or to take off everything, over the categories of blocks.
     pub fn list<'a>(
         &'a self,
         pipeline: &'a Pipeline,
+        catalog: &'a Catalog,
         shows: impl Fn(&str) -> bool,
         help: Help,
     ) -> Element<'a, Message> {
@@ -142,8 +144,29 @@ impl Marks {
                 .spacing(spacing::S)
                 .align_y(Center)
                 .boxed()
+            })
+            .collect::<Vec<_>>();
+        // under them and a line, the categories of blocks, each in the colour that stands for it
+        let divider = (!tags.is_empty()).then(|| rule::horizontal(stroke::THIN).boxed());
+        let categories = catalog
+            .categories
+            .iter()
+            .filter(|category| shows(category))
+            .map(|category| {
+                let named = row![
+                    look::dot(self::category(&pipeline.ui, catalog, category), dot::M),
+                    text(*category)
+                ]
+                .spacing(spacing::S)
+                .align_y(Center);
+                help.of(
+                    named,
+                    "A category of blocks, in the colour that stands for it.",
+                )
             });
         column(tags)
+            .extend(divider)
+            .extend(categories)
             .spacing(spacing::S)
             .boxed()
     }
@@ -233,10 +256,31 @@ pub fn color(
     ui: &Value,
     tag: &str,
 ) -> Color {
-    ui[COLORS][TAGS][tag]
-        .as_str()
-        .and_then(|written| written.parse().ok())
-        .unwrap_or(hue::NEUTRAL)
+    read(&ui[COLORS][TAGS][tag]).unwrap_or(hue::NEUTRAL)
+}
+
+/// The colour of a category of blocks: its own in `ui`, or else the hue at its place from the last.
+pub fn category(
+    ui: &Value,
+    catalog: &Catalog,
+    name: &str,
+) -> Color {
+    // the first tags take the first hues, and the categories the others
+    let place = catalog
+        .categories
+        .iter()
+        .position(|category| *category == name)
+        .unwrap_or_default();
+    let last = hue::PALETTE.len() - 1;
+    read(&ui[COLORS][CATEGORIES][name]).unwrap_or(hue::PALETTE[last - place % hue::PALETTE.len()])
+}
+
+/// The colour that a `ui` writes as `written`, if that reads as one.
+fn read(written: &Value) -> Option<Color> {
+    written
+        .as_str()?
+        .parse()
+        .ok()
 }
 
 /// Has what is named `name` carry `tag`, or no longer.

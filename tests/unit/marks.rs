@@ -183,12 +183,13 @@ fn a_tag_is_renamed_wherever_it_is_carried_unless_another_has_the_name() {
 
 #[test]
 fn a_tag_is_taken_off_everything_from_the_list_of_those_in_use() {
+    let catalog = catalog(&[]);
     let (mut pipeline, mut marks) = (pipeline(), Marks::default());
     tag(&mut marks, &mut pipeline, "net", &["money", "tax"]);
     tag(&mut marks, &mut pipeline, "rate", &["money"]);
     let lists = |marks: &Marks, pipeline: &Pipeline, shown: &str, text: &str| {
         let shows = |text: &str| text.contains(shown);
-        let mut ui = simulator(marks.list(pipeline, shows, Help::default()));
+        let mut ui = simulator(marks.list(pipeline, &catalog, shows, Help::default()));
         ui.find(text)
             .is_ok()
     };
@@ -205,6 +206,7 @@ fn a_tag_is_taken_off_everything_from_the_list_of_those_in_use() {
 
 #[test]
 fn enter_gives_a_tag_no_name_that_another_has_as_it_is_typed() {
+    let catalog = catalog(&[]);
     use iced_test::selector::{Candidate, Target};
 
     let (mut pipeline, mut marks) = (pipeline(), Marks::default());
@@ -216,11 +218,45 @@ fn enter_gives_a_tag_no_name_that_another_has_as_it_is_typed() {
         }
     };
     for (typed, is_given) in [("x", false), ("xes", true)] {
-        let mut ui = simulator(marks.list(&pipeline, |_| true, Help::default()));
+        let mut ui = simulator(marks.list(&pipeline, &catalog, |_| true, Help::default()));
         ui.click(field("ta"))
             .unwrap();
         ui.typewrite(typed);
         ui.tap_key(iced::keyboard::key::Named::Enter);
         assert_eq!(ui.drain().count(), usize::from(is_given), "{typed}");
     }
+}
+
+/// A catalog of these categories alone.
+fn catalog(categories: &[&'static str]) -> Catalog {
+    Catalog {
+        categories: categories.to_vec(),
+        ..crate::Registry::default().catalog()
+    }
+}
+
+#[test]
+fn the_categories_are_listed_under_the_tags_each_in_the_hue_at_its_place_from_the_last() {
+    let (mut pipeline, mut marks) = (pipeline(), Marks::default());
+    tag(&mut marks, &mut pipeline, "net", &["money"]);
+    let catalog = catalog(&["Filter", "Plot"]);
+    let top = |shown: &str, text: &str| {
+        let shows = |text: &str| text.contains(shown);
+        let mut ui = simulator(marks.list(&pipeline, &catalog, shows, Help::default()));
+        ui.find(text)
+            .ok()
+            .map(|found| found.bounds().y)
+    };
+    assert!(top("", "Filter") < top("", "Plot"));
+    // and what is searched for narrows them as it does the tags
+    assert!(top("o", "Plot").is_some() && top("o", "Filter").is_none());
+
+    assert_eq!(category(&pipeline.ui, &catalog, "Filter"), hue::PALETTE[9]);
+    assert_eq!(category(&pipeline.ui, &catalog, "Plot"), hue::PALETTE[8]);
+    // one that has a colour of its own keeps it apart from that of a tag of its name
+    pipeline.ui = json!({
+        "colors": { "categories": { "Plot": "#000000" }, "tags": { "Plot": "#ffffff" } },
+    });
+    assert_eq!(category(&pipeline.ui, &catalog, "Plot"), Color::BLACK);
+    assert_eq!(color(&pipeline.ui, "Plot"), Color::WHITE);
 }

@@ -2106,7 +2106,7 @@ fn toggle_of(
 }
 
 #[test]
-fn the_search_laid_open_lists_the_tags_in_use() {
+fn the_search_laid_open_lists_the_tags_in_use_over_the_categories() {
     let mut editor = chain(1);
     editor
         .pipeline
@@ -2122,6 +2122,10 @@ fn the_search_laid_open_lists_the_tags_in_use() {
     // its toggle is the first there is
     press_on(&mut editor, theme::sign::OPEN);
     assert!(lists(&editor, "tax"));
+    let category = editor
+        .catalog
+        .categories[0];
+    assert!(tops(&editor, ["tax", category]).is_sorted());
     // a tag of what the pipeline does not name is none in use
     assert!(!lists(&editor, "old"));
     assert!(!editor.is_dirty);

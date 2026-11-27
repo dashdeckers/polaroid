@@ -24,7 +24,7 @@ use super::form::{self, Expressions, Form};
 use super::look::{self, Help, add, cross, toggle};
 use super::marks::{self, Marks};
 use super::ui;
-use crate::{Kind, Pipeline, Registry, methods};
+use crate::{Catalog, Kind, Pipeline, Registry, methods};
 
 /// What the drawer shows of what a pipeline names, by the names.
 #[derive(Default)]
@@ -34,7 +34,7 @@ pub struct Drawer {
     drag: Option<(String, Option<Place>)>,
     /// What is typed to search for, which narrows what is listed.
     query: String,
-    /// Whether the tags in use are listed under where that is typed.
+    /// Whether the tags in use and the categories are listed under where that is typed.
     is_listing: bool,
 }
 
@@ -151,7 +151,7 @@ pub enum Message {
     Marks(marks::Message),
     /// What is typed to search for.
     Search(String),
-    /// The tags in use are listed, or no longer if they are.
+    /// The tags in use and the categories are listed, or no longer if they are.
     Tags,
 }
 
@@ -347,7 +347,7 @@ impl Drawer {
     /// The expressions and the values each under its name; `columns` are those they may name.
     pub fn view<'a>(
         &'a self,
-        defs: &'a Value,
+        catalog: &'a Catalog,
         pipeline: &'a Pipeline,
         registry: &'a Registry,
         marks: &'a Marks,
@@ -355,6 +355,7 @@ impl Drawer {
         help: Help,
     ) -> impl Widget<Message> + use<'a> {
         let closed = form::State::default();
+        let defs = &catalog.defs;
         let is_narrowed = !self
             .query
             .trim()
@@ -578,13 +579,13 @@ impl Drawer {
             .width(Fill)
             .boxed()
         };
-        // laid open, the search lists the tags in use over what is named, narrowed as that is
+        // laid open, the search lists the tags and the categories over what is named, as narrowed
         let tags = self
             .is_listing
             .then(|| {
                 let shows = |text: &str| finds(&self.query, [text]);
                 let tags = marks
-                    .list(pipeline, shows, help)
+                    .list(pipeline, catalog, shows, help)
                     .map(Message::Marks);
                 container(tags).padding(padding::bottom(spacing::L))
             });
@@ -607,8 +608,8 @@ impl Drawer {
         let search = row![
             help.of(
                 toggle(self.is_listing, Message::Tags),
-                "Lists the tags in use, to rename each or to take it off everything; or closes \
-                 that list.",
+                "Lists the tags in use, to rename each or to take it off everything, and under \
+                 them the categories of blocks; or closes that list.",
             ),
             help.of(
                 search,
