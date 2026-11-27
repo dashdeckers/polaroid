@@ -12,6 +12,7 @@ use serde_json::{Map, Value};
 
 use super::form::{self, Expressions, Form};
 use super::look::{self, Help, add, cross, toggle};
+use super::ui;
 use crate::{Kind, Pipeline, Registry, methods};
 
 /// What the drawer shows of what a pipeline names, by the names.
@@ -31,7 +32,7 @@ struct Section {
 
 /// A list of the drawer: the expressions without a hole, those with one, or the values.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum List {
+pub enum List {
     Expressions,
     Holed,
     Values,
@@ -82,7 +83,29 @@ impl List {
                 self == Self::Values || pipeline.is_holed(name) == (self == Self::Holed)
             })
     }
+
+    /// What the `ui` of a pipeline calls it.
+    fn key(self) -> &'static str {
+        match self {
+            Self::Expressions => "expressions",
+            Self::Holed => "holed",
+            Self::Values => "values",
+        }
+    }
+
+    /// Whether the `ui` of a pipeline has it shown by name, and not in the order of the file.
+    fn is_sorted(
+        self,
+        ui: &Value,
+    ) -> bool {
+        ui[SORTED]
+            .as_array()
+            .is_some_and(|sorted| sorted.contains(&self.key().into()))
+    }
 }
+
+/// Where the `ui` of a pipeline keeps the lists that are shown by name.
+const SORTED: &str = "sorted";
 
 /// What is done to the expression or the value of a name.
 #[derive(Debug, Clone)]
@@ -97,6 +120,8 @@ pub enum Message {
     /// It holds this value at this pointer, as a card that names it moved a number of it.
     Put(String, String, Value),
     Delete(String),
+    /// This list is shown by name, or in the order of the file again if it is.
+    Sort(List),
 }
 
 /// What an update did to the pipeline.
@@ -117,6 +142,19 @@ impl Drawer {
         registry: &Registry,
     ) -> Change {
         match message {
+            Message::Sort(list) => {
+                let key = Value::from(list.key());
+                let mut sorted = pipeline.ui[SORTED]
+                    .as_array()
+                    .cloned()
+                    .unwrap_or_default();
+                match list.is_sorted(&pipeline.ui) {
+                    true => sorted.retain(|sorted| *sorted != key),
+                    false => sorted.push(key),
+                }
+                ui::object(&mut pipeline.ui, &[]).insert(SORTED.to_owned(), sorted.into());
+                Change::Pipeline
+            }
             Message::New(kind) => {
                 let (named, stem) = match kind {
                     Kind::Value => (&mut pipeline.values, "value"),
@@ -309,18 +347,34 @@ impl Drawer {
             let title = text(title).size(size::HEADING);
             // nothing is added to those that have a hole: one is written in an expression
             let (title, add) = match list {
-                List::Holed => (help.of(title, says), None),
-                _ => (title.boxed(), Some(help.of(add(Message::New(kind)), says))),
+                List::Holed => (help.of(title, says), look::slot()),
+                _ => (title.boxed(), help.of(add(Message::New(kind)), says)),
+            };
+            let is_sorted = list.is_sorted(&pipeline.ui);
+            let order = match is_sorted {
+                true => "a–z",
+                false => "file",
             };
             let head = row![
                 title,
                 space::horizontal(),
+                help.of(
+                    look::small(order, Message::Sort(list)),
+                    "The order of this list: as in the file, or by name. Press it for the other.",
+                ),
                 add
             ]
+            .spacing(spacing::XS)
             .height(control::S)
             .align_y(Center);
-            let sections = list
+            let mut names: Vec<_> = list
                 .names(pipeline)
+                .collect();
+            if is_sorted {
+                names.sort_by_key(|(name, _)| name.to_lowercase());
+            }
+            let sections = names
+                .into_iter()
                 .map(|(name, stored)| (key(name), section(kind, name, stored)));
             column![
                 head,

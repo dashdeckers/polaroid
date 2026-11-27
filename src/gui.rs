@@ -9,6 +9,7 @@ mod icon;
 mod known;
 mod layout;
 mod look;
+mod ui;
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;

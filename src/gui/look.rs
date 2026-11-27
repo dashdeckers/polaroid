@@ -13,6 +13,7 @@ use iced::widget::{
     container,
     row,
     scrollable,
+    space,
     text,
     text_input,
     tooltip,
@@ -107,28 +108,41 @@ enum Typing {
     Left,
 }
 
+impl<Message> Name<'_, Message> {
+    /// What is being typed for its name: nothing that was typed for another whose field this was.
+    fn typed<'s>(
+        &self,
+        typed: &'s Option<(String, String)>,
+    ) -> Option<&'s str> {
+        typed
+            .as_ref()
+            .filter(|(name, _)| name == self.name)
+            .map(|(_, typed)| typed.as_str())
+    }
+}
+
 impl<'a, Message> Component<'a, Message> for Name<'a, Message> {
-    /// The name as it is being typed, until its field is left.
-    type State = Option<String>;
+    /// The name that is being typed for, and what is typed, until its field is left.
+    type State = Option<(String, String)>;
     type Event = Typing;
 
     fn update(
         &self,
-        typed: &mut Option<String>,
+        typed: &mut Option<(String, String)>,
         event: Typing,
         _renderer: &Renderer,
     ) -> Option<Message> {
         match event {
-            Typing::Typed(new) => *typed = Some(new),
+            Typing::Typed(new) => *typed = Some((self.name.to_owned(), new)),
             Typing::Left => *typed = None,
             // one that is refused stays typed
             Typing::Entered => {
-                let new = typed.as_deref();
+                let new = self.typed(typed);
                 let is_given =
                     is_unsaved(new, self.name) && !is_refused(new, self.name, &self.is_taken);
-                return typed
-                    .clone()
+                return new
                     .filter(|_| is_given)
+                    .map(str::to_owned)
                     .map(&self.on_rename);
             }
         }
@@ -137,9 +151,9 @@ impl<'a, Message> Component<'a, Message> for Name<'a, Message> {
 
     fn view(
         &self,
-        typed: &Option<String>,
+        typed: &Option<(String, String)>,
     ) -> impl Widget<Typing> + 'a {
-        let typed = typed.as_deref();
+        let typed = self.typed(typed);
         let is_refused = is_refused(typed, self.name, &self.is_taken);
         let tone = match (is_unsaved(typed, self.name), is_refused) {
             (_, true) => Tone::Refused,
@@ -279,6 +293,13 @@ pub fn add<'a, Message: Clone + 'a>(message: Message) -> Button<'a, Message> {
 /// The button that clears a value, or takes one of many out.
 pub fn clear<'a, Message: Clone + 'a>(message: Message) -> Button<'a, Message> {
     signed(sign::DELETE, message).style(theme::button::icon)
+}
+
+/// The room of a round button, on a line that has none where the lines beside it have one.
+pub fn slot<'a, Message: 'a>() -> Element<'a, Message> {
+    space()
+        .width(control::S)
+        .boxed()
 }
 
 /// The button that deletes what has a name.

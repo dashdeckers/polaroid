@@ -1666,3 +1666,122 @@ fn what_is_typed_for_a_name_stays_in_its_field_when_the_entry_before_it_goes() {
             .is_ok()
     );
 }
+
+/// Has the editor do all that was asked of a simulator of it.
+fn apply(
+    editor: &mut Editor,
+    asked: Vec<Message>,
+) {
+    for message in asked {
+        let _ = editor.update(message);
+    }
+}
+
+/// Presses what says `said` in the editor, which then does what that asks.
+fn press_on(
+    editor: &mut Editor,
+    said: &str,
+) {
+    let mut ui = simulator(editor.view());
+    ui.click(said)
+        .unwrap();
+    let asked = asked(ui);
+    apply(editor, asked);
+}
+
+#[test]
+fn a_list_is_shown_by_name_once_asked_which_the_pipeline_remembers() {
+    let mut editor = chain(1);
+    for name in ["b", "A"] {
+        editor
+            .pipeline
+            .expressions
+            .insert(name.to_owned(), Value::Null);
+    }
+    assert!(tops(&editor, ["b", "A"]).is_sorted());
+
+    // its toggle says the order it is in, and a press on it asks for the other
+    press_on(&mut editor, "file");
+    assert!(tops(&editor, ["A", "b"]).is_sorted());
+    assert_eq!(
+        editor.pipeline.ui["sorted"],
+        serde_json::json!(["expressions"])
+    );
+    assert!(editor.is_dirty);
+    // in the file they are in the order they were
+    let names: Vec<&String> = editor
+        .pipeline
+        .expressions
+        .keys()
+        .collect();
+    assert_eq!(names, ["b", "A"]);
+
+    press_on(&mut editor, "a–z");
+    assert!(tops(&editor, ["b", "A"]).is_sorted());
+    assert_eq!(editor.pipeline.ui["sorted"], serde_json::json!([]));
+}
+
+#[test]
+fn a_name_given_on_enter_is_no_longer_typed_in_the_field_that_is_then_another_s() {
+    // by name, `a` is listed before `ab`, and renamed `ac` after it
+    let sorted = |names: [&str; 2]| {
+        let mut editor = chain(1);
+        for name in names {
+            editor
+                .pipeline
+                .values
+                .insert(name.to_owned(), 1.into());
+        }
+        editor.pipeline.ui = serde_json::json!({ "sorted": ["values"] });
+        editor
+    };
+    let (before, after) = (sorted(["a", "ab"]), sorted(["ac", "ab"]));
+    let mut ui = simulator(before.view());
+    ui.click(field("a"))
+        .unwrap();
+    ui.typewrite("c");
+    ui.tap_key(iced::keyboard::key::Named::Enter);
+    assert_eq!(ui.drain().count(), 1);
+    // the field that was typed in is that of `ab` now, which shows its own name
+    let mut ui = ui.rebuild(after.view());
+    for name in ["ab", "ac"] {
+        assert!(
+            ui.find(field(name))
+                .is_ok(),
+            "{name}"
+        );
+    }
+}
+
+/// Where each text that says `said` is shown, from the first down.
+fn every(
+    editor: &Editor,
+    said: &str,
+) -> Vec<iced::Rectangle> {
+    use iced_test::selector::Candidate;
+
+    let mut found = Vec::new();
+    let _ = simulator(editor.view()).find(|candidate: Candidate<'_>| {
+        if let Candidate::Text {
+            content, bounds, ..
+        } = candidate
+            && content == said
+        {
+            found.push(bounds);
+        }
+        None::<()>
+    });
+    found
+}
+
+#[test]
+fn the_toggle_of_a_list_without_an_add_is_where_those_of_the_others_are() {
+    let editor = chain(1);
+    let toggles = every(&editor, "file");
+    assert_eq!(toggles.len(), 3);
+    assert!(
+        toggles
+            .iter()
+            .all(|toggle| toggle.x == toggles[0].x)
+    );
+}
