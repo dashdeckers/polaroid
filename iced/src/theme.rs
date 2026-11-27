@@ -1456,7 +1456,7 @@ pub mod hue {
     use iced::{Color, Theme, border};
 
     use super::button::{Segment, corners};
-    use super::{Scheme, control, ink, over, radius, spacing};
+    use super::{Scheme, control, ink, over, radius, spacing, stroke};
 
     /// The grey of what has no colour of its own.
     pub const NEUTRAL: Color = super::hex(0x808080);
@@ -1513,12 +1513,20 @@ pub mod hue {
         }
     }
 
-    /// A dot of `hue`.
-    pub fn dot(hue: Color) -> impl Fn(&Theme) -> Style {
+    /// A dot of `hue`: filled with it, or else a ring of it around nothing.
+    pub fn dot(
+        hue: Color,
+        is_filled: bool,
+    ) -> impl Fn(&Theme) -> Style {
         move |_| {
-            Style::default()
-                .background(hue)
-                .border(border::rounded(radius::FULL))
+            let ring = border::rounded(radius::FULL)
+                .color(hue)
+                .width(stroke::MEDIUM);
+            match is_filled {
+                true => Style::default().background(hue),
+                false => Style::default(),
+            }
+            .border(ring)
         }
     }
 

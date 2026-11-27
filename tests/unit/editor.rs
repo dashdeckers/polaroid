@@ -2165,3 +2165,76 @@ fn click_at(
         ],
     );
 }
+
+#[test]
+fn a_right_click_on_a_tile_or_on_the_head_of_an_open_card_picks_the_tags_of_its_node() {
+    use iced::mouse::Button::Right;
+    use iced::mouse::Event::ButtonPressed;
+
+    let mut editor = chain(2);
+    let center = |editor: &Editor, text: &str| {
+        simulator(editor.view())
+            .find(text)
+            .unwrap()
+            .bounds()
+            .center()
+    };
+    let tag = |editor: &mut Editor, at: Point, tag: &str| {
+        mouse(editor, at, [ButtonPressed(Right)]);
+        for message in [
+            marks::Message::Type(tag.to_owned()),
+            marks::Message::Add,
+        ] {
+            let _ = editor.update(Message::Marks(message));
+        }
+    };
+    // on the id of its tile, and once the card is open on its toggle
+    let at = center(&editor, "n1");
+    tag(&mut editor, at, "slow");
+    assert_eq!(
+        editor
+            .pipeline
+            .nodes[1]
+            .ui["tags"],
+        serde_json::json!(["slow"])
+    );
+    assert!(editor.is_dirty);
+    // its picker lists the tag under the tile, until Escape closes it
+    assert!(center(&editor, "slow").y > at.y);
+    let _ = editor.update(Message::Dismiss);
+    assert!(
+        simulator(editor.view())
+            .find("slow")
+            .is_err()
+    );
+
+    let _ = editor.update(Message::Edit("n1".to_owned(), Edit::Toggle));
+    let at = toggle_of(&editor, "n1");
+    tag(&mut editor, at, "big");
+    assert_eq!(
+        editor
+            .pipeline
+            .nodes[1]
+            .ui["tags"],
+        serde_json::json!(["big", "slow"])
+    );
+    // renamed, the node has its tags still, and the other node has none
+    let _ = editor.update(Message::Edit(
+        "n1".to_owned(),
+        Edit::Rename("last".to_owned()),
+    ));
+    assert_eq!(
+        editor
+            .pipeline
+            .nodes[1]
+            .ui["tags"],
+        serde_json::json!(["big", "slow"])
+    );
+    assert!(
+        editor
+            .pipeline
+            .nodes[0]
+            .ui["tags"]
+            .is_null()
+    );
+}

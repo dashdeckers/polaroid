@@ -24,7 +24,7 @@ fn tag(
     name: &str,
     tags: &[&str],
 ) {
-    marks.update(Message::Pick(name.to_owned()), pipeline);
+    marks.update(Message::Pick(named(name)), pipeline);
     for tag in tags {
         marks.update(Message::Type((*tag).to_owned()), pipeline);
         assert!(marks.update(Message::Add, pipeline));
@@ -57,12 +57,12 @@ fn a_tag_is_typed_for_a_name_and_ticked_for_another() {
     assert_eq!(color(&pipeline.ui, "none"), hue::NEUTRAL);
 
     // one that is there is ticked, and typed again it is the same one
-    marks.update(Message::Pick("rate".to_owned()), &mut pipeline);
+    marks.update(Message::Pick(named("rate")), &mut pipeline);
     assert!(marks.update(Message::Toggle("money".to_owned()), &mut pipeline));
     tag(&mut marks, &mut pipeline, "rate", &["money"]);
     assert_eq!(pipeline.ui["tags"]["rate"], json!(["money"]));
     assert_eq!(pipeline.ui["colors"]["tags"]["money"], "#3b82c4");
-    assert_eq!(of(&pipeline, "net"), ["money", "tax"].into());
+    assert_eq!(of(&pipeline, &named("net")), ["money", "tax"].into());
     assert_eq!(all(&pipeline), ["money", "tax"].into());
 }
 
@@ -77,7 +77,7 @@ fn a_tag_that_nothing_carries_is_none_but_in_the_picker_it_was_unticked_in() {
     // its picker lists it still, to tick it again in the colour it had
     let lists = |marks: &Marks, pipeline: &Pipeline, name: &str| {
         let picker = marks
-            .picker(pipeline, name)
+            .picker(pipeline, &named(name))
             .unwrap();
         simulator(picker)
             .find("tax")
@@ -86,7 +86,7 @@ fn a_tag_that_nothing_carries_is_none_but_in_the_picker_it_was_unticked_in() {
     assert!(lists(&marks, &pipeline, "net"));
     assert!(
         marks
-            .picker(&pipeline, "rate")
+            .picker(&pipeline, &named("rate"))
             .is_none()
     );
     assert_eq!(pipeline.ui["colors"]["tags"]["tax"], "#cf6400");
@@ -373,7 +373,7 @@ fn a_picker_of_tags_opens_with_no_palette_that_was_open_in_the_list() {
     // how far down the first category is listed, and the field of a new tag in the picker
     let tops = |marks: &Marks, pipeline: &Pipeline| {
         let picker = marks
-            .picker(pipeline, "net")
+            .picker(pipeline, &named("net"))
             .map(|picker| top(picker, "new tag"));
         (top(list(marks, pipeline, &catalog), "Plot"), picker)
     };
@@ -382,7 +382,7 @@ fn a_picker_of_tags_opens_with_no_palette_that_was_open_in_the_list() {
     let (open, _) = tops(&marks, &pipeline);
     assert!(open > closed);
 
-    marks.update(Message::Pick("net".to_owned()), &mut pipeline);
+    marks.update(Message::Pick(named("net")), &mut pipeline);
     let (listed, picker) = tops(&marks, &pipeline);
     assert_eq!(listed, closed);
     // one that is opened in the picker is open there alone
@@ -399,4 +399,52 @@ fn list<'a>(
     catalog: &'a Catalog,
 ) -> Element<'a, Message> {
     marks.list(pipeline, catalog, |_| true, Help::default())
+}
+
+/// What a pipeline names `name`, as what carries tags.
+fn named(name: &str) -> Carrier {
+    Carrier::Name(name.to_owned())
+}
+
+#[test]
+fn a_node_carries_its_tags_in_its_own_ui_and_those_of_the_names_it_uses_through_them() {
+    let (mut pipeline, mut marks) = (pipeline(), Marks::default());
+    pipeline
+        .nodes
+        .push(crate::Node {
+            id: "kept".to_owned(),
+            block: "filter".to_owned(),
+            inputs: vec![],
+            args: json!({ "predicates": [crate::marker("net")] }),
+            ui: Value::Null,
+        });
+    let node = || Carrier::Node("kept".to_owned());
+    tag(&mut marks, &mut pipeline, "net", &["money"]);
+    marks.update(Message::Pick(node()), &mut pipeline);
+    marks.update(Message::Type("mine".to_owned()), &mut pipeline);
+    assert!(marks.update(Message::Add, &mut pipeline));
+    assert_eq!(pipeline.nodes[0].ui, json!({ "tags": ["mine"] }));
+    assert_eq!(pipeline.ui["tags"], json!({ "net": ["money"] }));
+    assert_eq!(of(&pipeline, &node()), ["mine"].into());
+    assert_eq!(through(&pipeline, "kept"), ["money"].into());
+    assert_eq!(all(&pipeline), ["mine", "money"].into());
+    // a name of its id carries none of them
+    assert!(of(&pipeline, &named("kept")).is_empty());
+
+    // one that it carries itself too is its own, and a Save keeps the colour of each
+    assert!(marks.update(Message::Toggle("money".to_owned()), &mut pipeline));
+    assert!(through(&pipeline, "kept").is_empty());
+    assert!(marks.update(Message::Toggle("money".to_owned()), &mut pipeline));
+    tidy(&mut pipeline);
+    assert_eq!(
+        pipeline.ui["colors"]["tags"],
+        json!({ "money": "#3b82c4", "mine": "#cf6400" })
+    );
+
+    // a tag is renamed and taken off on the nodes as on the names, which leaves no empty list
+    let rename = Message::Rename("mine".to_owned(), "ours".to_owned());
+    assert!(marks.update(rename, &mut pipeline));
+    assert_eq!(pipeline.nodes[0].ui, json!({ "tags": ["ours"] }));
+    assert!(marks.update(Message::Remove("ours".to_owned()), &mut pipeline));
+    assert_eq!(pipeline.nodes[0].ui, json!({}));
 }

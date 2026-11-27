@@ -4,8 +4,19 @@ use std::rc::Rc;
 
 use iced::advanced::widget;
 use iced::widget::canvas::{self, Frame, Path, Stroke};
-use iced::widget::{Component, canvas as draw, column, container, markdown, row, space, svg, text};
-use iced::{Center, Fill, Point, Rectangle, Renderer, Size, Theme, Widget, mouse};
+use iced::widget::{
+    Component,
+    canvas as draw,
+    column,
+    container,
+    markdown,
+    row,
+    space,
+    stack,
+    svg,
+    text,
+};
+use iced::{Center, Element, Fill, Point, Rectangle, Renderer, Right, Size, Theme, Widget, mouse};
 use polaroid_iced::theme::surface::Ring;
 use polaroid_iced::theme::{self, Scheme, Tone, control, font, icon, size, spacing, stroke};
 use polaroid_iced::{Asked, Heading, width_of};
@@ -16,6 +27,7 @@ use super::gallery::{self, Gallery};
 use super::icon::Icons;
 use super::known::{Known, Status};
 use super::look::{self, Help, cross, error, round, toggle};
+use super::marks::{self, Carrier, Marks};
 use super::{Editor, Message, drawer, form, layout};
 use crate::polars::prelude::{AnyValue, DataFrame, DataType};
 use crate::{Described, Node, Pipeline, Registry, schema};
@@ -170,6 +182,7 @@ impl Editor {
             pipeline: &self.pipeline,
             registry: &self.registry,
             known: &self.known,
+            marks: &self.marks,
             draft: self
                 .drafts
                 .get(&node.id),
@@ -241,6 +254,8 @@ pub struct Card<'a> {
     /// What say whether its block and a Check take args.
     registry: &'a Registry,
     known: &'a Known,
+    /// The picker of tags that is open, which may be that of its node.
+    marks: &'a Marks,
     /// Its args as they are edited, if those are not taken yet.
     draft: Option<&'a form::Draft>,
     is_output: bool,
@@ -270,6 +285,7 @@ pub enum Event {
     Gallery(gallery::Message),
     Edit(Edit),
     Table(Asked),
+    Marks(marks::Message),
     /// A link in what a block does was pressed, which leads nowhere.
     Link,
 }
@@ -313,6 +329,7 @@ impl<'a> Component<'a, Message> for Card<'a> {
             }
             Event::Edit(edit) => edit,
             Event::Table(Asked::Copy(text)) => return Some(Message::Copy(text)),
+            Event::Marks(message) => return Some(Message::Marks(message)),
             Event::Link => return None,
         };
         let id = self.node.id.clone();
@@ -482,15 +499,25 @@ impl<'a> Card<'a> {
                 .icon(icon::XL)
                 .boxed(),
         };
-        // the plate takes what the lines under it leave of the tile
+        // the plate takes what the lines under it leave of the tile, its tags as dots in a corner
+        let dots = self
+            .dots()
+            .map(|dots| {
+                container(dots)
+                    .align_x(Right)
+                    .width(Fill)
+                    .padding(spacing::XS)
+            });
+        let plate = container(shown)
+            .padding(spacing::XS)
+            .center(Fill)
+            .style(theme::container::section);
         let plate = self.help.of(
-            container(shown)
-                .padding(spacing::XS)
-                .center(Fill)
-                .style(theme::container::section),
+            stack![plate, dots],
             "The tile of the node: the icon of its block, or the image it drew once a Run kept \
              that, over the block and the id. Drag it to move the card, and double-click it to \
-             open the card.",
+             open the card. Right-click it to pick the tags of the node: a dot for each, and a \
+             hollow one for each that a name it uses carries.",
         );
         let line = |written: &'a str| {
             text(written)
@@ -515,11 +542,12 @@ impl<'a> Card<'a> {
             .width(TILE)
             .height(TILE);
         // what is wrong with it is said where the open card would show it
-        look::told(
+        let tile = look::told(
             tile,
             self.wrong()
                 .map(str::to_owned),
-        )
+        );
+        self.tagged(tile)
     }
 
     /// The line of its id: its plate, its toggle, the small table, the id and the cross.
@@ -532,7 +560,17 @@ impl<'a> Card<'a> {
             "The icon of the block of the node. Drag it to move the card, and double-click it to \
              close the card to its tile.",
         );
-        row![
+        let id = look::name(
+            "id",
+            &self.node.id,
+            move |id| {
+                nodes
+                    .iter()
+                    .any(|node| node.id == id)
+            },
+            Event::Rename,
+        );
+        let head = row![
             plate,
             self.help.of(
                 toggle(layout::is_open(self.node), Event::Edit(Edit::Toggle)),
@@ -542,19 +580,11 @@ impl<'a> Card<'a> {
             ),
             self.save(),
             self.help.of(
-                look::name(
-                    "id",
-                    &self.node.id,
-                    move |id| {
-                        nodes
-                            .iter()
-                            .any(|node| node.id == id)
-                    },
-                    Event::Rename,
-                ),
+                marks::dotted(id, self.dots()),
                 "The id of the node. Type another and press Enter to rename it; the border \
                      is orange until then, and red while the id is empty or another node's. \
-                     Leaving the field shows the id again.",
+                     Leaving the field shows the id again. Right-click the line to pick \
+                     the tags of the node, each a dot at the end of the id.",
             ),
             self.help.of(
                 cross(Event::Edit(Edit::Delete)),
@@ -563,7 +593,33 @@ impl<'a> Card<'a> {
         ]
         .spacing(GAP)
         .align_y(Center)
-        .height(HEAD)
+        .height(HEAD);
+        self.tagged(head)
+    }
+
+    /// A dot for each tag of its node, and a hollow one for each that a name it uses carries.
+    fn dots(&self) -> Option<Element<'a, Event>> {
+        let own = marks::of(self.pipeline, &Carrier::Node(self.node.id.clone()));
+        let through = marks::through(self.pipeline, &self.node.id);
+        marks::dots(&self.pipeline.ui, &own, &through)
+    }
+
+    /// `content`, which a right press on it opens the picker of the tags of its node under.
+    fn tagged(
+        &self,
+        content: impl Widget<Event> + 'a,
+    ) -> Element<'a, Event> {
+        let carrier = Carrier::Node(self.node.id.clone());
+        let picker = self
+            .marks
+            .picker(self.pipeline, &carrier)
+            .map(|picker| picker.map(Event::Marks));
+        look::popped(
+            content,
+            picker,
+            Event::Marks(marks::Message::Pick(carrier)),
+            Event::Marks(marks::Message::Close),
+        )
     }
 
     /// A line for each frame it reads: the name of the input, and the node read.

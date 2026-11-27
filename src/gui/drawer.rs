@@ -1,28 +1,18 @@
 //! The drawer of what a pipeline names: its expressions and values, each edited under its name.
 
 use std::cell::RefCell;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::hash::{BuildHasher, BuildHasherDefault, DefaultHasher};
 use std::rc::Rc;
 
-use iced::widget::{
-    column,
-    container,
-    keyed_column,
-    mouse_area,
-    row,
-    scrollable,
-    space,
-    stack,
-    text,
-};
-use iced::{Center, Element, Fill, Function, Right, Widget, mouse, padding};
+use iced::widget::{column, container, keyed_column, mouse_area, row, scrollable, space, text};
+use iced::{Center, Element, Fill, Function, Widget, mouse, padding};
 use polaroid_iced::theme::{self, Tone, control, font, icon, sign, size, spacing, stroke};
 use serde_json::{Map, Value};
 
 use super::form::{self, Expressions, Form};
 use super::look::{self, Help, add, cross, toggle};
-use super::marks::{self, Marks};
+use super::marks::{self, Carrier, Marks};
 use super::ui;
 use crate::{Catalog, Kind, Pipeline, Registry, methods};
 
@@ -370,18 +360,12 @@ impl Drawer {
                 .sections
                 .get(name);
             let is_open = section.is_some_and(|section| section.is_open);
-            // its tags are dots at the end of its field, which is as wide with them as without
-            let dots = marks::dots(&pipeline.ui, &marks::of(pipeline, name)).map(|dots| {
-                container(dots)
-                    .align_x(Right)
-                    .center_y(Fill)
-                    .width(Fill)
-                    .padding(padding::right(theme::FIELD.right))
-            });
-            let named = stack![
+            let carrier = Carrier::Name(name.clone());
+            let own = marks::of(pipeline, &carrier);
+            let named = marks::dotted(
                 look::name("name", name, is_taken, Message::Rename.with(name.clone())),
-                dots
-            ];
+                marks::dots(&pipeline.ui, &own, &BTreeSet::new()),
+            );
             let head = row![
                 help.of(
                     toggle(is_open, Message::Toggle(name.clone())),
@@ -403,12 +387,12 @@ impl Drawer {
             .align_y(Center);
             // a right press on it opens the picker of its tags under it
             let picker = marks
-                .picker(pipeline, name)
+                .picker(pipeline, &carrier)
                 .map(|picker| picker.map(Message::Marks));
             let head = look::popped(
                 head,
                 picker,
-                Message::Marks(marks::Message::Pick(name.clone())),
+                Message::Marks(marks::Message::Pick(carrier)),
                 Message::Marks(marks::Message::Close),
             );
             // what a call of an expression that has holes gives, or why it is no sound one
@@ -494,7 +478,7 @@ impl Drawer {
                 .filter(|(name, stored)| {
                     !is_narrowed || {
                         let written = written(kind, stored);
-                        let tags = marks::of(pipeline, name);
+                        let tags = marks::of(pipeline, &Carrier::Name((*name).clone()));
                         finds(
                             &self.query,
                             tags.into_iter()

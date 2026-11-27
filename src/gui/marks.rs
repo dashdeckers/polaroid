@@ -1,9 +1,9 @@
-//! Marks: the tags that what a pipeline names carries, and their colours, kept in its `ui`.
+//! Marks: the tags that the names and the nodes of a pipeline carry, and their colours.
 
 use std::collections::BTreeSet;
 
-use iced::widget::{button, column, container, mouse_area, row, rule, space, text};
-use iced::{Center, Color, Element, Fill, Function, Widget};
+use iced::widget::{button, column, container, mouse_area, row, rule, space, stack, text};
+use iced::{Center, Color, Element, Fill, Function, Right, Widget, padding};
 use polaroid_iced::theme::{self, Tone, dot, extent, font, hue, spacing, stroke};
 use serde_json::Value;
 
@@ -11,7 +11,7 @@ use super::look::{self, Help, cross};
 use super::ui::object;
 use crate::{Catalog, Pipeline};
 
-/// Where a `ui` keeps the tags of each name, and the colours of the tags and of the categories.
+/// Where a `ui` keeps tags, by name in that of a pipeline, and the colours of tags and categories.
 const TAGS: &str = "tags";
 const COLORS: &str = "colors";
 const CATEGORIES: &str = "categories";
@@ -25,9 +25,8 @@ pub struct Marks {
 }
 
 /// What a picker of tags is open for, and what it shows that the pipeline does not hold.
-#[derive(Default)]
 struct Picking {
-    name: String,
+    carrier: Carrier,
     /// The name of a new tag as it is typed.
     typed: String,
     /// The tags that were picked in it, which it lists though nothing carries them any more.
@@ -36,8 +35,8 @@ struct Picking {
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    /// The picker of the tags of what is named this opens.
-    Pick(String),
+    /// The picker of the tags of this opens.
+    Pick(Carrier),
     Close,
     /// What the picker is open for carries this tag, or no longer if it did.
     Toggle(String),
@@ -53,6 +52,13 @@ pub enum Message {
     Paint(Option<Mark>),
     /// This is of this colour from now on.
     Painted(Mark, Color),
+}
+
+/// What carries tags: what a pipeline names this, or its node of this id.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Carrier {
+    Name(String),
+    Node(String),
 }
 
 /// What has a colour of its own: a tag, or a category of blocks.
@@ -71,11 +77,12 @@ impl Marks {
     ) -> bool {
         match (message, &mut self.picking) {
             // a picker of tags opens with no colour being picked in it
-            (Message::Pick(name), _) => {
+            (Message::Pick(carrier), _) => {
                 self.painting = None;
                 self.picking = Some(Picking {
-                    name,
-                    ..Picking::default()
+                    carrier,
+                    typed: String::new(),
+                    picked: BTreeSet::new(),
                 });
             }
             (Message::Close, _) => (self.picking, self.painting) = (None, None),
@@ -91,8 +98,8 @@ impl Marks {
             }
             (Message::Type(typed), Some(picking)) => picking.typed = typed,
             (Message::Toggle(tag), Some(picking)) => {
-                let is_carried = of(pipeline, &picking.name).contains(tag.as_str());
-                carry(pipeline, &picking.name, &tag, !is_carried);
+                let is_carried = of(pipeline, &picking.carrier).contains(tag.as_str());
+                carry(pipeline, &picking.carrier, &tag, !is_carried);
                 picking
                     .picked
                     .insert(tag);
@@ -110,12 +117,13 @@ impl Marks {
                 object(&mut pipeline.ui, &[COLORS, TAGS])
                     .entry(tag.as_str())
                     .or_insert(hex(hue).into());
-                carry(pipeline, &picking.name, &tag, true);
+                carry(pipeline, &picking.carrier, &tag, true);
                 return true;
             }
             (Message::Rename(old, new), _) => return rename(pipeline, &old, new.trim()),
             (Message::Remove(tag), _) => {
-                retag(pipeline, |carried| {
+                let carriers: Vec<Carrier> = carriers(pipeline).collect();
+                retag(pipeline, &carriers, |carried| {
                     carried.remove(&tag);
                 });
                 return true;
@@ -154,12 +162,12 @@ impl Marks {
                     new.is_empty() || all(pipeline).contains(new)
                 };
                 let name = look::name("tag", tag, is_taken, Message::Rename.with(tag.to_owned()));
-                let uses = carried(pipeline)
-                    .filter(|carried| tags(carried).any(|carried| carried == tag))
+                let uses = carriers(pipeline)
+                    .filter(|carrier| of(pipeline, carrier).contains(tag))
                     .count();
                 let hue = color(&pipeline.ui, tag);
                 let line = row![
-                    look::dot(hue, dot::M),
+                    look::dot(hue, dot::M, true),
                     help.of(
                         name,
                         "The name of the tag. Type another and press Enter to rename it wherever \
@@ -168,7 +176,7 @@ impl Marks {
                     ),
                     help.of(
                         look::aside(uses.to_string()),
-                        "How many names carry the tag."
+                        "How many names and nodes carry the tag."
                     ),
                     help.of(
                         cross(Message::Remove(tag.to_owned())),
@@ -189,7 +197,7 @@ impl Marks {
             .map(|category| {
                 let hue = self::category(&pipeline.ui, catalog, category);
                 let line = row![
-                    look::dot(hue, dot::M),
+                    look::dot(hue, dot::M, true),
                     text(*category),
                     space::horizontal()
                 ]
@@ -209,17 +217,17 @@ impl Marks {
             .boxed()
     }
 
-    /// The picker of the tags of what is named `name`, if it is the one that is open.
+    /// The picker of the tags of `carrier`, if it is the one that is open.
     pub fn picker<'a>(
         &'a self,
         pipeline: &'a Pipeline,
-        name: &str,
+        carrier: &Carrier,
     ) -> Option<Element<'a, Message>> {
         let picking = self
             .picking
             .as_ref()
-            .filter(|picking| picking.name == name)?;
-        let carried = of(pipeline, name);
+            .filter(|picking| picking.carrier == *carrier)?;
+        let carried = of(pipeline, carrier);
         let picked = picking
             .picked
             .iter()
@@ -259,41 +267,65 @@ impl Marks {
     }
 }
 
-/// The tags that what `pipeline` names `name` carries.
+/// The tags that `carrier` carries in `pipeline`: a name in its `ui`, and a node in its own.
 pub fn of<'a>(
     pipeline: &'a Pipeline,
-    name: &str,
+    carrier: &Carrier,
 ) -> BTreeSet<&'a str> {
-    tags(&pipeline.ui[TAGS][name]).collect()
-}
-
-/// Every tag in use: each that something `pipeline` names carries.
-pub fn all(pipeline: &Pipeline) -> BTreeSet<&str> {
-    carried(pipeline)
-        .flat_map(tags)
-        .collect()
-}
-
-/// The list of the tags of each thing that `pipeline` names.
-fn carried(pipeline: &Pipeline) -> impl Iterator<Item = &Value> {
-    pipeline.ui[TAGS]
-        .as_object()
-        .into_iter()
-        .flatten()
-        .filter(|(name, _)| {
-            pipeline
-                .kind_of(name)
-                .is_some()
-        })
-        .map(|(_, carried)| carried)
-}
-
-/// The tags that a list of them in a `ui` holds.
-fn tags(list: &Value) -> impl Iterator<Item = &str> {
+    let list = match carrier {
+        Carrier::Name(name) => &pipeline.ui[TAGS][name.as_str()],
+        Carrier::Node(id) => pipeline
+            .nodes
+            .iter()
+            .find(|node| node.id == *id)
+            .map_or(&Value::Null, |node| &node.ui[TAGS]),
+    };
     list.as_array()
         .into_iter()
         .flatten()
         .filter_map(Value::as_str)
+        .collect()
+}
+
+/// The tags that the node of this id carries through the names it uses, and not itself.
+pub fn through<'a>(
+    pipeline: &'a Pipeline,
+    id: &str,
+) -> BTreeSet<&'a str> {
+    let own = of(pipeline, &Carrier::Node(id.to_owned()));
+    pipeline
+        .used_by(id)
+        .into_iter()
+        .flat_map(|name| of(pipeline, &Carrier::Name(name.to_owned())))
+        .filter(|tag| !own.contains(tag))
+        .collect()
+}
+
+/// Every tag in use: each that a name or a node of `pipeline` carries.
+pub fn all(pipeline: &Pipeline) -> BTreeSet<&str> {
+    carriers(pipeline)
+        .flat_map(|carrier| of(pipeline, &carrier))
+        .collect()
+}
+
+/// All that may carry a tag: what `pipeline` names that its `ui` lists, and its nodes.
+fn carriers(pipeline: &Pipeline) -> impl Iterator<Item = Carrier> {
+    let names = pipeline.ui[TAGS]
+        .as_object()
+        .into_iter()
+        .flat_map(|named| named.keys())
+        .filter(|name| {
+            pipeline
+                .kind_of(name)
+                .is_some()
+        })
+        .cloned()
+        .map(Carrier::Name);
+    let nodes = pipeline
+        .nodes
+        .iter()
+        .map(|node| Carrier::Node(node.id.clone()));
+    names.chain(nodes)
 }
 
 /// The colour of a tag as `ui` has it, or grey if it has none that reads.
@@ -328,31 +360,19 @@ fn read(written: &Value) -> Option<Color> {
         .ok()
 }
 
-/// Has what is named `name` carry `tag`, or no longer.
+/// Has `carrier` carry `tag`, or no longer.
 fn carry(
     pipeline: &mut Pipeline,
-    name: &str,
+    carrier: &Carrier,
     tag: &str,
     is_carried: bool,
 ) {
-    let mut carried: BTreeSet<String> = of(pipeline, name)
-        .into_iter()
-        .map(str::to_owned)
-        .collect();
-    match is_carried {
-        true => carried.insert(tag.to_owned()),
-        false => carried.remove(tag),
-    };
-    let named = object(&mut pipeline.ui, &[TAGS]);
-    match carried.is_empty() {
-        true => named.shift_remove(name),
-        false => named.insert(
-            name.to_owned(),
-            carried
-                .into_iter()
-                .collect(),
-        ),
-    };
+    retag(pipeline, std::slice::from_ref(carrier), |carried| {
+        match is_carried {
+            true => carried.insert(tag.to_owned()),
+            false => carried.remove(tag),
+        };
+    });
 }
 
 /// Calls the tag `old` `new` wherever it is carried, if `new` is a name that no tag has.
@@ -364,7 +384,8 @@ fn rename(
     if new.is_empty() || all(pipeline).contains(new) {
         return false;
     }
-    retag(pipeline, |carried| {
+    let carriers: Vec<Carrier> = carriers(pipeline).collect();
+    retag(pipeline, &carriers, |carried| {
         if carried.remove(old) {
             carried.insert(new.to_owned());
         }
@@ -376,22 +397,41 @@ fn rename(
     true
 }
 
-/// Has `change` done to the tags of each thing that carries any, which may leave it with none.
+/// Has `change` done to the tags of each of `carriers`, which holds no list once it has none.
 fn retag(
     pipeline: &mut Pipeline,
+    carriers: &[Carrier],
     change: impl Fn(&mut BTreeSet<String>),
 ) {
-    let named = object(&mut pipeline.ui, &[TAGS]);
-    for carried in named.values_mut() {
-        let mut changed = tags(carried)
+    for carrier in carriers {
+        let mut tags: BTreeSet<String> = of(pipeline, carrier)
+            .into_iter()
             .map(str::to_owned)
             .collect();
-        change(&mut changed);
-        *carried = changed
-            .into_iter()
-            .collect();
+        change(&mut tags);
+        // a name has its list under it in the `ui` of the pipeline, and a node in its own
+        let (held, key) = match carrier {
+            Carrier::Name(name) => (object(&mut pipeline.ui, &[TAGS]), name.as_str()),
+            Carrier::Node(id) => {
+                let node = pipeline
+                    .nodes
+                    .iter_mut()
+                    .find(|node| node.id == *id);
+                let Some(node) = node else {
+                    continue;
+                };
+                (object(&mut node.ui, &[]), TAGS)
+            }
+        };
+        match tags.is_empty() {
+            true => held.shift_remove(key),
+            false => held.insert(
+                key.to_owned(),
+                tags.into_iter()
+                    .collect(),
+            ),
+        };
     }
-    named.retain(|_, carried| *carried != Value::Array(Vec::new()));
 }
 
 /// What was named `old` carries its tags as `new`, or lets go of them if it is gone.
@@ -485,19 +525,37 @@ fn painted<'a>(
     }
 }
 
-/// A small dot for each of `tags`, which say their names when hovered; nothing for none.
+/// A small dot for each of `own` tags, and a hollow one for each that comes `through` a name.
 pub fn dots<'a, Message: 'a>(
     ui: &Value,
-    tags: &BTreeSet<&str>,
+    own: &BTreeSet<&str>,
+    through: &BTreeSet<&str>,
 ) -> Option<Element<'a, Message>> {
-    let dots = tags
-        .iter()
-        .map(|tag| look::dot(color(ui, tag), dot::S));
-    let names: Vec<&str> = tags
-        .iter()
+    let tags = || {
+        own.iter()
+            .chain(through)
+    };
+    let dots = tags().map(|tag| look::dot(color(ui, tag), dot::S, own.contains(tag)));
+    // they say their names when hovered
+    let names: Vec<&str> = tags()
         .copied()
         .collect();
-    (!tags.is_empty()).then(|| look::told(row(dots).spacing(spacing::XXS), Some(names.join(", "))))
+    (!names.is_empty()).then(|| look::told(row(dots).spacing(spacing::XXS), Some(names.join(", "))))
+}
+
+/// `field` with `dots` at the end of it, which is as wide with them as without.
+pub fn dotted<'a, Message: 'a>(
+    field: impl Widget<Message> + 'a,
+    dots: Option<Element<'a, Message>>,
+) -> Element<'a, Message> {
+    let dots = dots.map(|dots| {
+        container(dots)
+            .align_x(Right)
+            .center_y(Fill)
+            .width(Fill)
+            .padding(padding::right(theme::FIELD.right))
+    });
+    stack![field, dots].boxed()
 }
 
 /// The hue of the palette that the fewest tags in use have, and of those the first.

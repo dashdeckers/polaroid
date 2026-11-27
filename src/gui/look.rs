@@ -229,7 +229,7 @@ pub fn ticked<'a, Message: 'a>(
         .on_toggle(on_toggle)
         .style(theme::checkbox::toned(Tone::Given));
     row![
-        hue.map(|hue| dot(hue, theme::dot::M)),
+        hue.map(|hue| dot(hue, theme::dot::M, true)),
         tick
     ]
     .spacing(spacing::S)
@@ -237,17 +237,18 @@ pub fn ticked<'a, Message: 'a>(
     .boxed()
 }
 
-/// A dot of `hue`, this wide.
+/// A dot of `hue`, this wide: filled, or else hollow.
 pub fn dot<'a, Message: 'a>(
     hue: Color,
     side: f32,
+    is_filled: bool,
 ) -> Element<'a, Message> {
     container(
         space()
             .width(side)
             .height(side),
     )
-    .style(theme::hue::dot(hue))
+    .style(theme::hue::dot(hue, is_filled))
     .boxed()
 }
 
