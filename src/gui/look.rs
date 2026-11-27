@@ -11,6 +11,8 @@ use iced::widget::{
     checkbox,
     component,
     container,
+    mouse_area,
+    popover,
     row,
     scrollable,
     space,
@@ -18,7 +20,7 @@ use iced::widget::{
     text_input,
     tooltip,
 };
-use iced::{Center, Element, Fill, Font, Renderer, Shrink, Widget, padding};
+use iced::{Center, Color, Element, Fill, Font, Renderer, Shrink, Widget, padding};
 use polaroid_iced::theme::{self, Tone, control, extent, font, sign, size, spacing};
 use polaroid_iced::{PickList, handle, leave, pick_list, width_of};
 
@@ -212,6 +214,53 @@ pub fn tick<'a, Message: 'a>(
     checkbox(is_ticked)
         .on_toggle(on_toggle)
         .style(theme::checkbox::toned(tone))
+        .boxed()
+}
+
+/// A line to tick one of many on: a dot of its hue if it has one, the box, and its name.
+pub fn ticked<'a, Message: 'a>(
+    hue: Option<Color>,
+    name: &'a str,
+    is_ticked: bool,
+    on_toggle: impl Fn(bool) -> Message + 'a,
+) -> Element<'a, Message> {
+    let tick = checkbox(is_ticked)
+        .label(name)
+        .on_toggle(on_toggle)
+        .style(theme::checkbox::toned(Tone::Given));
+    row![
+        hue.map(|hue| dot(hue, theme::dot::M)),
+        tick
+    ]
+    .spacing(spacing::S)
+    .align_y(Center)
+    .boxed()
+}
+
+/// A dot of `hue`, this wide.
+pub fn dot<'a, Message: 'a>(
+    hue: Color,
+    side: f32,
+) -> Element<'a, Message> {
+    container(
+        space()
+            .width(side)
+            .height(side),
+    )
+    .style(theme::hue::dot(hue))
+    .boxed()
+}
+
+/// `content`, which a right press on it opens `popup` under, until a press elsewhere closes that.
+pub fn popped<'a, Message: Clone + 'a>(
+    content: impl Widget<Message> + 'a,
+    popup: Option<impl Widget<Message> + 'a>,
+    on_open: Message,
+    on_close: Message,
+) -> Element<'a, Message> {
+    popover(mouse_area(content).on_right_press(on_open), popup)
+        .position(popover::Position::Bottom)
+        .on_close(on_close)
         .boxed()
 }
 

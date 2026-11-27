@@ -5,13 +5,24 @@ use std::collections::BTreeMap;
 use std::hash::{BuildHasher, BuildHasherDefault, DefaultHasher};
 use std::rc::Rc;
 
-use iced::widget::{column, container, keyed_column, mouse_area, row, scrollable, space, text};
-use iced::{Center, Element, Fill, Function, Widget, mouse};
+use iced::widget::{
+    column,
+    container,
+    keyed_column,
+    mouse_area,
+    row,
+    scrollable,
+    space,
+    stack,
+    text,
+};
+use iced::{Center, Element, Fill, Function, Right, Widget, mouse, padding};
 use polaroid_iced::theme::{self, Tone, control, font, icon, sign, size, spacing, stroke};
 use serde_json::{Map, Value};
 
 use super::form::{self, Expressions, Form};
 use super::look::{self, Help, add, cross, toggle};
+use super::marks::{self, Marks};
 use super::ui;
 use crate::{Kind, Pipeline, Registry, methods};
 
@@ -132,6 +143,8 @@ pub enum Message {
     Drop,
     /// The drag comes to nothing.
     Cancel,
+    /// What is asked of the tags, which the editor sees to.
+    Marks(marks::Message),
 }
 
 /// Where in its list a dragged entry is let go: before the entry of this name, or after it.
@@ -148,6 +161,8 @@ pub enum Change {
     Pipeline,
     /// What is named this is another or gone, for every node that uses it.
     Named(String),
+    /// This is asked of the tags, which the drawer does not keep.
+    Marks(marks::Message),
 }
 
 impl Drawer {
@@ -159,6 +174,7 @@ impl Drawer {
         registry: &Registry,
     ) -> Change {
         match message {
+            Message::Marks(message) => Change::Marks(message),
             Message::Grab(name) => {
                 self.drag = Some((name, None));
                 Change::Nothing
@@ -236,7 +252,8 @@ impl Drawer {
                 if !pipeline.rename_named(&old, &new) {
                     return Change::Nothing;
                 }
-                // what is shown of it goes along to its new name
+                // its tags and what is shown of it go along to its new name
+                marks::renamed(pipeline, &old, Some(&new));
                 if let Some(section) = self
                     .sections
                     .remove(&old)
@@ -292,6 +309,7 @@ impl Drawer {
             Message::Delete(name) => {
                 self.sections
                     .remove(&name);
+                marks::renamed(pipeline, &name, None);
                 match holding(pipeline, &name).shift_remove(&name) {
                     Some(_) => Change::Named(name),
                     None => Change::Nothing,
@@ -316,6 +334,7 @@ impl Drawer {
         defs: &'a Value,
         pipeline: &'a Pipeline,
         registry: &'a Registry,
+        marks: &'a Marks,
         columns: &[String],
         help: Help,
     ) -> impl Widget<Message> + use<'a> {
@@ -330,16 +349,29 @@ impl Drawer {
                 .sections
                 .get(name);
             let is_open = section.is_some_and(|section| section.is_open);
+            // its tags are dots at the end of its field, which is as wide with them as without
+            let dots = marks::dots(&pipeline.ui, &marks::of(pipeline, name)).map(|dots| {
+                container(dots)
+                    .align_x(Right)
+                    .center_y(Fill)
+                    .width(Fill)
+                    .padding(padding::right(theme::FIELD.right))
+            });
+            let named = stack![
+                look::name("name", name, is_taken, Message::Rename.with(name.clone())),
+                dots
+            ];
             let head = row![
                 help.of(
                     toggle(is_open, Message::Toggle(name.clone())),
                     "Lays it open to edit it, or closes it to what it is written as.",
                 ),
                 help.of(
-                    look::name("name", name, is_taken, Message::Rename.with(name.clone())),
+                    named,
                     "The name that cards and expressions use it by. Type another and press Enter \
                      to rename it, wherever it is used; the border is orange until then, and red \
-                     while the name is empty or another's. Leaving the field shows the name again.",
+                     while the name is empty or another's. Leaving the field shows the name \
+                     again. Right-click it to pick its tags, each a dot at the end of it.",
                 ),
                 help.of(
                     cross(Message::Delete(name.clone())),
@@ -348,6 +380,16 @@ impl Drawer {
             ]
             .spacing(spacing::XS)
             .align_y(Center);
+            // a right press on it opens the picker of its tags under it
+            let picker = marks
+                .picker(pipeline, name)
+                .map(|picker| picker.map(Message::Marks));
+            let head = look::popped(
+                head,
+                picker,
+                Message::Marks(marks::Message::Pick(name.clone())),
+                Message::Marks(marks::Message::Close),
+            );
             // what a call of an expression that has holes gives, or why it is no sound one
             let takes = (kind == Kind::Expression)
                 .then(|| pipeline.holes(name))

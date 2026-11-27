@@ -1924,3 +1924,102 @@ fn an_entry_is_dragged_by_its_grip_in_a_list_that_is_in_the_order_of_the_file() 
     assert_eq!(every(&editor, theme::sign::GRIP).len(), 1);
     assert_eq!(left(&editor), was);
 }
+
+#[test]
+fn a_right_click_on_a_name_picks_its_tags_which_follow_it() {
+    use iced::mouse::Button::Right;
+    use iced::mouse::Event::ButtonPressed;
+
+    let mut editor = chain(1);
+    for name in ["rate", "base"] {
+        editor
+            .pipeline
+            .values
+            .insert(name.to_owned(), 1.into());
+    }
+    let name = |editor: &Editor, name: &str| {
+        simulator(editor.view())
+            .find(field(name))
+            .unwrap()
+            .bounds()
+    };
+    let at = name(&editor, "rate").center();
+    mouse(&mut editor, at, [ButtonPressed(Right)]);
+    let marks = |editor: &mut Editor, message| {
+        let _ = editor.update(Message::Marks(message));
+    };
+    for tag in ["tax", "vat"] {
+        marks(&mut editor, marks::Message::Type(tag.to_owned()));
+        marks(&mut editor, marks::Message::Add);
+    }
+    assert_eq!(
+        editor.pipeline.ui["tags"],
+        serde_json::json!({ "rate": ["tax", "vat"] })
+    );
+    assert!(editor.is_dirty);
+    // its field is as wide with the dots of its tags in it as that of a name without any
+    assert_eq!(name(&editor, "rate").width, name(&editor, "base").width);
+
+    // its picker lists each, to take it off again by its tick, until Escape closes it
+    press_on(&mut editor, "vat");
+    assert_eq!(
+        editor.pipeline.ui["tags"],
+        serde_json::json!({ "rate": ["tax"] })
+    );
+    let lists = |editor: &Editor| {
+        simulator(editor.view())
+            .find("tax")
+            .is_ok()
+    };
+    assert!(lists(&editor));
+    let _ = editor.update(Message::Dismiss);
+    assert!(!lists(&editor));
+    // and its field is typed in under the dots as any other
+    let mut ui = simulator(editor.view());
+    ui.click(field("rate"))
+        .unwrap();
+    ui.typewrite("s");
+    assert!(
+        ui.find(field("rates"))
+            .is_ok()
+    );
+    drop(ui);
+
+    // under another name it carries the same, and deleted it carries none
+    let drawer = |editor: &mut Editor, message| {
+        let _ = editor.update(Message::Drawer(message));
+    };
+    drawer(
+        &mut editor,
+        drawer::Message::Rename("rate".to_owned(), "due".to_owned()),
+    );
+    assert_eq!(
+        editor.pipeline.ui["tags"],
+        serde_json::json!({ "due": ["tax"] })
+    );
+    drawer(&mut editor, drawer::Message::Delete("due".to_owned()));
+    assert_eq!(editor.pipeline.ui["tags"], serde_json::json!({}));
+}
+
+#[test]
+fn a_save_writes_no_tag_of_what_is_no_longer_named() {
+    let mut editor = chain(1);
+    let path = std::env::temp_dir().join(format!("polaroid-tags-{}.json", std::process::id()));
+    editor.path = path
+        .to_string_lossy()
+        .into_owned();
+    editor.pipeline.ui = serde_json::json!({
+        "tags": { "gone": ["old"] },
+        "colors": { "tags": { "old": "#111111" } },
+    });
+    let _ = editor.update(Message::Save);
+    assert!(
+        editor
+            .pipeline
+            .ui
+            .is_null()
+    );
+    let written = std::fs::read_to_string(&path).unwrap();
+    assert!(!written.contains("old"));
+    std::fs::remove_file(path).unwrap();
+}

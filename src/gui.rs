@@ -9,6 +9,7 @@ mod icon;
 mod known;
 mod layout;
 mod look;
+mod marks;
 mod ui;
 
 use std::collections::{BTreeMap, HashMap};
@@ -42,6 +43,7 @@ use self::drawer::Drawer;
 use self::icon::Icons;
 use self::known::Known;
 use self::look::{Help, error, pill, title};
+use self::marks::Marks;
 use crate::polars::prelude::{DataFrame, DataType, PolarsResult, polars_err};
 use crate::{Catalog, Described, Node, Pipeline, Registry, schema};
 
@@ -154,6 +156,8 @@ struct Editor {
     /// The args of a node as they are edited, which are not taken yet, by its id.
     drafts: BTreeMap<String, form::Draft>,
     drawer: Drawer,
+    /// What of the tags is under way: the picker that is open.
+    marks: Marks,
     is_drawer_shown: bool,
     help: Help,
     /// How many times their size the cards are drawn, which a plot draws its pixels for.
@@ -176,7 +180,8 @@ enum Message {
     Menu(Point, Point),
     /// A node of this block, at this point among the cards.
     Add(String, Point),
-    CloseMenu,
+    /// What is open over the rest closes: the menu of blocks, and the picker of tags.
+    Dismiss,
     Edit(String, Edit),
     /// The closed card of this node is shown open for the cursor that rests on it, or none is.
     Peek(Option<String>),
@@ -213,6 +218,8 @@ enum Message {
     Ran(Vec<String>, Result<Vec<(String, DataFrame)>, String>),
     Stop,
     Drawer(drawer::Message),
+    /// What is asked of the tags.
+    Marks(marks::Message),
     /// The drawer is shown, or hidden if it is shown.
     ToggleDrawer,
     /// Help is shown, or no longer if it is.
@@ -250,6 +257,7 @@ impl Editor {
             registry,
             path,
             drawer: Drawer::default(),
+            marks: Marks::default(),
             pipeline,
             is_dirty: false,
             menu: None,
@@ -277,13 +285,13 @@ impl Editor {
         format!("{}{dirty} - Polaroid", self.path)
     }
 
-    /// Escape closes the menu of blocks.
+    /// Escape closes what is open over the rest.
     fn subscription(&self) -> Subscription<Message> {
         let escape = keyboard::listen().filter_map(|event| match event {
             keyboard::Event::KeyPressed {
                 key: Key::Named(Named::Escape),
                 ..
-            } => Some(Message::CloseMenu),
+            } => Some(Message::Dismiss),
             _ => None,
         });
         let is_played = self
@@ -316,7 +324,11 @@ impl Editor {
             Message::Peek(id) => self.peek = id,
             Message::Copy(text) => return clipboard::write(text).discard(),
             Message::Menu(at, point) => self.menu = Some((at, point)),
-            Message::CloseMenu => self.menu = None,
+            Message::Dismiss => {
+                self.menu = None;
+                self.marks
+                    .update(marks::Message::Close, &mut self.pipeline);
+            }
             Message::Add(block, point) => self.add(block, point),
             Message::Edit(id, edit) => {
                 // a card laid open or closed is the same node
@@ -430,6 +442,9 @@ impl Editor {
                     .update(message, &mut self.pipeline, &self.registry);
                 match change {
                     drawer::Change::Nothing => return Task::none(),
+                    drawer::Change::Marks(message) => {
+                        return self.update(Message::Marks(message));
+                    }
                     drawer::Change::Pipeline => {}
                     // what is known of a node holds for what it named as it was computed
                     drawer::Change::Named(name) => {
@@ -446,6 +461,12 @@ impl Editor {
                 self.check_wiring();
                 self.retry();
                 return self.follow();
+            }
+            // a tag is no part of what a node computes
+            Message::Marks(message) => {
+                self.is_dirty |= self
+                    .marks
+                    .update(message, &mut self.pipeline);
             }
             Message::ToggleDrawer => self.is_drawer_shown = !self.is_drawer_shown,
             Message::Help => self.help = Help(!self.help.0),
@@ -526,6 +547,7 @@ impl Editor {
 
     /// Writes the pipeline to its file.
     fn save(&mut self) {
+        marks::tidy(&mut self.pipeline);
         let pipeline = serde_json::to_string_pretty(&self.pipeline).expect("a pipeline serializes");
         let written = std::fs::write(&self.path, pipeline + "\n");
         self.is_dirty = written.is_err();
@@ -671,6 +693,7 @@ impl Editor {
         self.peek = None;
         self.is_dirty = is_dirty;
         self.drawer = Drawer::default();
+        self.marks = Marks::default();
         self.check_wiring();
     }
 
@@ -794,6 +817,7 @@ impl Editor {
                 &self.catalog.defs,
                 &self.pipeline,
                 &self.registry,
+                &self.marks,
                 &columns,
                 self.help,
             )
@@ -1024,7 +1048,7 @@ impl Editor {
                 // each item is a block by its name
                 menu(at, groups)
                     .icons(|block| self.icons.of(block))
-                    .on_close(Message::CloseMenu)
+                    .on_close(Message::Dismiss)
             })
     }
 }
