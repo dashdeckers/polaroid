@@ -275,16 +275,9 @@ fn holes(body: &Value) -> PolarsResult<Vec<(&str, Taken)>> {
 
 /// Whether a hole stands anywhere in `value`.
 fn has_hole(value: &Value) -> bool {
-    match (reference(value), value) {
-        (Some(hole), _) if hole.kind == Kind::Argument => true,
-        (_, Value::Array(items)) => items
-            .iter()
-            .any(has_hole),
-        (_, Value::Object(fields)) => fields
-            .values()
-            .any(has_hole),
-        _ => false,
-    }
+    any(value, &mut |value| {
+        reference(value).is_some_and(|hole| hole.kind == Kind::Argument)
+    })
 }
 
 /// What stands for the expression of a name: in the args of a Node, or in another expression.
@@ -852,18 +845,29 @@ fn parts(value: &mut Value) -> Box<dyn Iterator<Item = &mut Value> + '_> {
 
 /// Whether `value` holds the key of a reference anywhere.
 fn has_reference(value: &Value) -> bool {
-    match value {
-        Value::Array(items) => items
-            .iter()
-            .any(has_reference),
-        Value::Object(fields) => {
-            Kind::of(fields).is_some()
-                || fields
-                    .values()
-                    .any(has_reference)
+    any(value, &mut |value| {
+        value
+            .as_object()
+            .and_then(Kind::of)
+            .is_some()
+    })
+}
+
+/// Whether `is_it` holds of `value`, or of anything that it holds.
+fn any<'a>(
+    value: &'a Value,
+    is_it: &mut impl FnMut(&'a Value) -> bool,
+) -> bool {
+    is_it(value)
+        || match value {
+            Value::Array(items) => items
+                .iter()
+                .any(|item| any(item, is_it)),
+            Value::Object(fields) => fields
+                .values()
+                .any(|field| any(field, is_it)),
+            _ => false,
         }
-        _ => false,
-    }
 }
 
 /// Whether `value` names `name`, itself or through what it names, each of them `seen` once.
@@ -873,27 +877,19 @@ fn uses<'a>(
     pipeline: &'a Pipeline,
     seen: &mut Vec<&'a str>,
 ) -> bool {
-    let through = reference(value).is_some_and(|reference| {
-        reference.kind != Kind::Argument
-            && (reference.name == name
-                || !seen.contains(&reference.name) && {
-                    seen.push(reference.name);
-                    pipeline
-                        .named(reference.name)
-                        .is_some_and(|named| uses(named, name, pipeline, seen))
-                })
-    });
-    // and in what it holds, as the arguments of a call
-    through
-        || match value {
-            Value::Array(items) => items
-                .iter()
-                .any(|item| uses(item, name, pipeline, seen)),
-            Value::Object(fields) => fields
-                .values()
-                .any(|field| uses(field, name, pipeline, seen)),
-            _ => false,
-        }
+    // by a reference, or by what that holds, as the arguments of a call
+    any(value, &mut |value| {
+        reference(value).is_some_and(|reference| {
+            reference.kind != Kind::Argument
+                && (reference.name == name
+                    || !seen.contains(&reference.name) && {
+                        seen.push(reference.name);
+                        pipeline
+                            .named(reference.name)
+                            .is_some_and(|named| uses(named, name, pipeline, seen))
+                    })
+        })
+    })
 }
 
 /// Has each reference to `old` in `value` name `new`, and mean of it what it meant.
