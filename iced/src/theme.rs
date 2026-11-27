@@ -960,6 +960,31 @@ pub mod menu {
     }
 }
 
+/// The switch of stops: its track, and its thumb, which is of the role of the stop it is at.
+pub mod switch {
+    use iced::Color;
+
+    use super::{Role, Scheme};
+
+    /// The track that the thumb slides in.
+    pub fn track(scheme: &Scheme) -> Color {
+        scheme.surface_container_highest
+    }
+
+    /// The thumb at a stop of `role`: its fill, what is written on it, its rim and its glow.
+    pub fn thumb(
+        scheme: &Scheme,
+        role: Role,
+    ) -> [Color; 4] {
+        [
+            role.color,
+            role.on,
+            role.container,
+            scheme.glow(role),
+        ]
+    }
+}
+
 /// The roles that the modes of the editor glow in on their switch: live, delayed, and by hand.
 pub mod mode {
     use super::{Role, Scheme};

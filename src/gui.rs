@@ -880,8 +880,8 @@ impl Editor {
                  writes the files; it reads again only what was edited since the last.",
             ),
         };
-        let delay = format!(
-            "Delay {:.1} s",
+        let every = format!(
+            "Every {:.1} s",
             self.still
                 .as_secs_f32()
         );
@@ -908,10 +908,10 @@ impl Editor {
             // dragged up it waits longer, and down again shorter
             .stop(
                 help.of(
-                    scrub(title(delay))
+                    scrub(title(every))
                         .upward()
                         .on_scrub(Message::Wait),
-                    "Delay: a Check and a Run follow a change once there has been none for this \
+                    "Every: a Check and a Run follow a change once there has been none for this \
                      long. Drag it up to wait longer, and down for shorter.",
                 ),
                 Message::Mode(Mode::Delay),

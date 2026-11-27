@@ -35,6 +35,22 @@ fn every_role_reads_on_its_colour_and_on_its_container() {
 }
 
 #[test]
+fn the_thumb_of_a_switch_reads_and_is_made_out_on_its_track_at_the_stop_of_every_mode() {
+    for scheme in [&LIGHT, &DARK] {
+        let track = theme::switch::track(scheme);
+        for mode in [
+            theme::mode::live,
+            theme::mode::delay,
+            theme::mode::manual,
+        ] {
+            let [fill, on, ..] = theme::switch::thumb(scheme, mode(scheme));
+            assert!(contrast(on, fill) >= TEXT, "{on:?} on {fill:?}");
+            assert!(contrast(fill, track) >= SHAPE, "{fill:?} on {track:?}");
+        }
+    }
+}
+
+#[test]
 fn text_reads_on_every_surface() {
     for scheme in [&LIGHT, &DARK] {
         for ground in [

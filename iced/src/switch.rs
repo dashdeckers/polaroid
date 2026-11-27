@@ -120,28 +120,27 @@ impl<'a, Message> Switch<'a, Message> {
         Some((at.max(0.0) as usize).min(self.stops.len() - 1))
     }
 
-    /// The fill of the thumb at a stop, what is written on it, and its glow.
+    /// The thumb at a stop: its fill, what is written on it, its rim and its glow.
     fn thumb(
         &self,
         scheme: &Scheme,
         stop: usize,
         layer: f32,
-    ) -> [Color; 3] {
+    ) -> [Color; 4] {
         let stop = &self.stops[stop];
         let role = (stop.role)(scheme);
-        // as a button is filled, and a stop of a switch in the quieter container
-        match stop.on_press {
-            Some(_) => [
-                over(role.color, role.on, layer),
-                role.on,
-                scheme.glow(role),
-            ],
-            None => [
-                role.container,
-                role.on_container,
-                scheme.glow(role),
-            ],
-        }
+        let [fill, on, rim, glow] = theme::switch::thumb(scheme, role);
+        // one that is a button is laid over as a button is, hovered or pressed
+        let layer = match stop.on_press {
+            Some(_) => layer,
+            None => 0.0,
+        };
+        [
+            over(fill, on, layer),
+            on,
+            rim,
+            glow,
+        ]
     }
 }
 
@@ -389,7 +388,7 @@ impl<Message: Clone> Widget<Message, Theme, Renderer> for Switch<'_, Message> {
             {
                 mouse::Interaction::Pointer
             }
-            // what a stop shows may say how it is dragged, as Delay does
+            // what a stop shows may say how it is dragged, as a number is
             _ => self
                 .contents
                 .iter()
@@ -440,7 +439,8 @@ impl<Message: Clone> Widget<Message, Theme, Renderer> for Switch<'_, Message> {
             (false, _) => 0.0,
         };
 
-        renderer.fill_quad(pill(bounds), scheme.surface_container_highest);
+        let track = theme::switch::track(scheme);
+        renderer.fill_quad(pill(bounds), track);
         // a stop that the thumb is not at is lit under the cursor, as a button would be
         if let Some(stop) = under.filter(|stop| {
             *stop != self.chosen
@@ -448,11 +448,7 @@ impl<Message: Clone> Widget<Message, Theme, Renderer> for Switch<'_, Message> {
                     .dragged
                     .is_none()
         }) {
-            let lit = over(
-                scheme.surface_container_highest,
-                scheme.on_surface,
-                layer(stop),
-            );
+            let lit = over(track, scheme.on_surface, layer(stop));
             renderer.fill_quad(pill(self.cell(bounds, stop as f32)), lit);
         }
         // a stop that is a button is outlined as one while the thumb is elsewhere
@@ -481,10 +477,18 @@ impl<Message: Clone> Widget<Message, Theme, Renderer> for Switch<'_, Message> {
 
         // between two stops the thumb is of both their colours, as far as it is from each
         let (from, to) = (at.floor() as usize, at.ceil() as usize);
-        let [fill_from, _, glow_from] = self.thumb(scheme, from, layer(from));
-        let [fill_to, _, glow_to] = self.thumb(scheme, to, layer(to));
+        let [
+            fill_from,
+            _,
+            rim_from,
+            glow_from,
+        ] = self.thumb(scheme, from, layer(from));
+        let [fill_to, _, rim_to, glow_to] = self.thumb(scheme, to, layer(to));
         let toward = at.fract();
         let thumb = renderer::Quad {
+            border: border::rounded(radius::FULL)
+                .color(over(rim_from, rim_to, toward))
+                .width(stroke::MEDIUM),
             shadow: theme::halo(over(glow_from, glow_to, toward)),
             ..pill(self.cell(bounds, at))
         };
@@ -500,7 +504,7 @@ impl<Message: Clone> Widget<Message, Theme, Renderer> for Switch<'_, Message> {
                 true => scheme.on_surface,
                 false => scheme.on_surface_variant,
             };
-            let [_, on_thumb, _] = self.thumb(scheme, stop, 0.0);
+            let [_, on_thumb, ..] = self.thumb(scheme, stop, 0.0);
             let covered = (1.0 - (at - stop as f32).abs()).max(0.0);
             let written = renderer::Style {
                 text_color: over(quiet, on_thumb, covered),

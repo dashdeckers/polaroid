@@ -512,7 +512,7 @@ fn the_end_of_the_switch_is_a_button_once_manual_is_chosen() {
             .find("Check")
             .is_err()
     );
-    assert!(press(&editor, "Delay 0.5 s").is_empty());
+    assert!(press(&editor, "Every 0.5 s").is_empty());
     let pressed = press(&editor, "Manual");
     assert!(matches!(pressed[..], [Message::Check]));
     for message in pressed {
@@ -1002,7 +1002,7 @@ fn delay_waits_longer_as_it_is_dragged_up_and_half_a_second_at_the_least() {
     assert_eq!(editor.still, Duration::from_millis(500));
     assert!(
         simulator(editor.view())
-            .find("Delay 0.5 s")
+            .find("Every 0.5 s")
             .is_ok()
     );
 }
