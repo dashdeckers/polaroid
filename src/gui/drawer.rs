@@ -2,11 +2,12 @@
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
+use std::hash::{BuildHasher, BuildHasherDefault, DefaultHasher};
 use std::rc::Rc;
 
-use iced::widget::{column, container, row, scrollable, space, text};
+use iced::widget::{column, container, keyed_column, row, scrollable, space, text};
 use iced::{Center, Element, Fill, Function, Widget};
-use polaroid_iced::theme::{self, Tone, font, size, spacing};
+use polaroid_iced::theme::{self, Tone, control, font, size, spacing};
 use serde_json::{Map, Value};
 
 use super::form::{self, Expressions, Form};
@@ -26,6 +27,61 @@ struct Section {
     form: form::State,
     /// It as it is edited, if the pipeline does not take that yet.
     draft: Option<form::Draft>,
+}
+
+/// A list of the drawer: the expressions without a hole, those with one, or the values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum List {
+    Expressions,
+    Holed,
+    Values,
+}
+
+impl List {
+    const ALL: [Self; 3] = [
+        Self::Expressions,
+        Self::Holed,
+        Self::Values,
+    ];
+
+    /// Its title, the kind of what it lists, and what it says it is for.
+    fn says(self) -> (&'static str, Kind, &'static str) {
+        match self {
+            Self::Expressions => (
+                "Expressions",
+                Kind::Expression,
+                "Adds an empty expression, under a name that is free.",
+            ),
+            Self::Holed => (
+                "Holed expressions",
+                Kind::Expression,
+                "The expressions that have a hole, which takes what a call of them gives it. An \
+                 expression is listed here once a hole is written in it.",
+            ),
+            Self::Values => (
+                "Values",
+                Kind::Value,
+                "Adds an empty value, under a name that is free: a number, a text, a flag, a \
+                 list or a table, for expressions and cards to name.",
+            ),
+        }
+    }
+
+    /// What `pipeline` names that it lists, in the order of the file.
+    fn names(
+        self,
+        pipeline: &Pipeline,
+    ) -> impl Iterator<Item = (&String, &Value)> {
+        let named = match self {
+            Self::Values => &pipeline.values,
+            _ => &pipeline.expressions,
+        };
+        named
+            .iter()
+            .filter(move |(name, _)| {
+                self == Self::Values || pipeline.is_holed(name) == (self == Self::Holed)
+            })
+    }
 }
 
 /// What is done to the expression or the value of a name.
@@ -248,39 +304,33 @@ impl Drawer {
             .spacing(spacing::XS)
             .boxed()
         };
-        let group = |title: &'a str, kind: Kind, named: &'a Map<String, Value>, says: &str| {
+        let listed = |list: List| {
+            let (title, kind, says) = list.says();
+            let title = text(title).size(size::HEADING);
+            // nothing is added to those that have a hole: one is written in an expression
+            let (title, add) = match list {
+                List::Holed => (help.of(title, says), None),
+                _ => (title.boxed(), Some(help.of(add(Message::New(kind)), says))),
+            };
             let head = row![
-                text(title).size(size::HEADING),
+                title,
                 space::horizontal(),
-                help.of(add(Message::New(kind)), says),
+                add
             ]
+            .height(control::S)
             .align_y(Center);
-            let sections = named
-                .iter()
-                .map(|(name, stored)| section(kind, name, stored));
+            let sections = list
+                .names(pipeline)
+                .map(|(name, stored)| (key(name), section(kind, name, stored)));
             column![
                 head,
-                column(sections).spacing(spacing::L)
+                keyed_column(sections).spacing(spacing::L)
             ]
             .spacing(spacing::M)
             .width(Fill)
+            .boxed()
         };
-        let named = column![
-            group(
-                "Expressions",
-                Kind::Expression,
-                &pipeline.expressions,
-                "Adds an empty expression, under a name that is free.",
-            ),
-            group(
-                "Values",
-                Kind::Value,
-                &pipeline.values,
-                "Adds an empty value, under a name that is free: a number, a text, a flag, a \
-                 list or a table, for expressions and cards to name.",
-            ),
-        ]
-        .spacing(spacing::XL);
+        let named = column(List::ALL.map(listed)).spacing(spacing::XL);
         // the scrollbar beside what is named, not over it
         let bar = look::bar().spacing(spacing::XS);
         let named = scrollable(named)
@@ -292,6 +342,11 @@ impl Drawer {
             .width(Fill)
             .height(Fill)
     }
+}
+
+/// What tells the entry of a name from the others of its list, wherever it is listed there.
+fn key(name: &str) -> u64 {
+    BuildHasherDefault::<DefaultHasher>::default().hash_one(name)
 }
 
 /// The values of `pipeline` if `name` is one of them, and else its expressions.

@@ -1597,3 +1597,72 @@ fn a_tile_is_shown_open_while_the_cursor_rests_on_it_which_is_no_edit() {
         Some("last")
     );
 }
+
+/// How far down the editor each of `texts` is shown.
+fn tops<const N: usize>(
+    editor: &Editor,
+    texts: [&str; N],
+) -> [f32; N] {
+    let mut ui = simulator(editor.view());
+    texts.map(|text| {
+        ui.find(text)
+            .unwrap()
+            .bounds()
+            .y
+    })
+}
+
+#[test]
+fn an_expression_is_listed_with_those_that_have_a_hole_once_it_has_one() {
+    let mut editor = chain(1);
+    let named = |editor: &mut Editor, name: &str, expression: Value| {
+        editor
+            .pipeline
+            .expressions
+            .insert(name.to_owned(), expression);
+    };
+    named(&mut editor, "plain", crate::marker("gone"));
+    named(&mut editor, "holed", serde_json::json!({ "$arg": "x" }));
+    editor
+        .pipeline
+        .values
+        .insert("value".to_owned(), 1.into());
+    let texts = [
+        "plain",
+        "Holed expressions",
+        "holed",
+        "Values",
+        "value",
+    ];
+    assert!(tops(&editor, texts).is_sorted());
+
+    // with a hole written in it, be it sound or not, it is listed with the others that have one
+    named(&mut editor, "plain", serde_json::json!([{ "$arg": "x" }]));
+    assert!(tops(&editor, ["Holed expressions", "plain"]).is_sorted());
+}
+
+#[test]
+fn what_is_typed_for_a_name_stays_in_its_field_when_the_entry_before_it_goes() {
+    let mut editor = chain(1);
+    for name in ["a", "b"] {
+        editor
+            .pipeline
+            .values
+            .insert(name.to_owned(), 1.into());
+    }
+    let mut without = chain(1);
+    without
+        .pipeline
+        .values
+        .insert("b".to_owned(), 1.into());
+
+    let mut ui = simulator(editor.view());
+    ui.click(field("b"))
+        .unwrap();
+    ui.typewrite("c");
+    let mut ui = ui.rebuild(without.view());
+    assert!(
+        ui.find(field("bc"))
+            .is_ok()
+    );
+}
