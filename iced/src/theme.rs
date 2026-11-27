@@ -1455,7 +1455,21 @@ pub mod hue {
     use super::{Scheme, control, ink, over, radius, spacing};
 
     /// The grey of what has no colour of its own.
-    pub const NEUTRAL: Color = super::hex(0x8C8C8C);
+    pub const NEUTRAL: Color = super::hex(0x808080);
+
+    /// The hues to pick from, each made out on every surface, light and dark.
+    pub const PALETTE: [Color; 10] = [
+        super::hex(0x3B82C4),
+        super::hex(0xCF6400),
+        super::hex(0x2E9140),
+        super::hex(0xE03131),
+        super::hex(0xB750CF),
+        super::hex(0x8D6E63),
+        super::hex(0xD43D7A),
+        super::hex(0x6F8500),
+        super::hex(0x0C8599),
+        super::hex(0x7D63F0),
+    ];
 
     /// How much of a hue lies over the lowest surface in a body of it, light and dark.
     const BODY: (f32, f32) = (0.32, 0.22);

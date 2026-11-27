@@ -102,6 +102,26 @@ fn text_reads_on_every_hue_and_on_its_shades() {
 }
 
 #[test]
+fn every_hue_of_the_palette_is_made_out_on_every_surface() {
+    for scheme in [&LIGHT, &DARK] {
+        for ground in [
+            scheme.surface,
+            scheme.surface_container_lowest,
+            scheme.surface_container_low,
+            scheme.surface_container,
+            scheme.surface_container_high,
+        ] {
+            for hue in hue::PALETTE
+                .into_iter()
+                .chain([hue::NEUTRAL])
+            {
+                assert!(contrast(hue, ground) >= SHAPE, "{hue:?} on {ground:?}");
+            }
+        }
+    }
+}
+
+#[test]
 fn the_sans_face_draws_every_sign_itself() {
     let sans = FontRef::new(rustd3_fonts::DEJAVU_SANS.data()).unwrap();
     for sign in sign::ALL {
