@@ -699,6 +699,61 @@ fn a_tile_is_a_square_and_an_open_card_is_as_wide_as_its_id() {
 }
 
 #[test]
+fn the_plate_of_a_card_is_the_same_on_its_tile_and_open_with_what_its_block_does_around_it() {
+    use iced_test::selector::{self, Candidate};
+
+    let mut editor = chain(0);
+    let block = "group_by_dynamic";
+    let _ = editor.update(Message::Add(block.to_owned(), Point::ORIGIN));
+    let plate = |editor: &Editor| {
+        simulator(editor.view())
+            .find(selector::id("plate"))
+            .unwrap()
+            .bounds()
+    };
+    let closed = plate(&editor);
+    let id = editor
+        .pipeline
+        .nodes[0]
+        .id
+        .clone();
+    let _ = editor.update(Message::Edit(id, Edit::Toggle));
+    let open = plate(&editor);
+    assert_eq!(open, closed);
+    // the open card is dragged by it
+    assert_eq!(card::handle(true).size(), open.size());
+
+    // the first paragraph of what the block does, as it reads
+    let paragraph = editor.docs[block]
+        .raw()
+        .split("\n\n")
+        .next()
+        .unwrap()
+        .replace('`', "")
+        .replace('\n', " ");
+    let mut parts = Vec::new();
+    let _ = simulator(editor.view()).find(|candidate: Candidate<'_>| {
+        if let Candidate::Text {
+            content, bounds, ..
+        } = candidate
+            && !content.is_empty()
+            && (paragraph.starts_with(content) || paragraph.ends_with(content))
+        {
+            parts.push((content.to_owned(), bounds));
+        }
+        None::<()>
+    });
+    let [(first, beside), (rest, under)] = &parts[..] else {
+        panic!("{parts:?}");
+    };
+    assert_eq!(format!("{first}{rest}"), paragraph);
+    // it starts beside the plate, and goes on under it from the edge the plate is at
+    let (right, bottom) = (open.x + open.width, open.y + open.height);
+    assert!(beside.x > right && beside.y + beside.height <= bottom);
+    assert!(under.x == open.x && under.y >= bottom);
+}
+
+#[test]
 fn an_open_card_is_resized_to_whole_pixels() {
     let mut editor = chain(1);
     let _ = editor.update(Message::Resize("n0".to_owned(), Size::new(300.4, 200.6)));

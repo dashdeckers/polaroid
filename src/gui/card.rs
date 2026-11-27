@@ -2,6 +2,7 @@
 
 use std::rc::Rc;
 
+use iced::advanced::text::Span;
 use iced::advanced::widget;
 use iced::widget::canvas::{self, Frame, Path, Stroke};
 use iced::widget::{
@@ -10,6 +11,7 @@ use iced::widget::{
     column,
     container,
     markdown,
+    rich_text,
     row,
     space,
     stack,
@@ -19,7 +21,7 @@ use iced::widget::{
 use iced::{Center, Element, Fill, Point, Rectangle, Renderer, Right, Size, Theme, Widget, mouse};
 use polaroid_iced::theme::surface::Ring;
 use polaroid_iced::theme::{self, Scheme, Tone, control, font, icon, size, spacing, stroke};
-use polaroid_iced::{Asked, Heading, width_of};
+use polaroid_iced::{Asked, Heading, cut, width_of};
 use serde_json::Value;
 
 use super::form::{Expressions, Form};
@@ -37,8 +39,13 @@ const PAD: f32 = spacing::M;
 const GAP: f32 = spacing::S;
 /// The side of a tile, which a closed card is.
 const TILE: f32 = theme::surface::TILE;
-/// The height of the line of the id, and the side of the plate that an open card is dragged by.
+/// The height of the line of the id.
 const HEAD: f32 = theme::HEAD;
+/// The plate of a card, open or closed: what the lines under it leave of a tile.
+const PLATE: Size = Size::new(
+    TILE - 2.0 * PAD,
+    TILE - 2.0 * PAD - 2.0 * spacing::XXS - control::S - theme::line(size::TEXT),
+);
 /// The small table, a pixel under a sign so that its lines are crisp.
 const ICON: Size = Size::new(icon::M - 1.0, icon::S - 1.0);
 /// What the border and the cursor of a field take beside the room around its text.
@@ -48,7 +55,7 @@ const EDGE: f32 = stroke::MEDIUM;
 fn around(id: f32) -> f32 {
     let field = id + theme::FIELD.x() + 2.0 * EDGE;
     // in the card's padding: the plate, three buttons and the field, with a gap between each two
-    2.0 * PAD + HEAD + 3.0 * control::S + field + 4.0 * GAP
+    2.0 * PAD + PLATE.width + 3.0 * control::S + field + 4.0 * GAP
 }
 
 /// A change to a node.
@@ -223,7 +230,7 @@ impl Editor {
 /// The part of a card that drags it, and opens or closes it at a double press: its plate.
 pub fn handle(is_open: bool) -> Rectangle {
     match is_open {
-        true => Rectangle::new(Point::new(PAD, PAD), Size::new(HEAD, HEAD)),
+        true => Rectangle::new(Point::new(PAD, PAD), PLATE),
         false => Rectangle::with_size(Size::new(TILE, TILE)),
     }
 }
@@ -374,16 +381,6 @@ impl<'a> Component<'a, Message> for Card<'a> {
             .copied();
         let label_width = look::label_width(reads.chain(args));
 
-        // what the block does, laid out as the Markdown it is written in
-        let does = self.doc.map(|doc| {
-            let settings = markdown::Settings {
-                font: font::SANS,
-                inline_code_font: font::MONO,
-                code_block_font: font::MONO,
-                ..markdown::Settings::with_text_size(size::NOTE)
-            };
-            markdown::view(doc.items(), settings, self.theme.clone()).map(|_| Event::Link)
-        });
         // an expression is picked by its name, and edited in the drawer
         let (value, held) = form::Draft::shown(self.draft, &node.args);
         let form = Form {
@@ -403,8 +400,7 @@ impl<'a> Component<'a, Message> for Card<'a> {
         .map(Event::Form);
         // the errors last: a line that comes and goes takes the state of all below it
         let lines = column![
-            self.head(),
-            does,
+            self.top(width - 2.0 * PAD),
             self.inputs(label_width),
             form,
             self.gallery(width),
@@ -486,9 +482,8 @@ impl<'a> Card<'a> {
         )
     }
 
-    /// Its tile: a plate with the icon of its block or the image it drew, over its block and id.
-    fn tile(&self) -> impl Widget<Event> + use<'a> {
-        let node = self.node;
+    /// Its plate, the same on its tile and open: the icon of its block, or the image it drew.
+    fn plate(&self) -> impl Widget<Event> + use<'a> {
         // an image that a Run kept is shown in the place of the icon, as a plot that was drawn
         let drawn = self
             .gallery
@@ -499,7 +494,7 @@ impl<'a> Card<'a> {
                 .icon(icon::XL)
                 .boxed(),
         };
-        // the plate takes what the lines under it leave of the tile, its tags as dots in a corner
+        // its tags are dots in a corner
         let dots = self
             .dots()
             .map(|dots| {
@@ -512,13 +507,90 @@ impl<'a> Card<'a> {
             .padding(spacing::XS)
             .center(Fill)
             .style(theme::container::section);
-        let plate = self.help.of(
-            stack![plate, dots],
-            "The tile of the node: the icon of its block, or the image it drew once a Run kept \
-             that, over the block and the id. Drag it to move the card, and double-click it to \
-             open the card. Right-click it to pick the tags of the node: a dot for each, and a \
+        let plate = container(stack![plate, dots].boxed())
+            .id("plate")
+            .width(PLATE.width)
+            .height(PLATE.height);
+        self.help.of(
+            plate,
+            "The plate of the node: the icon of its block, or the image it drew once a Run kept \
+             that. Drag it to move the card, and double-click it to open the card, or to close \
+             it to its tile. Right-click it to pick the tags of the node: a dot for each, and a \
              hollow one for each that a name it uses carries.",
-        );
+        )
+    }
+
+    /// What its block does as Markdown: the lines beside its plate, and what goes under it.
+    fn does(
+        &self,
+        beside: f32,
+    ) -> [Option<Element<'a, Event>>; 3] {
+        let settings = markdown::Settings {
+            font: font::SANS,
+            inline_code_font: font::MONO,
+            code_block_font: font::MONO,
+            ..markdown::Settings::with_text_size(size::NOTE)
+        };
+        let size = settings.text_size;
+        let items = self
+            .doc
+            .map_or(&[][..], markdown::Content::items);
+        let written = |spans: Vec<Span<'a, markdown::Uri>>| {
+            let written = rich_text(spans)
+                .size(size)
+                .line_height(settings.line_height)
+                .on_link_click(|_| Event::Link)
+                .selectable(true);
+            written.boxed()
+        };
+        // its first paragraph starts beside the plate, and goes on under it at a break of a line
+        let (first, rest, more) = match items.split_first() {
+            Some((markdown::Item::Paragraph(text), more)) => {
+                let spans = text.spans(
+                    settings,
+                    self.theme,
+                    markdown::Catalog::highlighter(self.theme),
+                );
+                let line = settings
+                    .line_height
+                    .to_absolute(size);
+                let lines = ((PLATE.height - HEAD - GAP) / line.0) as usize;
+                let (first, rest) = cut(&spans, size.0, font::SANS, beside, lines);
+                (Some(first), Some(rest), more)
+            }
+            _ => (None, None, items),
+        };
+        let more = (!more.is_empty()).then(|| {
+            let more = markdown::view(more, settings, self.theme.clone()).map(|_| Event::Link);
+            // as far under what is over it as its own paragraphs are apart
+            column![
+                space().height(settings.spacing),
+                more
+            ]
+            .boxed()
+        });
+        let part = |spans: Option<Vec<_>>| {
+            spans
+                .filter(|spans| !spans.is_empty())
+                .map(written)
+        };
+        [part(first), part(rest), more]
+    }
+
+    /// Its plate, with the line of its id and what its block does beside it and on under it.
+    fn top(
+        &self,
+        width: f32,
+    ) -> impl Widget<Event> + use<'a> {
+        let [first, rest, more] = self.does(width - PLATE.width - GAP);
+        let beside = column![self.head(), first].spacing(GAP);
+        let top = row![self.plate(), beside].spacing(GAP);
+        column![self.tagged(top), rest, more]
+    }
+
+    /// Its tile: its plate over its block and id.
+    fn tile(&self) -> impl Widget<Event> + use<'a> {
+        let node = self.node;
         let line = |written: &'a str| {
             text(written)
                 .width(Fill)
@@ -532,7 +604,7 @@ impl<'a> Card<'a> {
         // an id is told from the next by how it ends as much as by how it starts
         let id = line(&node.id).ellipsis(text::Ellipsis::Middle);
         let lines = column![
-            plate,
+            self.plate(),
             row![block, self.save()].align_y(Center),
             id
         ]
@@ -550,16 +622,9 @@ impl<'a> Card<'a> {
         self.tagged(tile)
     }
 
-    /// The line of its id: its plate, its toggle, the small table, the id and the cross.
+    /// The line of its id: its toggle, the small table, the id and the cross.
     fn head(&self) -> impl Widget<Event> + use<'a> {
         let nodes = &self.pipeline.nodes;
-        let plate = self.help.of(
-            container(self.icon(icon::L))
-                .center(HEAD)
-                .style(theme::container::section),
-            "The icon of the block of the node. Drag it to move the card, and double-click it to \
-             close the card to its tile.",
-        );
         let id = look::name(
             "id",
             &self.node.id,
@@ -570,12 +635,11 @@ impl<'a> Card<'a> {
             },
             Event::Rename,
         );
-        let head = row![
-            plate,
+        row![
             self.help.of(
                 toggle(layout::is_open(self.node), Event::Edit(Edit::Toggle)),
                 "Closes the card to its tile, or keeps it open if the cursor resting on its tile \
-                 opened it; a double-click on the icon does so too. Drag the corner of an open \
+                 opened it; a double-click on the plate does so too. Drag the corner of an open \
                  card to resize it.",
             ),
             self.save(),
@@ -593,8 +657,7 @@ impl<'a> Card<'a> {
         ]
         .spacing(GAP)
         .align_y(Center)
-        .height(HEAD);
-        self.tagged(head)
+        .height(HEAD)
     }
 
     /// A dot for each tag of its node, and a hollow one for each that a name it uses carries.

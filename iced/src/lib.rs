@@ -13,7 +13,7 @@ mod table;
 pub mod theme;
 
 pub use leave::{Leave, leave};
-pub use measure::width_of;
+pub use measure::{cut, width_of};
 pub use menu::{Menu, menu};
 pub use pick_list::{PickList, pick_list};
 pub use scrub::{HANDLE, Scrub, handle, scrub};
