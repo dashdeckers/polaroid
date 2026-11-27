@@ -32,6 +32,8 @@ pub struct Drawer {
     sections: BTreeMap<String, Section>,
     /// The entry that is dragged, and the place in its list that the cursor was at last.
     drag: Option<(String, Option<Place>)>,
+    /// What is typed to search for, which narrows what is listed.
+    query: String,
 }
 
 /// What the drawer shows of an expression or a value that the pipeline does not hold.
@@ -145,6 +147,8 @@ pub enum Message {
     Cancel,
     /// What is asked of the tags, which the editor sees to.
     Marks(marks::Message),
+    /// What is typed to search for.
+    Search(String),
 }
 
 /// Where in its list a dragged entry is let go: before the entry of this name, or after it.
@@ -175,6 +179,10 @@ impl Drawer {
     ) -> Change {
         match message {
             Message::Marks(message) => Change::Marks(message),
+            Message::Search(query) => {
+                self.query = query;
+                Change::Nothing
+            }
             Message::Grab(name) => {
                 self.drag = Some((name, None));
                 Change::Nothing
@@ -339,6 +347,10 @@ impl Drawer {
         help: Help,
     ) -> impl Widget<Message> + use<'a> {
         let closed = form::State::default();
+        let is_narrowed = !self
+            .query
+            .trim()
+            .is_empty();
         let is_taken = |name: &str| {
             pipeline
                 .kind_of(name)
@@ -411,9 +423,9 @@ impl Drawer {
                     .as_ref()
             });
             let (value, held) = form::Draft::shown(draft, stored);
-            let (schema, expressions, written) = match kind {
-                Kind::Expression => (&defs["Expr"], Expressions::Chained, methods::text(value)),
-                _ => (&form::ANY, Expressions::Named, value.to_string()),
+            let (schema, expressions) = match kind {
+                Kind::Expression => (&defs["Expr"], Expressions::Chained),
+                _ => (&form::ANY, Expressions::Named),
             };
             let body: Element<'a, Message> = match is_open {
                 true => Form {
@@ -432,7 +444,7 @@ impl Drawer {
                 .view(schema)
                 .map(Message::Form.with(name.clone()))
                 .boxed(),
-                false => look::under_name(look::aside(written).font(font::MONO)),
+                false => look::under_name(look::aside(written(kind, value)).font(font::MONO)),
             };
             column![
                 head,
@@ -467,14 +479,26 @@ impl Drawer {
             .spacing(spacing::XS)
             .height(control::S)
             .align_y(Center);
+            // what is searched for is found in a name, in its tags or in what it is written as
             let mut names: Vec<_> = list
                 .names(pipeline)
+                .filter(|(name, stored)| {
+                    !is_narrowed || {
+                        let written = written(kind, stored);
+                        let tags = marks::of(pipeline, name);
+                        finds(
+                            &self.query,
+                            tags.into_iter()
+                                .chain([name.as_str(), &written]),
+                        )
+                    }
+                })
                 .collect();
             if is_sorted {
                 names.sort_by_key(|(name, _)| name.to_lowercase());
             }
-            // in the order of the file, an entry is dragged by its grip to another place in it
-            let has_grips = !is_sorted;
+            // in the order of the file and with all of it listed, an entry is dragged by its grip
+            let has_grips = !is_sorted && !is_narrowed;
             // while one of its entries is dragged, each place in it says that the cursor is there
             let drag = self
                 .drag
@@ -552,8 +576,25 @@ impl Drawer {
         let named = scrollable(named)
             .direction(scrollable::Direction::Vertical(bar))
             .style(theme::scrollable::thin);
+        let search = look::field("search", &self.query, font::SANS, Tone::Given)
+            .on_input(Message::Search)
+            .width(Fill);
+        let clear = (!self
+            .query
+            .is_empty())
+        .then(|| look::clear(Message::Search(String::new())));
+        let search = row![
+            help.of(
+                search,
+                "Narrows what is listed to what has every word typed here in its name, in one \
+                 of its tags, or in what it is written as.",
+            ),
+            clear
+        ]
+        .spacing(spacing::XS)
+        .align_y(Center);
         let sheet = mouse_area(
-            container(named)
+            container(column![search, named].spacing(spacing::M))
                 .padding(spacing::M)
                 .style(theme::container::sheet)
                 .width(Fill)
@@ -567,6 +608,36 @@ impl Drawer {
             None => sheet,
         }
     }
+}
+
+/// An expression or a value as it is written out on a line.
+fn written(
+    kind: Kind,
+    value: &Value,
+) -> String {
+    match kind {
+        Kind::Expression => methods::text(value),
+        _ => value.to_string(),
+    }
+}
+
+/// Whether every word of `query` is in one of `texts`, whatever the case.
+fn finds<'a>(
+    query: &str,
+    texts: impl IntoIterator<Item = &'a str>,
+) -> bool {
+    let texts: Vec<String> = texts
+        .into_iter()
+        .map(str::to_lowercase)
+        .collect();
+    query
+        .to_lowercase()
+        .split_whitespace()
+        .all(|word| {
+            texts
+                .iter()
+                .any(|text| text.contains(word))
+        })
 }
 
 /// The room of the grip that an entry is dragged by.

@@ -2023,3 +2023,74 @@ fn a_save_writes_no_tag_of_what_is_no_longer_named() {
     assert!(!written.contains("old"));
     std::fs::remove_file(path).unwrap();
 }
+
+#[test]
+fn a_search_narrows_the_drawer_to_what_has_every_word_typed() {
+    use crate::polars::prelude::col;
+
+    let mut editor = chain(1);
+    let price = serde_json::to_value(col("price")).unwrap();
+    editor
+        .pipeline
+        .expressions
+        .insert("net".to_owned(), price);
+    for name in ["rate", "Net_rate"] {
+        editor
+            .pipeline
+            .values
+            .insert(name.to_owned(), 1.into());
+    }
+    editor.pipeline.ui = serde_json::json!({ "tags": { "rate": ["Tax"] } });
+    let listed = |editor: &mut Editor, query: &str| {
+        let search = drawer::Message::Search(query.to_owned());
+        let _ = editor.update(Message::Drawer(search));
+        let mut ui = simulator(editor.view());
+        ["net", "rate", "Net_rate"]
+            .into_iter()
+            .filter(|name| {
+                ui.find(field(name))
+                    .is_ok()
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(listed(&mut editor, " "), ["net", "rate", "Net_rate"]);
+    // in a name, whatever the case, in a tag, and in what it is written as
+    assert_eq!(listed(&mut editor, "NET"), ["net", "Net_rate"]);
+    assert_eq!(listed(&mut editor, "tax"), ["rate"]);
+    assert_eq!(listed(&mut editor, "price"), ["net"]);
+    assert_eq!(listed(&mut editor, "rate net"), ["Net_rate"]);
+    assert!(listed(&mut editor, "rate price").is_empty());
+    assert!(!editor.is_dirty);
+
+    // what is narrowed has nothing to drag by, until the search is cleared by its button
+    assert_eq!(listed(&mut editor, "e"), ["net", "rate", "Net_rate"]);
+    assert!(every(&editor, theme::sign::GRIP).is_empty());
+    press_on(&mut editor, theme::sign::DELETE);
+    assert_eq!(every(&editor, theme::sign::GRIP).len(), 3);
+}
+
+#[test]
+fn what_is_typed_in_the_search_narrows_as_it_is_typed() {
+    let mut editor = chain(1);
+    for name in ["rate", "base"] {
+        editor
+            .pipeline
+            .values
+            .insert(name.to_owned(), 1.into());
+    }
+    let mut ui = simulator(editor.view());
+    ui.click(field("search"))
+        .unwrap();
+    ui.typewrite("b");
+    let asked = asked(ui);
+    apply(&mut editor, asked);
+    let mut ui = simulator(editor.view());
+    assert!(
+        ui.find(field("base"))
+            .is_ok()
+    );
+    assert!(
+        ui.find(field("rate"))
+            .is_err()
+    );
+}
